@@ -8,7 +8,7 @@ import { settingsFromMetadata, type ReusableGenerationSettings } from "@/lib/met
 
 type AudioFormat = "mp3" | "wav";
 type Result = { ok: boolean; audioUrl?: string; metadataUrl?: string; filename?: string; meta?: unknown; error?: string; detail?: unknown };
-type LibraryItem = { filename: string; audioUrl: string; downloadUrl: string; metadataUrl?: string; bundleUrl?: string; format: AudioFormat; bytes: number; createdAt: string; favorite?: boolean; meta?: unknown };
+export type LibraryItem = { filename: string; audioUrl: string; downloadUrl: string; metadataUrl?: string; bundleUrl?: string; format: AudioFormat; bytes: number; createdAt: string; favorite?: boolean; meta?: unknown };
 type PersistedSettings = {
   mode: "music" | "sfx";
   model: string;
@@ -43,9 +43,14 @@ export default function Home() {
   const [result, setResult] = useState<Result | null>(null);
   const [libraryItems, setLibraryItems] = useState<LibraryItem[]>([]);
   const [libraryBusy, setLibraryBusy] = useState(false);
+  const [libraryQuery, setLibraryQuery] = useState("");
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [comparisonFilenames, setComparisonFilenames] = useState<Set<string>>(new Set());
   const [settingsHydrated, setSettingsHydrated] = useState(false);
 
   const selectedModel = useMemo(() => modelOptions.find((m) => m.id === model)!, [model]);
+  const filteredLibraryItems = useMemo(() => filterLibraryItems(libraryItems, libraryQuery, favoritesOnly), [libraryItems, libraryQuery, favoritesOnly]);
+  const comparisonItems = useMemo(() => selectedComparisonItems(libraryItems, comparisonFilenames), [libraryItems, comparisonFilenames]);
 
   useEffect(() => {
     try {
@@ -100,6 +105,11 @@ export default function Home() {
       body: JSON.stringify({ filename }),
     });
     if (result?.filename === filename) setResult(null);
+    setComparisonFilenames((current) => {
+      const next = new Set(current);
+      next.delete(filename);
+      return next;
+    });
     await loadLibrary();
   }
 
@@ -110,6 +120,17 @@ export default function Home() {
       body: JSON.stringify({ filename, favorite }),
     });
     await loadLibrary();
+  }
+
+  async function cropLibraryItem(filename: string, start: number, end: number) {
+    const response = await fetch("/api/library/crop", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ filename, start, end }),
+    });
+    const json = (await response.json()) as Result;
+    setResult(json);
+    if (json.ok) await loadLibrary();
   }
 
   function applySettings(settings: ReusableGenerationSettings) {
@@ -130,6 +151,15 @@ export default function Home() {
   function loadConfigFromMetadata(meta: unknown) {
     const settings = settingsFromMetadata(meta);
     if (settings) applySettings(settings);
+  }
+
+  function toggleComparison(filename: string) {
+    setComparisonFilenames((current) => {
+      const next = new Set(current);
+      if (next.has(filename)) next.delete(filename);
+      else next.add(filename);
+      return next;
+    });
   }
 
   function randomizeSeed() {
@@ -348,7 +378,24 @@ export default function Home() {
             </div>
 
             {result && <ResultPanel result={result} playbackVolume={playbackVolume} onLoadConfig={loadConfigFromMetadata} onDelete={deleteLibraryItem} />}
-            <LibraryPanel items={libraryItems} playbackVolume={playbackVolume} busy={libraryBusy} onRefresh={loadLibrary} onDelete={deleteLibraryItem} onLoadConfig={loadConfigFromMetadata} onToggleFavorite={toggleFavorite} />
+            {comparisonItems.length > 0 && <ComparisonPanel items={comparisonItems} playbackVolume={playbackVolume} onClear={() => setComparisonFilenames(new Set<string>())} onLoadConfig={loadConfigFromMetadata} />}
+            <LibraryPanel
+              items={filteredLibraryItems}
+              totalItems={libraryItems.length}
+              playbackVolume={playbackVolume}
+              busy={libraryBusy}
+              searchQuery={libraryQuery}
+              favoritesOnly={favoritesOnly}
+              selectedForComparison={comparisonFilenames}
+              onSearchChange={setLibraryQuery}
+              onFavoritesOnlyChange={setFavoritesOnly}
+              onToggleCompare={toggleComparison}
+              onRefresh={loadLibrary}
+              onDelete={deleteLibraryItem}
+              onCrop={cropLibraryItem}
+              onLoadConfig={loadConfigFromMetadata}
+              onToggleFavorite={toggleFavorite}
+            />
           </motion.section>
         </section>
       </div>
@@ -406,13 +453,89 @@ export function AudioPreview({ src, volume, label }: { src?: string; volume: num
   return <audio ref={audioRef} src={src} controls aria-label={label} className="w-full" />;
 }
 
+export function libraryItemSearchText(item: LibraryItem) {
+  const settings = settingsFromMetadata(item.meta);
+  const record = item.meta && typeof item.meta === "object" ? (item.meta as Record<string, unknown>) : {};
+  const rawSource = (record.settings && typeof record.settings === "object" ? record.settings : record.request) as Record<string, unknown> | undefined;
+  return [
+    item.filename,
+    item.format,
+    readString(rawSource?.prompt),
+    readString(rawSource?.negativePrompt),
+    readString(rawSource?.mode),
+    readString(rawSource?.model),
+    readNumber(rawSource?.seed) !== undefined ? `seed ${readNumber(rawSource?.seed)}` : undefined,
+    settings?.prompt,
+    settings?.negativePrompt,
+    settings?.mode,
+    settings?.model,
+    typeof settings?.duration === "number" ? `${settings.duration}s` : undefined,
+    typeof settings?.seed === "number" ? `seed ${settings.seed}` : undefined,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+export function filterLibraryItems(items: LibraryItem[], query: string, favoritesOnly: boolean) {
+  const terms = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  return items.filter((item) => {
+    if (favoritesOnly && !item.favorite) return false;
+    if (terms.length === 0) return true;
+    const haystack = libraryItemSearchText(item);
+    return terms.every((term) => haystack.includes(term));
+  });
+}
+
+export function selectedComparisonItems(items: LibraryItem[], selectedFilenames: Set<string>) {
+  return items.filter((item) => selectedFilenames.has(item.filename));
+}
+
+function readString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function readNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+export function buildSpectrogramBins(data: Float32Array, columns: number, frequencyBins: number) {
+  const safeColumns = Math.max(1, Math.floor(columns));
+  const safeBins = Math.max(1, Math.floor(frequencyBins));
+  const windowSize = Math.min(256, Math.max(32, Math.floor(data.length / safeColumns) || 32));
+
+  return Array.from({ length: safeColumns }, (_, column) => {
+    const center = Math.floor((column / safeColumns) * data.length);
+    const start = Math.min(Math.max(center - Math.floor(windowSize / 2), 0), Math.max(0, data.length - windowSize));
+    return Array.from({ length: safeBins }, (_, bin) => {
+      let real = 0;
+      let imaginary = 0;
+      const cycles = bin + 1;
+      for (let i = 0; i < windowSize && start + i < data.length; i += 1) {
+        const sample = data[start + i] ?? 0;
+        const phase = (2 * Math.PI * cycles * i) / windowSize;
+        real += sample * Math.cos(phase);
+        imaginary -= sample * Math.sin(phase);
+      }
+      return Math.min(1, (Math.sqrt(real * real + imaginary * imaginary) / windowSize) * 12);
+    });
+  });
+}
+
+export function analysisImageFilename(src: string, mode: "waveform" | "spectrogram") {
+  const filename = decodeURIComponent(src.split("/").pop() || "audio");
+  return filename.replace(/\.(mp3|wav)$/i, `.${mode}.png`);
+}
+
 function AudioAnalysis({ src, compact = false }: { src: string; compact?: boolean }) {
   const [mode, setMode] = useState<"waveform" | "spectrogram">("waveform");
   const [status, setStatus] = useState("Analyzing pixels of sound...");
+  const [downloadReady, setDownloadReady] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     let cancelled = false;
+    setDownloadReady(false);
     async function draw() {
       const canvas = canvasRef.current;
       if (!canvas) return;
@@ -435,22 +558,38 @@ function AudioAnalysis({ src, compact = false }: { src: string; compact?: boolea
         const data = decoded.getChannelData(0);
         if (mode === "waveform") drawWaveform(ctx, canvas, data, gradient);
         else drawSpectrogram(ctx, canvas, data);
+        setDownloadReady(true);
         setStatus(`${mode === "waveform" ? "Waveform" : "Spectrogram"} • ${decoded.duration.toFixed(1)}s • ${decoded.sampleRate.toLocaleString()} Hz`);
       } catch {
         if (cancelled) return;
         drawFallback(ctx, canvas, gradient);
-        setStatus("Preview analysis unavailable for this browser/audio file — fallback goblin glyphs shown.");
+        setDownloadReady(true);
+        setStatus("Preview analysis unavailable for this browser/audio file. Fallback bars shown.");
       }
     }
     draw();
     return () => { cancelled = true; };
   }, [src, mode]);
 
+  function downloadImage() {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const link = document.createElement("a");
+    link.href = canvas.toDataURL("image/png");
+    link.download = analysisImageFilename(src, mode);
+    link.click();
+  }
+
   return (
     <div className={clsx("mt-3 rounded-2xl border border-white/10 bg-black/28 p-3", compact && "p-2")}>
       <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="text-xs font-bold uppercase tracking-[0.18em] text-white/45">Audio analysis</div>
-        <Segmented compact value={mode} options={[{ value: "waveform", label: "Wave" }, { value: "spectrogram", label: "Spec" }]} onChange={(value) => setMode(value as "waveform" | "spectrogram")} />
+        <div className="flex flex-wrap items-center gap-2">
+          <Segmented compact value={mode} options={[{ value: "waveform", label: "Wave" }, { value: "spectrogram", label: "Spec" }]} onChange={(value) => setMode(value as "waveform" | "spectrogram")} />
+          <button type="button" disabled={!downloadReady} onClick={downloadImage} className="inline-flex min-h-10 items-center justify-center rounded-full border border-white/10 bg-white/[0.06] px-3 py-2 text-xs font-bold leading-none text-white/65 hover:bg-white/10 disabled:cursor-wait disabled:opacity-45">
+            PNG
+          </button>
+        </div>
       </div>
       <canvas ref={canvasRef} width={900} height={compact ? 96 : 150} className="h-24 w-full rounded-xl border border-white/10 bg-black/35 sm:h-32" />
       <div className="mt-2 text-xs text-white/45">{status}</div>
@@ -481,22 +620,18 @@ function drawWaveform(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, 
 }
 
 function drawSpectrogram(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, data: Float32Array) {
-  const step = Math.max(1, Math.floor(data.length / canvas.width));
-  for (let x = 0; x < canvas.width; x += 1) {
-    const start = x * step;
-    let energy = 0;
-    let crossings = 0;
-    for (let i = 1; i < step && start + i < data.length; i += 1) {
-      const prev = data[start + i - 1];
-      const value = data[start + i];
-      energy += Math.abs(value);
-      if ((prev < 0 && value >= 0) || (prev >= 0 && value < 0)) crossings += 1;
+  const frequencyBins = 48;
+  const bins = buildSpectrogramBins(data, canvas.width, frequencyBins);
+  const binHeight = canvas.height / frequencyBins;
+  for (let x = 0; x < bins.length; x += 1) {
+    const column = bins[x];
+    for (let bin = 0; bin < column.length; bin += 1) {
+      const value = column[bin];
+      const y = canvas.height - (bin + 1) * binHeight;
+      const hue = 190 + (bin / frequencyBins) * 90 - value * 40;
+      ctx.fillStyle = `hsla(${hue}, 95%, ${25 + value * 55}%, ${0.2 + value * 0.75})`;
+      ctx.fillRect(x, y, 1, Math.ceil(binHeight) + 1);
     }
-    energy = Math.min(1, energy / step * 8);
-    const hue = 170 + Math.min(120, crossings * 3);
-    const height = Math.max(2, energy * canvas.height);
-    ctx.fillStyle = `hsla(${hue}, 95%, ${45 + energy * 30}%, 0.9)`;
-    ctx.fillRect(x, canvas.height - height, 1, height);
   }
 }
 
@@ -535,21 +670,96 @@ function ResultPanel({ result, playbackVolume, onLoadConfig, onDelete }: { resul
   );
 }
 
-function LibraryPanel({ items, playbackVolume, busy, onRefresh, onDelete, onLoadConfig, onToggleFavorite }: { items: LibraryItem[]; playbackVolume: number; busy: boolean; onRefresh: () => void; onDelete: (filename: string) => void; onLoadConfig: (meta: unknown) => void; onToggleFavorite: (filename: string, favorite: boolean) => void }) {
+function ComparisonPanel({ items, playbackVolume, onClear, onLoadConfig }: { items: LibraryItem[]; playbackVolume: number; onClear: () => void; onLoadConfig: (meta: unknown) => void }) {
+  return (
+    <section className="mt-5 rounded-3xl border border-emerald-200/15 bg-emerald-200/[0.055] p-4">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-emerald-50">Comparison</h2>
+          <p className="text-sm text-white/55">{items.length < 2 ? "Select one more render to compare variations side by side." : `${items.length} renders selected for A/B testing.`}</p>
+        </div>
+        <button type="button" onClick={onClear} className="inline-flex min-h-10 items-center justify-center rounded-full border border-white/10 bg-white/[0.06] px-4 py-2 text-sm font-semibold leading-none text-white/70 hover:bg-white/10">
+          Clear
+        </button>
+      </div>
+
+      <div className="grid gap-3 lg:grid-cols-2">
+        {items.map((item, index) => (
+          <article key={item.filename} className="min-w-0 rounded-2xl border border-white/10 bg-black/30 p-3">
+            <div className="mb-3 flex min-w-0 items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-100/70">Variant {String.fromCharCode(65 + index)}</div>
+                <div className="truncate font-semibold text-white/85">{item.filename}</div>
+              </div>
+              {item.bundleUrl && <a href={item.bundleUrl} download className="inline-flex min-h-9 shrink-0 items-center justify-center rounded-full border border-violet-200/20 bg-violet-200/10 px-3 py-2 text-xs font-bold leading-none text-violet-100 hover:bg-violet-200/20">Bundle</a>}
+            </div>
+            <AudioPreview src={item.audioUrl} volume={playbackVolume} label={`Comparison preview for ${item.filename}`} />
+            <AudioAnalysis src={item.audioUrl} compact />
+            <MetadataSummary meta={item.meta} metadataUrl={item.metadataUrl} compact onLoadConfig={onLoadConfig} />
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function LibraryPanel({
+  items,
+  totalItems,
+  playbackVolume,
+  busy,
+  searchQuery,
+  favoritesOnly,
+  selectedForComparison,
+  onSearchChange,
+  onFavoritesOnlyChange,
+  onToggleCompare,
+  onRefresh,
+  onDelete,
+  onCrop,
+  onLoadConfig,
+  onToggleFavorite,
+}: {
+  items: LibraryItem[];
+  totalItems: number;
+  playbackVolume: number;
+  busy: boolean;
+  searchQuery: string;
+  favoritesOnly: boolean;
+  selectedForComparison: Set<string>;
+  onSearchChange: (query: string) => void;
+  onFavoritesOnlyChange: (favoritesOnly: boolean) => void;
+  onToggleCompare: (filename: string) => void;
+  onRefresh: () => void;
+  onDelete: (filename: string) => void;
+  onCrop: (filename: string, start: number, end: number) => void;
+  onLoadConfig: (meta: unknown) => void;
+  onToggleFavorite: (filename: string, favorite: boolean) => void;
+}) {
   return (
     <section className="mt-5 rounded-3xl border border-white/10 bg-black/25 p-4">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-lg font-semibold">Library</h2>
-          <p className="text-sm text-white/55">Listen to previous generations, download keepers, or delete the cursed goblin noises.</p>
+          <p className="text-sm text-white/55">Listen to previous generations, filter keepers, compare variations, or download bundles.</p>
         </div>
-        <button onClick={onRefresh} className="inline-flex min-h-10 items-center justify-center rounded-full border border-white/10 bg-white/[0.06] px-4 py-2 text-sm font-semibold leading-none text-white/70 hover:bg-white/10">
-          {busy ? "Refreshing…" : "Refresh"}
-        </button>
+        <div className="flex min-w-0 flex-col gap-2 sm:items-end">
+          <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+            <input value={searchQuery} onChange={(event) => onSearchChange(event.target.value)} placeholder="Search filename, prompt, seed..." className="input min-w-0 sm:w-72" />
+            <label className="inline-flex min-h-10 items-center gap-2 rounded-full border border-white/10 bg-white/[0.05] px-4 py-2 text-sm font-semibold text-white/65">
+              <input type="checkbox" checked={favoritesOnly} onChange={(event) => onFavoritesOnlyChange(event.target.checked)} className="accent-amber-200" />
+              Favorites
+            </label>
+            <button onClick={onRefresh} className="inline-flex min-h-10 items-center justify-center rounded-full border border-white/10 bg-white/[0.06] px-4 py-2 text-sm font-semibold leading-none text-white/70 hover:bg-white/10">
+              {busy ? "Refreshing..." : "Refresh"}
+            </button>
+          </div>
+          <div className="text-xs text-white/38">{items.length} of {totalItems} shown</div>
+        </div>
       </div>
 
       {items.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-white/10 p-6 text-sm text-white/50">No generated audio yet. Make something weird.</div>
+        <div className="rounded-2xl border border-dashed border-white/10 p-6 text-sm text-white/50">{totalItems === 0 ? "No generated audio yet. Make something weird." : "No library items match the current filters."}</div>
       ) : (
         <div className="grid gap-3">
           {items.map((item) => (
@@ -562,6 +772,9 @@ function LibraryPanel({ items, playbackVolume, busy, onRefresh, onDelete, onLoad
                   </div>
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-2">
+                  <button onClick={() => onToggleCompare(item.filename)} className={clsx("inline-flex min-h-10 items-center justify-center rounded-full border px-3 py-2 text-xs font-bold leading-none", selectedForComparison.has(item.filename) ? "border-emerald-200/40 bg-emerald-200/20 text-emerald-100" : "border-white/10 bg-white/[0.05] text-white/55 hover:bg-white/10")}>
+                    {selectedForComparison.has(item.filename) ? "Comparing" : "Compare"}
+                  </button>
                   <button onClick={() => onToggleFavorite(item.filename, !item.favorite)} className={clsx("inline-flex min-h-10 items-center justify-center rounded-full border px-3 py-2 text-xs font-bold leading-none", item.favorite ? "border-amber-200/40 bg-amber-200/20 text-amber-100" : "border-white/10 bg-white/[0.05] text-white/55 hover:bg-white/10")}>
                     {item.favorite ? "Starred" : "Star"}
                   </button>
@@ -571,6 +784,7 @@ function LibraryPanel({ items, playbackVolume, busy, onRefresh, onDelete, onLoad
                 </div>
               </div>
               <AudioPreview src={item.audioUrl} volume={playbackVolume} label={`Library audio preview for ${item.filename}`} />
+              <CropControls item={item} onCrop={onCrop} />
               <AudioAnalysis src={item.audioUrl} compact />
               <MetadataSummary meta={item.meta} metadataUrl={item.metadataUrl} compact onLoadConfig={onLoadConfig} />
             </article>
@@ -578,6 +792,52 @@ function LibraryPanel({ items, playbackVolume, busy, onRefresh, onDelete, onLoad
         </div>
       )}
     </section>
+  );
+}
+
+function readCropControlDuration(meta: unknown) {
+  if (!meta || typeof meta !== "object") return undefined;
+  const record = meta as Record<string, unknown>;
+  const crop = record.crop && typeof record.crop === "object" ? (record.crop as Record<string, unknown>) : undefined;
+  if (typeof crop?.duration === "number" && Number.isFinite(crop.duration) && crop.duration > 0) return crop.duration;
+  const settings = record.settings && typeof record.settings === "object" ? (record.settings as Record<string, unknown>) : undefined;
+  if (typeof settings?.duration === "number" && Number.isFinite(settings.duration) && settings.duration > 0) return settings.duration;
+  return undefined;
+}
+
+function CropControls({ item, onCrop }: { item: LibraryItem; onCrop: (filename: string, start: number, end: number) => void }) {
+  const maxDuration = readCropControlDuration(item.meta) ?? 30;
+  const initialEnd = Math.min(maxDuration, 8);
+  const [start, setStart] = useState(0);
+  const [end, setEnd] = useState(initialEnd);
+
+  useEffect(() => {
+    setStart(0);
+    setEnd(Math.min(maxDuration, 8));
+  }, [item.filename, maxDuration]);
+
+  const safeStart = Math.min(start, Math.max(0, maxDuration - Math.min(0.25, maxDuration)));
+  const safeEnd = Math.max(safeStart + Math.min(0.25, maxDuration), Math.min(end, maxDuration));
+  return (
+    <div className="mt-3 rounded-2xl border border-orange-200/10 bg-orange-200/[0.045] p-3">
+      <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="text-xs font-bold uppercase tracking-[0.18em] text-orange-100/70">Crop audio</div>
+          <div className="text-xs text-white/45">Trim a keeper into a shorter clip without touching the original.</div>
+        </div>
+        <button type="button" onClick={() => onCrop(item.filename, safeStart, safeEnd)} className="inline-flex min-h-9 items-center justify-center rounded-full border border-orange-200/20 bg-orange-200/12 px-3 py-2 text-xs font-bold leading-none text-orange-100 hover:bg-orange-200/20">
+          Crop {formatDuration((safeEnd - safeStart) * 1000)}
+        </button>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="text-xs text-white/50">Start: {safeStart.toFixed(2)}s
+          <input type="range" min="0" max={Math.max(0, maxDuration - Math.min(0.25, maxDuration))} step="0.25" value={safeStart} onChange={(event) => setStart(Math.min(Number(event.target.value), safeEnd - Math.min(0.25, maxDuration)))} className="mt-1 w-full accent-orange-200" />
+        </label>
+        <label className="text-xs text-white/50">End: {safeEnd.toFixed(2)}s
+          <input type="range" min={Math.min(0.25, maxDuration)} max={maxDuration} step="0.25" value={safeEnd} onChange={(event) => setEnd(Math.max(Number(event.target.value), safeStart + Math.min(0.25, maxDuration)))} className="mt-1 w-full accent-orange-200" />
+        </label>
+      </div>
+    </div>
   );
 }
 

@@ -72,7 +72,8 @@ The app was built for Paul's M4 Max MacBook Pro with 128GB unified memory and us
 - **Favorite Keepers**: Star library items so the good goblins do not get lost in the noise pile.
 - **Download and Delete**: Download audio keepers or delete cursed renders with confirmation.
 - **Export Bundles**: Download a `.bundle.zip` containing the audio file plus its metadata sidecar for sharing experiments.
-- **Metadata Sidecars**: Every output gets a `.json` sidecar with prompt, settings, backend, seed, runtime, favorite state, and Python output tails.
+- **Audio Cropping**: Trim any library item into a shorter MP3/WAV clip while preserving source metadata and crop provenance.
+- **Metadata Sidecars**: Every output gets a `.json` sidecar with prompt, settings, backend, seed, runtime, favorite state, crop lineage, and Python output tails.
 - **Load Config**: Restore prompt/settings/seed from an existing library item to iterate from a prior render.
 - **Metadata Cleanup**: Deleting a library item removes both the audio file and sidecar metadata.
 
@@ -314,9 +315,30 @@ Metadata includes:
 * prompt and negative prompt
 * mode, model, duration, steps, CFG, format, mock/real mode
 * seed, when present
+* crop provenance, when a file was trimmed from another render
 * Python process stdout/stderr tail
 
-The Library UI can download the audio, download the JSON metadata, export an audio+metadata bundle, star keepers, load metadata back into the settings panel, inspect waveform/spectrogram previews, or delete both files after confirmation.
+The Library UI can download the audio, download the JSON metadata, export an audio+metadata bundle, star keepers, crop shorter clips, load metadata back into the settings panel, inspect waveform/spectrogram previews, or delete both files after confirmation.
+
+### Audio cropping
+
+Every library item includes a **Crop audio** panel with start/end sliders. Cropping never mutates the source file; it creates a new sibling clip plus metadata sidecar:
+
+```text
+public/outputs/sa3-sfx-123.mp3
+public/outputs/sa3-sfx-123.crop-0p000-1p000.mp3
+public/outputs/sa3-sfx-123.crop-0p000-1p000.mp3.json
+```
+
+The crop endpoint is available for automation and validates requested windows against the actual source media duration using `ffprobe` before calling `ffmpeg`:
+
+```bash
+curl -X POST http://localhost:3007/api/library/crop \
+  -H 'content-type: application/json' \
+  -d '{"filename":"sa3-sfx-123.mp3","start":0,"end":1}'
+```
+
+Crop metadata keeps source lineage (`sourceFilename`, source URLs, and `crop.start/end/duration`) and updates the reusable `settings.duration` to the trimmed clip length so follow-up crops stay inside the derived clip.
 
 ## Useful commands
 
@@ -384,27 +406,27 @@ make pre-commit
 
 ### Where we are
 
-* **Waveform and Spectrogram Analysis** - Browser-side audio previews show Wave/Spec visualization panels for latest and library renders.
-* **Batch Variation Workflow** - Generate up to 8 variations from the same prompt; fixed seeds increment deterministically.
-* **Favorite Keepers** - Starred library renders persist favorite state in metadata sidecars.
+* **Waveform and Spectrogram Analysis** - Browser-side audio previews show Wave/Spec visualization panels for latest and library renders, with downloadable PNG snapshots and richer spectrogram bins.
+* **Batch Variation Workflow** - Generate up to 8 variations from the same prompt; fixed seeds increment deterministically and selected renders can be compared side by side.
+* **Favorite Keepers** - Starred library renders persist favorite state in metadata sidecars and can be filtered in the library.
 * **Prompt Template Drawers** - Foley, UI stings, loops, trailer hits, ambience, and music bed templates are built into the prompt UI.
 * **Export Bundles** - Library rows can export a `.bundle.zip` with audio plus metadata for sharing experiments.
+* **Audio Cropping** - Library rows can trim clips into new audio files with metadata preserving source/crop lineage.
 * **Music and SFX Generation** - Local browser workflow for both music and sound effects.
 * **Full MLX Backend** - All UI models route through the official Apple Silicon optimized runtime by default.
-* **Library Management** - Playback, download, metadata download, config reload, refresh, and delete.
+* **Library Management** - Playback, search, favorite filtering, comparison selection, download, metadata download, config reload, refresh, and delete.
 * **Settings Persistence** - Mode, model, prompt, negative prompt, duration, steps, CFG, format, seed, mock mode, and volume persist locally.
 * **Safety Controls** - Timeout handling and process-tree cleanup for MLX generation.
 * **Testing and Git Hooks** - Unit tests, build checks, Python tests, and pre-commit hooks are wired.
 
 ### Where we're going
 
-* More audio-analysis polish such as downloadable waveform images and richer spectrogram frequency bins.
-* Favorite filtering and library search.
-* Comparison view for batch variation A/B testing.
-* Export bundles with rendered screenshots or analysis summaries included.
+* Rendered screenshot capture inside export bundles.
+* Optional notes and ratings for library items.
+* Batch-level export bundles for a whole variation run.
 
 ## What's new
 
 ### v0.1.0
 
-* Initial Stable Audio 3 Lab app with Next.js UI, mock mode, real MLX inference, library management, metadata sidecars, seed controls, default playback volume, waveform/spectrogram previews, batch variations, prompt templates, favorites, export bundles, and README screenshots.
+* Initial Stable Audio 3 Lab app with Next.js UI, mock mode, real MLX inference, library management, metadata sidecars, seed controls, default playback volume, waveform/spectrogram previews, batch variations, comparison view, prompt templates, favorites, crop controls, export bundles, and README screenshots.

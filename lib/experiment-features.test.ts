@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildVariationSeeds, promptTemplateGroups } from "./generation";
-import { buildBundleFilename, buildStoredZip, isFavoriteMetadata, toggleFavoriteMetadata } from "./library";
+import { buildAnalysisSummary, buildAnalysisSummaryFilename, buildBundleFilename, buildCropFilename, buildCropMetadata, buildStoredZip, normalizeCropWindow, validateCropFitsDuration, isFavoriteMetadata, toggleFavoriteMetadata } from "./library";
 
 describe("prompt templates", () => {
   it("ships templates for foley, ui stings, loops, trailer hits, ambience, and music beds", () => {
@@ -46,5 +46,79 @@ describe("export bundles", () => {
     expect(zip.subarray(0, 2).toString("utf8")).toBe("PK");
     expect(zip.toString("utf8")).toContain("sa3-music-123.mp3");
     expect(zip.toString("utf8")).toContain("sa3-music-123.mp3.json");
+  });
+
+  it("adds a safe analysis summary filename for bundle exports", () => {
+    expect(buildAnalysisSummaryFilename("sa3-music-123.mp3")).toBe("sa3-music-123.analysis-summary.json");
+    expect(() => buildAnalysisSummaryFilename("../../bad.wav")).toThrow(/Invalid/);
+  });
+
+  it("summarizes render settings for bundle exports", () => {
+    const summary = buildAnalysisSummary({
+      filename: "sa3-sfx-123.wav",
+      metadata: {
+        backend: "mlx",
+        generationDurationMs: 1200,
+        settings: {
+          prompt: "metallic door hit",
+          negativePrompt: "mud",
+          mode: "sfx",
+          model: "small-sfx",
+          duration: 4,
+          steps: 8,
+          cfgScale: 1.5,
+          format: "wav",
+          seed: 99,
+          mock: false,
+        },
+      },
+    });
+
+    expect(summary).toMatchObject({
+      filename: "sa3-sfx-123.wav",
+      prompt: "metallic door hit",
+      model: "small-sfx",
+      duration: 4,
+      seed: 99,
+      backend: "mlx",
+    });
+  });
+});
+
+describe("audio cropping", () => {
+  it("normalizes crop windows into a positive start/end pair", () => {
+    expect(normalizeCropWindow({ start: 3.2, end: 9.7 })).toEqual({ start: 3.2, end: 9.7, duration: 6.5 });
+    expect(() => normalizeCropWindow({ start: -1, end: 2 })).toThrow(/Invalid crop/);
+    expect(() => normalizeCropWindow({ start: 4, end: 4 })).toThrow(/Invalid crop/);
+    expect(() => normalizeCropWindow({ start: 1.0004, end: 1.00049 })).toThrow(/Invalid crop/);
+  });
+
+  it("creates safe crop filenames beside the source audio", () => {
+    expect(buildCropFilename("sa3-music-123.mp3", 1.25, 5)).toBe("sa3-music-123.crop-1p250-5p000.mp3");
+    expect(() => buildCropFilename("../bad.mp3", 0, 1)).toThrow(/Invalid/);
+  });
+
+  it("rejects crop windows that exceed the probed source duration", () => {
+    const crop = normalizeCropWindow({ start: 0.5, end: 2 });
+    expect(validateCropFitsDuration(crop, 2)).toEqual(crop);
+    expect(() => validateCropFitsDuration(crop, 1.5)).toThrow(/source duration/);
+  });
+
+  it("preserves source metadata and records crop provenance", () => {
+    const cropped = buildCropMetadata({
+      sourceFilename: "sa3-music-123.mp3",
+      cropFilename: "sa3-music-123.crop-1p00-3p00.mp3",
+      sourceMetadata: { settings: { prompt: "lofi loop" }, backend: "mlx" },
+      crop: { start: 1, end: 3, duration: 2 },
+      createdAt: "2026-05-21T12:00:00.000Z",
+    });
+
+    expect(cropped).toMatchObject({
+      filename: "sa3-music-123.crop-1p00-3p00.mp3",
+      sourceFilename: "sa3-music-123.mp3",
+      crop: { start: 1, end: 3, duration: 2 },
+      settings: { prompt: "lofi loop", duration: 2 },
+      backend: "mlx",
+    });
   });
 });

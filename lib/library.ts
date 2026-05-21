@@ -107,6 +107,99 @@ export function buildBundleFilename(filename: string) {
   return filename.replace(/\.(mp3|wav)$/i, ".bundle.zip");
 }
 
+export function buildAnalysisSummaryFilename(filename: string) {
+  if (!isSafeAudioFilename(filename)) throw new Error("Invalid audio filename");
+  return filename.replace(/\.(mp3|wav)$/i, ".analysis-summary.json");
+}
+
+export type CropWindow = { start: number; end: number; duration: number };
+
+export function normalizeCropWindow({ start, end }: { start: number; end: number }): CropWindow {
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start) {
+    throw new Error("Invalid crop window");
+  }
+  const roundedStart = roundSeconds(start);
+  const roundedEnd = roundSeconds(end);
+  if (roundedEnd <= roundedStart) {
+    throw new Error("Invalid crop window");
+  }
+  return { start: roundedStart, end: roundedEnd, duration: roundSeconds(roundedEnd - roundedStart) };
+}
+
+export function buildCropFilename(filename: string, start: number, end: number) {
+  if (!isSafeAudioFilename(filename)) throw new Error("Invalid audio filename");
+  const crop = normalizeCropWindow({ start, end });
+  return filename.replace(/\.(mp3|wav)$/i, `.crop-${formatCropStamp(crop.start)}-${formatCropStamp(crop.end)}$&`);
+}
+
+export function validateCropFitsDuration(crop: CropWindow, sourceDuration: number) {
+  if (!Number.isFinite(sourceDuration) || sourceDuration <= 0) throw new Error("Invalid source duration");
+  if (crop.end > roundSeconds(sourceDuration) + 0.001) {
+    throw new Error("Invalid crop window: end exceeds source duration");
+  }
+  return crop;
+}
+
+export function buildCropMetadata({
+  sourceFilename,
+  cropFilename,
+  sourceMetadata,
+  crop,
+  createdAt = new Date().toISOString(),
+}: {
+  sourceFilename: string;
+  cropFilename: string;
+  sourceMetadata: unknown;
+  crop: CropWindow;
+  createdAt?: string;
+}) {
+  if (!isSafeAudioFilename(sourceFilename) || !isSafeAudioFilename(cropFilename)) throw new Error("Invalid audio filename");
+  const sourceRecord = sourceMetadata && typeof sourceMetadata === "object" ? (sourceMetadata as Record<string, unknown>) : {};
+  const sourceSettings = sourceRecord.settings && typeof sourceRecord.settings === "object" ? (sourceRecord.settings as Record<string, unknown>) : undefined;
+  return {
+    ...sourceRecord,
+    ...(sourceSettings ? { settings: { ...sourceSettings, duration: crop.duration } } : {}),
+    filename: cropFilename,
+    audioUrl: `/outputs/${cropFilename}`,
+    metadataUrl: metadataUrlForAudio(cropFilename),
+    createdAt,
+    sourceFilename,
+    sourceAudioUrl: `/outputs/${sourceFilename}`,
+    sourceMetadataUrl: metadataUrlForAudio(sourceFilename),
+    crop,
+  };
+}
+
+function roundSeconds(value: number) {
+  return Math.round(value * 1000) / 1000;
+}
+
+function formatCropStamp(value: number) {
+  return value.toFixed(3).replace(".", "p");
+}
+
+export function buildAnalysisSummary({ filename, metadata }: { filename: string; metadata: unknown }) {
+  if (!isSafeAudioFilename(filename)) throw new Error("Invalid audio filename");
+  const record = metadata && typeof metadata === "object" ? metadata as Record<string, unknown> : {};
+  const settings = record.settings && typeof record.settings === "object" ? record.settings as Record<string, unknown> : {};
+  return {
+    filename,
+    generatedAt: typeof record.createdAt === "string" ? record.createdAt : undefined,
+    prompt: readString(settings.prompt),
+    negativePrompt: readString(settings.negativePrompt),
+    mode: readString(settings.mode),
+    model: readString(settings.model),
+    duration: readNumber(settings.duration),
+    steps: readNumber(settings.steps),
+    cfgScale: readNumber(settings.cfgScale),
+    format: readString(settings.format),
+    seed: readNumber(settings.seed),
+    mock: typeof settings.mock === "boolean" ? settings.mock : undefined,
+    backend: readString(record.backend),
+    generationDurationMs: readNumber(record.generationDurationMs),
+  };
+}
+
 export function buildStoredZip(entries: { name: string; data: Buffer }[]) {
   const now = new Date();
   const dosTime = ((now.getHours() & 31) << 11) | ((now.getMinutes() & 63) << 5) | (Math.floor(now.getSeconds() / 2) & 31);
@@ -166,6 +259,14 @@ export function buildStoredZip(entries: { name: string; data: Buffer }[]) {
   end.writeUInt32LE(offset, 16);
   end.writeUInt16LE(0, 20);
   return Buffer.concat([...localParts, centralDir, end]);
+}
+
+function readString(value: unknown) {
+  return typeof value === "string" ? value : undefined;
+}
+
+function readNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function crc32(data: Buffer) {
