@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import clsx from "clsx";
 import { controlTips, modelOptions, promptPresets } from "@/lib/generation";
@@ -20,6 +20,7 @@ type PersistedSettings = {
   format: AudioFormat;
   mock: boolean;
   seed: string;
+  playbackVolume: number;
 };
 
 const SETTINGS_KEY = "stable-audio-3-lab:settings:v1";
@@ -34,6 +35,7 @@ export default function Home() {
   const [cfgScale, setCfgScale] = useState(1);
   const [format, setFormat] = useState<AudioFormat>("mp3");
   const [seed, setSeed] = useState("");
+  const [playbackVolume, setPlaybackVolume] = useState(0.8);
   const [mock, setMock] = useState(false);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
@@ -57,6 +59,7 @@ export default function Home() {
         if (typeof saved.cfgScale === "number" && Number.isFinite(saved.cfgScale)) setCfgScale(Math.min(Math.max(saved.cfgScale, 0), 12));
         if (saved.format === "mp3" || saved.format === "wav") setFormat(saved.format);
         if (typeof saved.seed === "string") setSeed(saved.seed.replace(/\D/g, "").slice(0, 10));
+        if (typeof saved.playbackVolume === "number") setPlaybackVolume(clampPlaybackVolume(saved.playbackVolume));
         if (typeof saved.mock === "boolean") setMock(saved.mock);
       }
     } catch {
@@ -70,9 +73,9 @@ export default function Home() {
 
   useEffect(() => {
     if (!settingsHydrated) return;
-    const settings: PersistedSettings = { mode, model, prompt, negativePrompt, duration, steps, cfgScale, format, mock, seed };
+    const settings: PersistedSettings = { mode, model, prompt, negativePrompt, duration, steps, cfgScale, format, mock, seed, playbackVolume };
     window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-  }, [settingsHydrated, mode, model, prompt, negativePrompt, duration, steps, cfgScale, format, mock, seed]);
+  }, [settingsHydrated, mode, model, prompt, negativePrompt, duration, steps, cfgScale, format, mock, seed, playbackVolume]);
 
   async function loadLibrary() {
     setLibraryBusy(true);
@@ -275,6 +278,17 @@ export default function Home() {
                   </div>
                 </Field>
 
+                <Field label={`Default playback volume: ${Math.round(playbackVolume * 100)}%`} tip="Every preview player uses this volume, so new renders and library items stop jump-scaring the room.">
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={Math.round(playbackVolume * 100)}
+                    onChange={(e) => setPlaybackVolume(clampPlaybackVolume(Number(e.target.value) / 100))}
+                    className="w-full accent-cyan-200"
+                  />
+                </Field>
+
                 <div className="rounded-3xl border border-emerald-200/10 bg-emerald-200/[0.06] p-4">
                   <div className="mb-2 text-sm font-semibold text-emerald-100">Quick tuning map</div>
                   <ul className="space-y-1 text-xs leading-5 text-white/58">
@@ -290,8 +304,8 @@ export default function Home() {
               </div>
             </div>
 
-            {result && <ResultPanel result={result} onLoadConfig={loadConfigFromMetadata} onDelete={deleteLibraryItem} />}
-            <LibraryPanel items={libraryItems} busy={libraryBusy} onRefresh={loadLibrary} onDelete={deleteLibraryItem} onLoadConfig={loadConfigFromMetadata} />
+            {result && <ResultPanel result={result} playbackVolume={playbackVolume} onLoadConfig={loadConfigFromMetadata} onDelete={deleteLibraryItem} />}
+            <LibraryPanel items={libraryItems} playbackVolume={playbackVolume} busy={libraryBusy} onRefresh={loadLibrary} onDelete={deleteLibraryItem} onLoadConfig={loadConfigFromMetadata} />
           </motion.section>
         </section>
       </div>
@@ -334,7 +348,22 @@ function TipLabel({ title, tip }: { title: string; tip?: string }) {
   );
 }
 
-function ResultPanel({ result, onLoadConfig, onDelete }: { result: Result; onLoadConfig: (meta: unknown) => void; onDelete: (filename: string) => void }) {
+export function clampPlaybackVolume(volume: number) {
+  if (!Number.isFinite(volume)) return 0.8;
+  return Math.min(Math.max(volume, 0), 1);
+}
+
+export function AudioPreview({ src, volume, label }: { src?: string; volume: number; label: string }) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.volume = clampPlaybackVolume(volume);
+  }, [volume]);
+
+  return <audio ref={audioRef} src={src} controls aria-label={label} className="w-full" />;
+}
+
+function ResultPanel({ result, playbackVolume, onLoadConfig, onDelete }: { result: Result; playbackVolume: number; onLoadConfig: (meta: unknown) => void; onDelete: (filename: string) => void }) {
   return (
     <div className="mt-5 min-w-0 rounded-3xl border border-white/10 bg-black/35 p-4">
       {result.ok ? (
@@ -346,7 +375,7 @@ function ResultPanel({ result, onLoadConfig, onDelete }: { result: Result; onLoa
               {result.filename && <button onClick={() => onDelete(result.filename!)} className="inline-flex min-h-10 items-center justify-center rounded-full border border-red-300/35 bg-red-500/20 px-4 py-2 text-sm font-bold leading-none text-red-100 hover:bg-red-500/30">Delete</button>}
             </div>
           </div>
-          <audio src={result.audioUrl} controls className="w-full" />
+          <AudioPreview src={result.audioUrl} volume={playbackVolume} label={`Generated audio preview for ${result.filename ?? "latest render"}`} />
           <MetadataSummary meta={result.meta} metadataUrl={result.metadataUrl} onLoadConfig={onLoadConfig} />
           <pre className="mt-3 max-h-52 max-w-full overflow-auto rounded-2xl bg-black/40 p-3 font-mono text-xs text-white/62">{JSON.stringify(result.meta, null, 2)}</pre>
         </>
@@ -360,7 +389,7 @@ function ResultPanel({ result, onLoadConfig, onDelete }: { result: Result; onLoa
   );
 }
 
-function LibraryPanel({ items, busy, onRefresh, onDelete, onLoadConfig }: { items: LibraryItem[]; busy: boolean; onRefresh: () => void; onDelete: (filename: string) => void; onLoadConfig: (meta: unknown) => void }) {
+function LibraryPanel({ items, playbackVolume, busy, onRefresh, onDelete, onLoadConfig }: { items: LibraryItem[]; playbackVolume: number; busy: boolean; onRefresh: () => void; onDelete: (filename: string) => void; onLoadConfig: (meta: unknown) => void }) {
   return (
     <section className="mt-5 rounded-3xl border border-white/10 bg-black/25 p-4">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -391,7 +420,7 @@ function LibraryPanel({ items, busy, onRefresh, onDelete, onLoadConfig }: { item
                   <button onClick={() => onDelete(item.filename)} className="inline-flex min-h-10 items-center justify-center rounded-full border border-red-300/35 bg-red-500/20 px-3 py-2 text-xs font-bold leading-none text-red-100 hover:bg-red-500/30">Delete</button>
                 </div>
               </div>
-              <audio src={item.audioUrl} controls className="w-full" />
+              <AudioPreview src={item.audioUrl} volume={playbackVolume} label={`Library audio preview for ${item.filename}`} />
               <MetadataSummary meta={item.meta} metadataUrl={item.metadataUrl} compact onLoadConfig={onLoadConfig} />
             </article>
           ))}
