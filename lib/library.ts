@@ -1,5 +1,6 @@
 import path from "node:path";
 import type { GenerateRequest } from "./generation";
+import type { GenerationBackend } from "./generator-backend";
 
 export type ProcessResult = { code: number | null; stdout: string; stderr: string };
 
@@ -8,6 +9,7 @@ export type GenerationMetadata = {
   audioUrl: string;
   metadataUrl: string;
   createdAt: string;
+  backend: GenerationBackend;
   generationDurationMs?: number;
   request: GenerateRequest;
   settings: {
@@ -51,12 +53,14 @@ export function buildLibraryMetadata({
   filename,
   input,
   python,
+  backend = "mlx",
   createdAt = new Date().toISOString(),
   generationDurationMs,
 }: {
   filename: string;
   input: GenerateRequest;
   python: ProcessResult;
+  backend?: GenerationBackend;
   createdAt?: string;
   generationDurationMs?: number;
 }): GenerationMetadata {
@@ -66,6 +70,7 @@ export function buildLibraryMetadata({
     audioUrl: `/outputs/${filename}`,
     metadataUrl: metadataUrlForAudio(filename),
     createdAt,
+    backend,
     generationDurationMs,
     request: input,
     settings: {

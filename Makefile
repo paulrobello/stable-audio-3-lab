@@ -8,6 +8,7 @@ build:
 
 test:
 	npm run test
+	python3 -m unittest discover -s tests -v
 
 typecheck:
 	npx tsc --noEmit

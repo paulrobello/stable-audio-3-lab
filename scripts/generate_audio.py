@@ -11,18 +11,30 @@ import json
 import math
 import os
 import random
+import signal
 import shutil
 import struct
 import subprocess
 import sys
 import wave
 from pathlib import Path
+from types import SimpleNamespace
 
 MODEL_MAP = {
     "small-sfx": "small-sfx",
     "small-music": "small-music",
     "medium": "medium",
 }
+
+MLX_MODEL_MAP = {
+    "small-sfx": ("sm-sfx", "same-s"),
+    "small-music": ("sm-music", "same-s"),
+    "medium": ("medium", "same-l"),
+}
+
+
+def normalize_backend(value: str | None) -> str:
+    return value if value in {"mlx", "torch"} else "mlx"
 
 
 def write_mock_wav(path: Path, prompt: str, mode: str, duration: float, seed: int | None) -> None:
@@ -56,6 +68,10 @@ def write_mock_wav(path: Path, prompt: str, mode: str, duration: float, seed: in
 
 
 def generate_real(args: argparse.Namespace) -> None:
+    if args.backend == "mlx":
+        generate_mlx(args)
+        return
+
     try:
         from stable_audio_3 import StableAudioModel  # type: ignore
     except Exception as exc:  # pragma: no cover - depends on external install
@@ -102,6 +118,104 @@ def generate_real(args: argparse.Namespace) -> None:
         raise RuntimeError(f"Could not save generated audio object of type {type(audio)!r}") from exc
 
 
+def generate_mlx(args: argparse.Namespace) -> None:
+    project_root = Path(__file__).resolve().parent.parent
+    mlx_dir = Path(os.environ.get("STABLE_AUDIO_MLX_DIR", project_root / "vendor" / "stable-audio-3" / "optimized" / "mlx"))
+    sa3 = mlx_dir / "sa3"
+    if not sa3.exists():
+        raise RuntimeError(f"Stable Audio 3 MLX wrapper not found at {sa3}. Run vendor/stable-audio-3/optimized/mlx/install.sh first.")
+
+    dit, decoder = MLX_MODEL_MAP[args.model]
+    command = [
+        str(sa3),
+        "--prompt", args.prompt,
+        "--dit", dit,
+        "--decoder", decoder,
+        "--seconds", str(args.duration),
+        "--steps", str(args.steps),
+        "--cfg", str(args.cfg_scale),
+        "--out", str(args.out),
+    ]
+    if args.negative_prompt:
+        command.extend(["--negative-prompt", args.negative_prompt])
+    if args.seed is not None:
+        command.extend(["--seed", str(args.seed)])
+
+    result = run_process_tree(command, cwd=mlx_dir, timeout_seconds=mlx_timeout_seconds())
+    if result.returncode != 0:
+        raise RuntimeError(
+            "MLX Stable Audio generation failed\n"
+            f"command: {' '.join(command)}\n"
+            f"stdout:\n{result.stdout[-4000:]}\n"
+            f"stderr:\n{result.stderr[-4000:]}"
+        )
+
+
+def mlx_timeout_seconds() -> float:
+    raw = os.environ.get("STABLE_AUDIO_MLX_TIMEOUT_MS") or os.environ.get("STABLE_AUDIO_TIMEOUT_MS") or "900000"
+    try:
+        return max(1.0, float(raw) / 1000.0)
+    except ValueError:
+        return 900.0
+
+
+def run_process_tree(command: list[str], cwd: Path, timeout_seconds: float):
+    """Run a child command and clean up its whole process group on timeout/SIGTERM."""
+    process: subprocess.Popen[str] | None = None
+    previous_handlers: dict[int, object] = {}
+
+    def terminate_process_group(signum: int, _frame: object) -> None:
+        if process:
+            terminate_process_tree(process, grace_seconds=2)
+        raise SystemExit(128 + signum)
+
+    for signum in (signal.SIGTERM, signal.SIGINT):
+        previous_handlers[signum] = signal.getsignal(signum)
+        signal.signal(signum, terminate_process_group)
+
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=str(cwd),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        try:
+            stdout, stderr = process.communicate(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired as exc:
+            stdout, stderr = terminate_process_tree(process, grace_seconds=10)
+            raise RuntimeError(
+                f"Timed out after {timeout_seconds:.1f}s running {' '.join(command)}\n"
+                f"stdout:\n{stdout[-4000:]}\n"
+                f"stderr:\n{stderr[-4000:]}"
+            ) from exc
+        return SimpleNamespace(returncode=process.returncode, stdout=stdout, stderr=stderr)
+    finally:
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)  # type: ignore[arg-type]
+
+
+def terminate_process_tree(process: subprocess.Popen[str], grace_seconds: float) -> tuple[str, str]:
+    if process.poll() is not None:
+        return process.communicate()
+
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return process.communicate()
+
+    try:
+        return process.communicate(timeout=grace_seconds)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        return process.communicate(timeout=5)
+
+
 def convert_to_mp3(wav_path: Path, mp3_path: Path) -> None:
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg:
@@ -140,10 +254,12 @@ def main() -> int:
     parser.add_argument("--steps", type=int, default=8)
     parser.add_argument("--cfg-scale", type=float, default=1.0)
     parser.add_argument("--format", choices=["mp3", "wav"], default="mp3")
+    parser.add_argument("--backend", choices=["mlx", "torch"], default=os.environ.get("STABLE_AUDIO_BACKEND", "mlx"))
     parser.add_argument("--seed", type=int)
     parser.add_argument("--out", required=True)
     parser.add_argument("--mock", action="store_true")
     args = parser.parse_args()
+    args.backend = normalize_backend(args.backend)
 
     out = Path(args.out)
     render_path = out if args.format == "wav" else out.with_suffix(".tmp.wav")
@@ -158,7 +274,7 @@ def main() -> int:
             render_path.unlink()
         except OSError:
             pass
-    print(json.dumps({"out": str(out), "bytes": out.stat().st_size, "mock": args.mock, "format": args.format}))
+    print(json.dumps({"out": str(out), "bytes": out.stat().st_size, "mock": args.mock, "format": args.format, "backend": args.backend}))
     return 0
 
 

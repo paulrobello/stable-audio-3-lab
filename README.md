@@ -48,6 +48,16 @@ By default, `.env.example` sets `STABLE_AUDIO_MOCK=true`, which lets the UI prod
 
 ## Real Stable Audio 3 inference
 
+This lab now defaults to the official **Apple Silicon MLX backend** for real inference. Stability ships MLX weights for all three UI models:
+
+| UI model | MLX DiT | Decoder | Notes |
+| --- | --- | --- | --- |
+| Small Music | `sm-music` | `same-s` | fast music sketches |
+| Small SFX | `sm-sfx` | `same-s` | sound effects / Foley / UI stings |
+| Medium | `medium` | `same-l` | higher-quality music, up to 380s |
+
+The MLX path uses `stabilityai/stable-audio-3-optimized` and avoids the CUDA/FlashAttention requirements of the standard PyTorch Medium checkpoint. On Apple Silicon, this is the happy path. Tiny robots rejoice.
+
 The standard Stable Audio 3 Hugging Face repos are gated. Accept the license terms first:
 
 - <https://huggingface.co/stabilityai/stable-audio-3-small-sfx>
@@ -64,13 +74,40 @@ uv sync
 uv run hf auth login
 ```
 
-Download weights with Paul's preferred Hugging Face downloader:
+Install the MLX runtime:
 
 ```bash
-hfdownloader download stabilityai/stable-audio-3-small-sfx
-hfdownloader download stabilityai/stable-audio-3-small-music
-# Optional / experimental on Mac:
-hfdownloader download stabilityai/stable-audio-3-medium
+cd ~/Repos/stable-audio-3-lab/vendor/stable-audio-3/optimized/mlx
+./install.sh -y --download ''
+```
+
+Download the official optimized MLX weights with Paul's preferred Hugging Face downloader:
+
+```bash
+cd ~/Repos/stable-audio-3-lab/vendor/stable-audio-3/optimized/mlx
+hfdownloader download stabilityai/stable-audio-3-optimized \
+  --local-dir ./hf-optimized \
+  --max-active 4 \
+  -c 8 \
+  -F MLX \
+  -E onnx,tensorRT,Thumbnail
+```
+
+Expose those files where the MLX runtime expects them:
+
+```bash
+python3 - <<'PY'
+from pathlib import Path
+mlx = Path('/Users/probello/Repos/stable-audio-3-lab/vendor/stable-audio-3/optimized/mlx')
+src = mlx / 'hf-optimized/stabilityai/stable-audio-3-optimized/MLX'
+dst = mlx / 'models/mlx'
+dst.mkdir(parents=True, exist_ok=True)
+for p in src.glob('*.npz'):
+    target = dst / p.name
+    if target.exists() or target.is_symlink():
+        target.unlink()
+    target.symlink_to(p)
+PY
 ```
 
 Update `.env.local`:
@@ -78,8 +115,11 @@ Update `.env.local`:
 ```bash
 STABLE_AUDIO_MOCK=false
 STABLE_AUDIO_PYTHON=/Users/probello/Repos/stable-audio-3-lab/vendor/stable-audio-3/.venv/bin/python
+STABLE_AUDIO_BACKEND=mlx
 STABLE_AUDIO_TIMEOUT_MS=900000
 ```
+
+`STABLE_AUDIO_BACKEND=mlx` is the default when unset. Set `STABLE_AUDIO_BACKEND=torch` only if you intentionally want to test the standard PyTorch backend.
 
 Then start the app and turn off **Mock mode** in the UI if needed.
 
@@ -111,6 +151,7 @@ Metadata includes:
 - output filename and URLs
 - creation time
 - generation runtime in milliseconds
+- backend (`mlx` or `torch`)
 - prompt and negative prompt
 - mode, model, duration, steps, CFG, format, mock/real mode
 - seed, when present
@@ -138,7 +179,9 @@ make pre-commit-install # install pre-commit and pre-push git hooks
 | --- | --- |
 | `HF_TOKEN` | Optional Hugging Face token for gated repos / auth flows. |
 | `STABLE_AUDIO_MOCK` | `true` to force mock generation; `false` for real model inference. |
-| `STABLE_AUDIO_PYTHON` | Python executable with `stable-audio-3` installed. Defaults to `python3`. |
+| `STABLE_AUDIO_PYTHON` | Python executable for the bridge script. Defaults to `python3`. |
+| `STABLE_AUDIO_BACKEND` | Real inference backend: `mlx` by default/recommended, or `torch` for the standard PyTorch path. |
+| `STABLE_AUDIO_MLX_DIR` | Optional override for the vendored MLX runtime directory. |
 | `STABLE_AUDIO_TIMEOUT_MS` | Generation timeout for the API route. Defaults to 900000ms. |
 
 ## Git hygiene

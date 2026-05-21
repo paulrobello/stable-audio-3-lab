@@ -433,6 +433,7 @@ function LibraryPanel({ items, playbackVolume, busy, onRefresh, onDelete, onLoad
 function MetadataSummary({ meta, metadataUrl, compact = false, onLoadConfig }: { meta?: unknown; metadataUrl?: string; compact?: boolean; onLoadConfig: (meta: unknown) => void }) {
   const settings = settingsFromMetadata(meta);
   const renderDurationMs = readGenerationDurationMs(meta);
+  const backend = readBackend(meta);
   if (!settings) {
     return (
       <div className="mt-3 rounded-2xl border border-dashed border-white/10 bg-white/[0.03] p-3 text-xs text-white/42">
@@ -465,6 +466,7 @@ function MetadataSummary({ meta, metadataUrl, compact = false, onLoadConfig }: {
         {typeof settings.steps === "number" && <span className="rounded-full bg-white/[0.07] px-2.5 py-1">{settings.steps} steps</span>}
         {typeof settings.cfgScale === "number" && <span className="rounded-full bg-white/[0.07] px-2.5 py-1">CFG {settings.cfgScale}</span>}
         {settings.format && <span className="rounded-full bg-white/[0.07] px-2.5 py-1">{settings.format}</span>}
+        {backend && <span className="rounded-full bg-fuchsia-200/10 px-2.5 py-1 text-fuchsia-100">{backend}</span>}
         {typeof renderDurationMs === "number" && <span className="rounded-full bg-cyan-200/10 px-2.5 py-1 text-cyan-100">render {formatDuration(renderDurationMs)}</span>}
         {typeof settings.seed === "number" && <span className="rounded-full bg-white/[0.07] px-2.5 py-1">seed {settings.seed}</span>}
         {settings.mock && <span className="rounded-full bg-amber-200/10 px-2.5 py-1 text-amber-100">mock</span>}
@@ -477,6 +479,12 @@ function readGenerationDurationMs(meta: unknown) {
   if (!meta || typeof meta !== "object") return undefined;
   const value = (meta as Record<string, unknown>).generationDurationMs;
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function readBackend(meta: unknown) {
+  if (!meta || typeof meta !== "object") return undefined;
+  const value = (meta as Record<string, unknown>).backend;
+  return value === "mlx" || value === "torch" ? value : undefined;
 }
 
 function formatDuration(ms: number) {

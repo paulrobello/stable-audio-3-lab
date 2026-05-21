@@ -23,6 +23,7 @@ describe("library metadata sidecars", () => {
         mock: false,
       },
       python: { code: 0, stdout: "ok", stderr: "" },
+      backend: "mlx",
       createdAt: "2026-05-21T15:00:00.000Z",
       generationDurationMs: 12345,
     });
@@ -40,5 +41,6 @@ describe("library metadata sidecars", () => {
       mock: false,
     });
     expect(meta.generationDurationMs).toBe(12345);
+    expect(meta.backend).toBe("mlx");
   });
 });

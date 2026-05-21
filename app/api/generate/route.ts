@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 import { normalizeGenerationRequest } from "@/lib/generation";
+import { buildGeneratorArgs, resolveGenerationBackend } from "@/lib/generator-backend";
 import { buildLibraryMetadata, metadataPathForAudio } from "@/lib/library";
 
 export const runtime = "nodejs";
@@ -18,20 +19,14 @@ export async function POST(request: NextRequest) {
     const outPath = path.join(outputDir, filename);
     const python = process.env.STABLE_AUDIO_PYTHON || "python3";
     const mock = input.mock || process.env.STABLE_AUDIO_MOCK === "true";
-    const args = [
-      path.join(process.cwd(), "scripts", "generate_audio.py"),
-      "--mode", input.mode,
-      "--model", input.model,
-      "--prompt", input.prompt,
-      "--negative-prompt", input.negativePrompt || "",
-      "--duration", String(input.duration),
-      "--steps", String(input.steps),
-      "--cfg-scale", String(input.cfgScale),
-      "--format", input.format,
-      "--out", outPath,
-    ];
-    if (input.seed !== undefined) args.push("--seed", String(input.seed));
-    if (mock) args.push("--mock");
+    const backend = resolveGenerationBackend({ envBackend: process.env.STABLE_AUDIO_BACKEND, mock });
+    const args = buildGeneratorArgs({
+      scriptPath: path.join(process.cwd(), "scripts", "generate_audio.py"),
+      outputPath: outPath,
+      input,
+      backend,
+      mock,
+    });
 
     const startedAt = Date.now();
     const result = await runProcess(python, args, Number(process.env.STABLE_AUDIO_TIMEOUT_MS || 900000));
@@ -39,7 +34,7 @@ export async function POST(request: NextRequest) {
     if (result.code !== 0) {
       return NextResponse.json({ ok: false, error: "Python generator failed", detail: { ...result, generationDurationMs } }, { status: 500 });
     }
-    const meta = buildLibraryMetadata({ filename, input, python: result, generationDurationMs });
+    const meta = buildLibraryMetadata({ filename, input, python: result, backend, generationDurationMs });
     await writeFile(metadataPathForAudio(outPath), JSON.stringify(meta, null, 2));
     return NextResponse.json({ ok: true, audioUrl: `/outputs/${filename}`, metadataUrl: meta.metadataUrl, filename, meta });
   } catch (error) {
