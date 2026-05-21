@@ -1,70 +1,166 @@
 # Stable Audio 3 Lab
 
-A local dark-mode Next.js lab for testing Stability AI's Stable Audio 3 open-weight models for music and sound-effect generation on Paul's M4 Max MacBook Pro.
+## Table of Contents
 
-The app gives you a browser UI for prompt iteration, model/settings control, in-browser playback, generated-audio history, sidecar metadata, and reproducible-ish seed workflows. Mock mode is included so the whole UI/API/Python/audio loop can be tested without waking the model goblin.
+* [About](#about)
+* [Features](#features)
+  * [Core Capabilities](#core-capabilities)
+  * [Model Backends](#model-backends)
+  * [Library and Metadata](#library-and-metadata)
+  * [Technical Excellence](#technical-excellence)
+* [Screenshots](#screenshots)
+* [Prerequisites for running](#prerequisites-for-running)
+* [Prerequisites for dev](#prerequisites-for-dev)
+* [Installing for dev mode](#installing-for-dev-mode)
+* [Real Stable Audio 3 inference](#real-stable-audio-3-inference)
+  * [Accept gated model terms](#accept-gated-model-terms)
+  * [Install the official Stable Audio 3 repo](#install-the-official-stable-audio-3-repo)
+  * [Install the MLX runtime](#install-the-mlx-runtime)
+  * [Download MLX weights](#download-mlx-weights)
+  * [Configure real inference](#configure-real-inference)
+* [Environment Variables](#environment-variables)
+* [Running Stable Audio 3 Lab](#running-stable-audio-3-lab)
+* [Quick start music workflow](#quick-start-music-workflow)
+* [Quick start SFX workflow](#quick-start-sfx-workflow)
+* [Reproducible seeds](#reproducible-seeds)
+* [Output and metadata](#output-and-metadata)
+* [Useful commands](#useful-commands)
+* [Project layout](#project-layout)
+* [Research](#research)
+* [Contributing](#contributing)
+* [FAQ](#faq)
+* [Roadmap](#roadmap)
+  * [Where we are](#where-we-are)
+  * [Where we're going](#where-were-going)
+* [What's new](#whats-new)
 
-## What it does
+![Runs on MacOS](https://img.shields.io/badge/runs%20on-MacOS-blue)
+![Arch AppleSilicon](https://img.shields.io/badge/arch-AppleSilicon-blue)
+![Next.js](https://img.shields.io/badge/Next.js-16-black)
+![Backend MLX](https://img.shields.io/badge/backend-MLX-8b5cf6)
+![License MIT](https://img.shields.io/badge/license-MIT-green)
 
-- Generates music or sound effects through a Next.js API route and Python bridge.
-- Supports Stable Audio 3 Small SFX, Small Music, and Medium model selections.
-- Defaults to MP3 output, with WAV available for raw/editable renders.
-- Provides controls for prompt, negative prompt, duration, steps, CFG, format, model, mock mode, and seed.
-- Supports fixed seeds for repeatable iteration; blank seed means random generation.
-- Persists UI settings in `localStorage` under `stable-audio-3-lab:settings:v1`.
-- Writes sidecar metadata next to each output file, including prompt/settings, seed, Python output, and generation runtime.
-- Lists previous renders in a Library with playback, download, metadata download, config reload, and confirmed delete.
-- Deletes both audio and metadata sidecar files when a library item is removed.
+## About
 
-## Project layout
+Stable Audio 3 Lab is a local dark-mode Next.js application for testing Stability AI's Stable Audio 3 open-weight models for music and sound-effect generation on an Apple Silicon Mac.
 
-```text
-app/
-  api/generate/route.ts    # POST endpoint that calls scripts/generate_audio.py
-  api/library/route.ts     # GET/DELETE endpoint for generated audio library
-  page.tsx                 # Main browser UI
-lib/
-  generation.ts            # Request schema, model metadata, prompt presets, tips
-  library.ts               # Output/metadata sidecar helpers
-  metadata-settings.ts     # Metadata → reusable UI settings parser
-scripts/
-  generate_audio.py        # Python bridge for mock and real Stable Audio 3 generation
-public/outputs/            # Runtime audio + .json sidecars; ignored except .gitkeep
-RESEARCH.md                # Research notes and M4 Max fit verdict
-```
+The app was built for Paul's M4 Max MacBook Pro with 128GB unified memory and uses the official Stable Audio 3 MLX optimized runtime by default. It gives you a browser UI for prompt iteration, model/settings control, in-browser playback, generated-audio history, sidecar metadata, reproducible-ish seed workflows, and a mock mode for fast UI/API testing without waking the model goblin.
 
-## Quick start
+## Features
+
+### Core Capabilities
+
+- **Music and SFX Modes**: Switch between music prompts and sound-effect/Foley prompts with mode-specific presets.
+- **Model Selection**: Test Stable Audio 3 Small Music, Small SFX, and Medium from one interface.
+- **Generation Controls**: Adjust prompt, negative prompt, duration, steps, CFG, seed, format, and backend-backed mock/real behavior.
+- **MP3 and WAV Output**: MP3 is the default for smaller shareable renders; WAV is available for raw/editable output.
+- **Persistent Settings**: UI settings are saved in `localStorage` under `stable-audio-3-lab:settings:v1`.
+- **Default Playback Volume**: Every preview player uses the shared persisted volume setting, because surprise goblin volume is rude.
+
+### Model Backends
+
+- **Full MLX Path**: Real inference defaults to Apple's MLX backend for all supported UI models.
+- **Official Optimized Weights**: Uses `stabilityai/stable-audio-3-optimized` MLX weights.
+- **Backend Routing**: Maps UI model names to official MLX DiT/decoder pairs.
+- **Torch Escape Hatch**: `STABLE_AUDIO_BACKEND=torch` remains available if you intentionally want to test the standard PyTorch path.
+- **Timeout Safety**: MLX subprocesses run in their own process group and are terminated cleanly on timeout/interruption.
+
+### Library and Metadata
+
+- **Generated Audio Library**: Listen to previous generations directly in the browser.
+- **Download and Delete**: Download audio keepers or delete cursed renders with confirmation.
+- **Metadata Sidecars**: Every output gets a `.json` sidecar with prompt, settings, backend, seed, runtime, and Python output tails.
+- **Load Config**: Restore prompt/settings/seed from an existing library item to iterate from a prior render.
+- **Metadata Cleanup**: Deleting a library item removes both the audio file and sidecar metadata.
+
+### Technical Excellence
+
+- **Next.js App Router**: Browser UI plus API routes for generation and library management.
+- **Typed Request Validation**: Zod schemas validate generation requests.
+- **Python Bridge**: A small Python bridge handles mock generation, real Stable Audio invocation, MP3 conversion, and metadata-safe output.
+- **Test Coverage**: Vitest tests cover UI/backend helpers; Python unittests cover process cleanup and backend normalization.
+- **Pre-commit Hooks**: Formatting, linting, secret checks, and build/test gates are wired through the Makefile.
+
+## Screenshots
+
+Music mode with prompt controls, model tuning, playback volume, and generation library.
+
+![Music Mode](https://raw.githubusercontent.com/paulrobello/stable-audio-3-lab/main/docs/music_mode.png)
+
+Sound FX mode with SFX-focused prompts and the same local generation workflow.
+
+![Sound FX Mode](https://raw.githubusercontent.com/paulrobello/stable-audio-3-lab/main/docs/sfx_mode.png)
+
+## Prerequisites for running
+
+* macOS on Apple Silicon is the intended target.
+* Node.js 20 or newer.
+* Python 3.11 or newer.
+* `uv` for the vendored Stable Audio 3 Python environment.
+* `ffmpeg` for MP3 conversion.
+* `hfdownloader` for Hugging Face model downloads.
+* A Hugging Face account with Stability's gated model terms accepted for real inference.
+
+Mock mode does not require the Stable Audio 3 models and is useful for validating the browser → API → Python → output → playback loop.
+
+## Prerequisites for dev
+
+* Install Node.js and npm.
+* Install Python 3.11+.
+* Install uv:
 
 ```bash
-cd ~/Repos/stable-audio-3-lab
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+* Install pre-commit if you want local git hooks:
+
+```bash
+python3 -m pip install pre-commit
+```
+
+## Installing for dev mode
+
+Clone the repo and install dependencies:
+
+```bash
+git clone https://github.com/paulrobello/stable-audio-3-lab
+cd stable-audio-3-lab
 npm install
 cp .env.example .env.local
+make pre-commit-install
+```
+
+Start the local dev server:
+
+```bash
 npm run dev
 ```
 
 Open <http://localhost:3007>.
 
-By default, `.env.example` sets `STABLE_AUDIO_MOCK=true`, which lets the UI produce simple generated audio with only Python stdlib. It is intentionally cheesy, but very useful for verifying the full browser → API → Python → file → playback loop.
-
 ## Real Stable Audio 3 inference
 
-This lab now defaults to the official **Apple Silicon MLX backend** for real inference. Stability ships MLX weights for all three UI models:
+This lab defaults to the official **Apple Silicon MLX backend** for real inference. Stability ships MLX weights for all three UI models:
 
 | UI model | MLX DiT | Decoder | Notes |
 | --- | --- | --- | --- |
-| Small Music | `sm-music` | `same-s` | fast music sketches |
-| Small SFX | `sm-sfx` | `same-s` | sound effects / Foley / UI stings |
-| Medium | `medium` | `same-l` | higher-quality music, up to 380s |
+| Small Music | `sm-music` | `same-s` | Fast music sketches. |
+| Small SFX | `sm-sfx` | `same-s` | Sound effects, Foley, UI stings. |
+| Medium | `medium` | `same-l` | Higher-quality music and longer forms. |
 
-The MLX path uses `stabilityai/stable-audio-3-optimized` and avoids the CUDA/FlashAttention requirements of the standard PyTorch Medium checkpoint. On Apple Silicon, this is the happy path. Tiny robots rejoice.
+The MLX path uses `stabilityai/stable-audio-3-optimized` and avoids the CUDA/FlashAttention requirements of the standard PyTorch Medium checkpoint. On Paul's M4 Max, this is the happy path.
 
-The standard Stable Audio 3 Hugging Face repos are gated. Accept the license terms first:
+### Accept gated model terms
 
-- <https://huggingface.co/stabilityai/stable-audio-3-small-sfx>
-- <https://huggingface.co/stabilityai/stable-audio-3-small-music>
-- <https://huggingface.co/stabilityai/stable-audio-3-medium>
+Accept the license terms on Hugging Face first:
 
-Then install the official library in the vendored location used by this project:
+* <https://huggingface.co/stabilityai/stable-audio-3-small-sfx>
+* <https://huggingface.co/stabilityai/stable-audio-3-small-music>
+* <https://huggingface.co/stabilityai/stable-audio-3-medium>
+* <https://huggingface.co/stabilityai/stable-audio-3-optimized>
+
+### Install the official Stable Audio 3 repo
 
 ```bash
 cd ~/Repos/stable-audio-3-lab
@@ -74,14 +170,16 @@ uv sync
 uv run hf auth login
 ```
 
-Install the MLX runtime:
+### Install the MLX runtime
 
 ```bash
 cd ~/Repos/stable-audio-3-lab/vendor/stable-audio-3/optimized/mlx
 ./install.sh -y --download ''
 ```
 
-Download the official optimized MLX weights with Paul's preferred Hugging Face downloader:
+### Download MLX weights
+
+Use Paul's preferred Hugging Face downloader:
 
 ```bash
 cd ~/Repos/stable-audio-3-lab/vendor/stable-audio-3/optimized/mlx
@@ -110,6 +208,8 @@ for p in src.glob('*.npz'):
 PY
 ```
 
+### Configure real inference
+
 Update `.env.local`:
 
 ```bash
@@ -121,17 +221,69 @@ STABLE_AUDIO_TIMEOUT_MS=900000
 
 `STABLE_AUDIO_BACKEND=mlx` is the default when unset. Set `STABLE_AUDIO_BACKEND=torch` only if you intentionally want to test the standard PyTorch backend.
 
-Then start the app and turn off **Mock mode** in the UI if needed.
+## Environment Variables
+
+### Variables are loaded in the following order, last one to set a var wins
+
+* Host environment
+* `.env.local`
+* `.env.example` as documentation/default reference only
+* UI settings for client-side persisted controls
+
+### Environment Variables for Stable Audio 3 Lab configuration
+
+* `HF_TOKEN` - Optional Hugging Face token for gated repos/auth flows.
+* `STABLE_AUDIO_MOCK` - `true` to force mock generation; `false` for real model inference.
+* `STABLE_AUDIO_PYTHON` - Python executable for the bridge script. Defaults to `python3`.
+* `STABLE_AUDIO_BACKEND` - Real inference backend: `mlx` by default/recommended, or `torch` for the standard PyTorch path.
+* `STABLE_AUDIO_MLX_DIR` - Optional override for the vendored MLX runtime directory.
+* `STABLE_AUDIO_TIMEOUT_MS` - Generation timeout for the API route. Defaults to `900000` ms.
+
+## Running Stable Audio 3 Lab
+
+From the repo root:
+
+```bash
+npm run dev
+```
+
+Then open:
+
+```text
+http://localhost:3007
+```
+
+## Quick start music workflow
+
+* Start Stable Audio 3 Lab.
+* Select **Music** mode.
+* Choose **Small Music** for fast sketches or **Medium** for higher-quality passes.
+* Pick MP3 for shareable output or WAV for raw/editable output.
+* Enter a musical prompt such as tempo, genre, instruments, mix style, and mood.
+* Start around 8 steps and CFG 1–2.
+* Click **Generate MP3** or **Generate WAV**.
+* Preview the render in-browser.
+* Download the keeper or use **Load config** from the Library to iterate.
+
+## Quick start SFX workflow
+
+* Start Stable Audio 3 Lab.
+* Select **Sound FX** mode or click **Small SFX**.
+* Describe the object, action, material, space, and tail.
+* Keep duration short for Foley/UI sounds, usually 1–8 seconds.
+* Start with 4–8 steps for quick drafts.
+* Generate, preview, and download the result.
+* Use the Library to compare variations and delete cursed noises before they multiply.
 
 ## Reproducible seeds
 
 The **Seed** field is optional:
 
-- Leave it blank for random generation (`-1` is passed to Stable Audio 3).
-- Set a number to reuse the same seed.
-- Use **Random** to generate a seed and lock it into the settings.
-- Use **Clear** to return to random generation.
-- Use **Load config** on a library item to reload its prompt/settings/seed for another pass.
+* Leave it blank for random generation (`-1` is passed to Stable Audio 3).
+* Set a number to reuse the same seed.
+* Use **Random** to generate a seed and lock it into the settings.
+* Use **Clear** to return to random generation.
+* Use **Load config** on a library item to reload its prompt/settings/seed for another pass.
 
 Diffusion reproducibility is best-effort: use the same model, prompt, negative prompt, duration, steps, CFG, seed, backend, and library version for the closest repeat.
 
@@ -148,14 +300,14 @@ public/outputs/sa3-sfx-123.mp3.json
 
 Metadata includes:
 
-- output filename and URLs
-- creation time
-- generation runtime in milliseconds
-- backend (`mlx` or `torch`)
-- prompt and negative prompt
-- mode, model, duration, steps, CFG, format, mock/real mode
-- seed, when present
-- Python process stdout/stderr tail
+* output filename and URLs
+* creation time
+* generation runtime in milliseconds
+* backend (`mlx` or `torch`)
+* prompt and negative prompt
+* mode, model, duration, steps, CFG, format, mock/real mode
+* seed, when present
+* Python process stdout/stderr tail
 
 The Library UI can download the audio, download the JSON metadata, load metadata back into the settings panel, or delete both files after confirmation.
 
@@ -165,37 +317,83 @@ The Library UI can download the audio, download the JSON metadata, load metadata
 npm run dev        # serve on port 3007
 npm run test       # Vitest unit tests
 npm run build      # production build + TypeScript check
+npm run typecheck  # TypeScript only
 npm run py:mock    # generate public/outputs/mock.wav from CLI
 
-make checkall      # test + build
+make checkall      # test + build + Python unittest
 make typecheck     # TypeScript only
 make pre-commit    # run pre-commit hooks on all files
 make pre-commit-install # install pre-commit and pre-push git hooks
 ```
 
-## Environment variables
+## Project layout
 
-| Variable | Purpose |
-| --- | --- |
-| `HF_TOKEN` | Optional Hugging Face token for gated repos / auth flows. |
-| `STABLE_AUDIO_MOCK` | `true` to force mock generation; `false` for real model inference. |
-| `STABLE_AUDIO_PYTHON` | Python executable for the bridge script. Defaults to `python3`. |
-| `STABLE_AUDIO_BACKEND` | Real inference backend: `mlx` by default/recommended, or `torch` for the standard PyTorch path. |
-| `STABLE_AUDIO_MLX_DIR` | Optional override for the vendored MLX runtime directory. |
-| `STABLE_AUDIO_TIMEOUT_MS` | Generation timeout for the API route. Defaults to 900000ms. |
-
-## Git hygiene
-
-This repo intentionally does **not** commit:
-
-- `.env*` local config or tokens
-- `node_modules/`
-- `.next/`
-- `vendor/` Stable Audio 3 clone and Python environment
-- downloaded model weights (`*.safetensors`, `*.ckpt`, `*.pt`, `*.pth`, `*.onnx`, `*.gguf`)
-- generated audio and metadata under `public/outputs/`
-- local agent/editor state from the git/CI guide
+```text
+app/
+  api/generate/route.ts    # POST endpoint that calls scripts/generate_audio.py
+  api/library/route.ts     # GET/DELETE endpoint for generated audio library
+  page.tsx                 # Main browser UI
+docs/
+  music_mode.png           # README screenshot for Music mode
+  sfx_mode.png             # README screenshot for Sound FX mode
+lib/
+  generation.ts            # Request schema, model metadata, prompt presets, tips
+  generator-backend.ts     # Backend/model routing for MLX/Torch invocation
+  library.ts               # Output/metadata sidecar helpers
+  metadata-settings.ts     # Metadata → reusable UI settings parser
+scripts/
+  generate_audio.py        # Python bridge for mock and real Stable Audio 3 generation
+public/outputs/            # Runtime audio + .json sidecars; ignored except .gitkeep
+RESEARCH.md                # Research notes and M4 Max fit verdict
+```
 
 ## Research
 
 See [`RESEARCH.md`](./RESEARCH.md) for the Stable Audio 3 model-family notes and M4 Max fit verdict.
+
+## Contributing
+
+Use conventional commits and run the quality gates before committing:
+
+```bash
+make checkall
+make pre-commit
+```
+
+## FAQ
+
+* Q: Does this require Docker?
+  * A: No. The intended local path is Next.js + Python + MLX on Apple Silicon.
+* Q: Does this run without the gated models?
+  * A: Yes. Mock mode works without downloaded weights and is useful for UI testing.
+* Q: Which backend should I use on an M4 Max?
+  * A: MLX. It is the default and supports Small Music, Small SFX, and Medium through Stability's optimized weights.
+* Q: Why are generated files ignored by git?
+  * A: Audio outputs and metadata are runtime artifacts. Keepers should be exported/downloaded, not committed by accident.
+* Q: Are raw screenshot links supposed to work immediately?
+  * A: They resolve after this repo is pushed to `github.com/paulrobello/stable-audio-3-lab` on the `main` branch.
+
+## Roadmap
+
+### Where we are
+
+* **Music and SFX Generation** - Local browser workflow for both music and sound effects.
+* **Full MLX Backend** - All UI models route through the official Apple Silicon optimized runtime by default.
+* **Library Management** - Playback, download, metadata download, config reload, refresh, and delete.
+* **Settings Persistence** - Mode, model, prompt, negative prompt, duration, steps, CFG, format, seed, mock mode, and volume persist locally.
+* **Safety Controls** - Timeout handling and process-tree cleanup for MLX generation.
+* **Testing and Git Hooks** - Unit tests, build checks, Python tests, and pre-commit hooks are wired.
+
+### Where we're going
+
+* More visual audio analysis such as waveform or spectrogram previews.
+* Batch variation generation from a fixed prompt/seed strategy.
+* Favorite/star system for library keepers.
+* Optional prompt templates for Foley, UI stings, loops, trailer hits, ambience, and music beds.
+* Export bundles with audio plus metadata for sharing experiments.
+
+## What's new
+
+### v0.1.0
+
+* Initial Stable Audio 3 Lab app with Next.js UI, mock mode, real MLX inference, library management, metadata sidecars, seed controls, default playback volume, and README screenshots.
