@@ -68,8 +68,11 @@ The app was built for Paul's M4 Max MacBook Pro with 128GB unified memory and us
 ### Library and Metadata
 
 - **Generated Audio Library**: Listen to previous generations directly in the browser.
+- **Waveform and Spectrogram Views**: Inspect rendered audio visually with per-item Wave/Spec previews.
+- **Favorite Keepers**: Star library items so the good goblins do not get lost in the noise pile.
 - **Download and Delete**: Download audio keepers or delete cursed renders with confirmation.
-- **Metadata Sidecars**: Every output gets a `.json` sidecar with prompt, settings, backend, seed, runtime, and Python output tails.
+- **Export Bundles**: Download a `.bundle.zip` containing the audio file plus its metadata sidecar for sharing experiments.
+- **Metadata Sidecars**: Every output gets a `.json` sidecar with prompt, settings, backend, seed, runtime, favorite state, and Python output tails.
 - **Load Config**: Restore prompt/settings/seed from an existing library item to iterate from a prior render.
 - **Metadata Cleanup**: Deleting a library item removes both the audio file and sidecar metadata.
 
@@ -260,20 +263,23 @@ http://localhost:3007
 * Choose **Small Music** for fast sketches or **Medium** for higher-quality passes.
 * Pick MP3 for shareable output or WAV for raw/editable output.
 * Enter a musical prompt such as tempo, genre, instruments, mix style, and mood.
+* Use the prompt template drawers for loops, ambience, trailer hits, or music beds when you want a fast starting point.
 * Start around 8 steps and CFG 1–2.
+* Set **Batch variations** above 1 to run multiple variations; with a fixed seed, each pass increments the seed.
 * Click **Generate MP3** or **Generate WAV**.
-* Preview the render in-browser.
-* Download the keeper or use **Load config** from the Library to iterate.
+* Preview the render in-browser and inspect the Wave/Spec audio analysis panel.
+* Download the keeper, star it, export a bundle, or use **Load config** from the Library to iterate.
 
 ## Quick start SFX workflow
 
 * Start Stable Audio 3 Lab.
 * Select **Sound FX** mode or click **Small SFX**.
 * Describe the object, action, material, space, and tail.
+* Use the Foley, UI Stings, Trailer Hits, or Ambience templates when you want a strong first draft.
 * Keep duration short for Foley/UI sounds, usually 1–8 seconds.
 * Start with 4–8 steps for quick drafts.
-* Generate, preview, and download the result.
-* Use the Library to compare variations and delete cursed noises before they multiply.
+* Generate, preview, inspect Wave/Spec analysis, and download the result.
+* Use the Library to compare variations, star keepers, export bundles, and delete cursed noises before they multiply.
 
 ## Reproducible seeds
 
@@ -304,12 +310,13 @@ Metadata includes:
 * creation time
 * generation runtime in milliseconds
 * backend (`mlx` or `torch`)
+* favorite/star state
 * prompt and negative prompt
 * mode, model, duration, steps, CFG, format, mock/real mode
 * seed, when present
 * Python process stdout/stderr tail
 
-The Library UI can download the audio, download the JSON metadata, load metadata back into the settings panel, or delete both files after confirmation.
+The Library UI can download the audio, download the JSON metadata, export an audio+metadata bundle, star keepers, load metadata back into the settings panel, inspect waveform/spectrogram previews, or delete both files after confirmation.
 
 ## Useful commands
 
@@ -377,6 +384,11 @@ make pre-commit
 
 ### Where we are
 
+* **Waveform and Spectrogram Analysis** - Browser-side audio previews show Wave/Spec visualization panels for latest and library renders.
+* **Batch Variation Workflow** - Generate up to 8 variations from the same prompt; fixed seeds increment deterministically.
+* **Favorite Keepers** - Starred library renders persist favorite state in metadata sidecars.
+* **Prompt Template Drawers** - Foley, UI stings, loops, trailer hits, ambience, and music bed templates are built into the prompt UI.
+* **Export Bundles** - Library rows can export a `.bundle.zip` with audio plus metadata for sharing experiments.
 * **Music and SFX Generation** - Local browser workflow for both music and sound effects.
 * **Full MLX Backend** - All UI models route through the official Apple Silicon optimized runtime by default.
 * **Library Management** - Playback, download, metadata download, config reload, refresh, and delete.
@@ -386,14 +398,13 @@ make pre-commit
 
 ### Where we're going
 
-* More visual audio analysis such as waveform or spectrogram previews.
-* Batch variation generation from a fixed prompt/seed strategy.
-* Favorite/star system for library keepers.
-* Optional prompt templates for Foley, UI stings, loops, trailer hits, ambience, and music beds.
-* Export bundles with audio plus metadata for sharing experiments.
+* More audio-analysis polish such as downloadable waveform images and richer spectrogram frequency bins.
+* Favorite filtering and library search.
+* Comparison view for batch variation A/B testing.
+* Export bundles with rendered screenshots or analysis summaries included.
 
 ## What's new
 
 ### v0.1.0
 
-* Initial Stable Audio 3 Lab app with Next.js UI, mock mode, real MLX inference, library management, metadata sidecars, seed controls, default playback volume, and README screenshots.
+* Initial Stable Audio 3 Lab app with Next.js UI, mock mode, real MLX inference, library management, metadata sidecars, seed controls, default playback volume, waveform/spectrogram previews, batch variations, prompt templates, favorites, export bundles, and README screenshots.

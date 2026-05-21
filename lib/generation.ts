@@ -45,6 +45,63 @@ export const promptPresets = {
   ],
 };
 
+export const promptTemplateGroups = [
+  {
+    id: "foley",
+    label: "Foley",
+    templates: [
+      "close-mic leather jacket movement, subtle fabric creaks, realistic room tone, clean tail",
+      "heavy boots on wet concrete, gritty footsteps, small puddle splashes, noir alley ambience",
+    ],
+  },
+  {
+    id: "ui-stings",
+    label: "UI Stings",
+    templates: [
+      "premium app success chime, soft glass ping, tiny sparkle tail, no harsh transient",
+      "futuristic error notification, muted synthetic buzz, quick descending tone, polished UI mix",
+    ],
+  },
+  {
+    id: "loops",
+    label: "Loops",
+    templates: [
+      "seamless lofi drum loop, dusty kick and snare, warm vinyl noise, 82 BPM, four bars",
+      "minimal techno percussion loop, tight hats, deep sub pulse, club-ready, 124 BPM",
+    ],
+  },
+  {
+    id: "trailer-hits",
+    label: "Trailer Hits",
+    templates: [
+      "massive cinematic trailer impact, taiko hit, brass blast, sub drop, long dark tail",
+      "rising tension whoosh into orchestral slam, metallic scrape, huge low-end impact",
+    ],
+  },
+  {
+    id: "ambience",
+    label: "Ambience",
+    templates: [
+      "rainy cyberpunk alley ambience, distant traffic, neon hum, soft thunder, immersive stereo",
+      "quiet forest at night, gentle wind through trees, insects, distant owl, natural spacious mix",
+    ],
+  },
+  {
+    id: "music-beds",
+    label: "Music Beds",
+    templates: [
+      "warm corporate tech music bed, hopeful piano pulses, soft synths, clean background mix",
+      "dark documentary underscore, low strings, sparse piano, subtle pulse, restrained tension",
+    ],
+  },
+] as const;
+
+export function buildVariationSeeds(baseSeed: number, count: number) {
+  const safeCount = Math.min(Math.max(Math.floor(count), 1), 8);
+  const normalizedBase = Math.min(Math.max(Math.floor(baseSeed), 0), 2147483647);
+  return Array.from({ length: safeCount }, (_, index) => (normalizedBase + index) % 2147483648);
+}
+
 export const controlTips = {
   duration: {
     title: "Duration",

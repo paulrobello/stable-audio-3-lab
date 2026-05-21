@@ -3,12 +3,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import clsx from "clsx";
-import { controlTips, modelOptions, promptPresets } from "@/lib/generation";
+import { controlTips, modelOptions, promptPresets, promptTemplateGroups, buildVariationSeeds } from "@/lib/generation";
 import { settingsFromMetadata, type ReusableGenerationSettings } from "@/lib/metadata-settings";
 
 type AudioFormat = "mp3" | "wav";
 type Result = { ok: boolean; audioUrl?: string; metadataUrl?: string; filename?: string; meta?: unknown; error?: string; detail?: unknown };
-type LibraryItem = { filename: string; audioUrl: string; downloadUrl: string; metadataUrl?: string; format: AudioFormat; bytes: number; createdAt: string; meta?: unknown };
+type LibraryItem = { filename: string; audioUrl: string; downloadUrl: string; metadataUrl?: string; bundleUrl?: string; format: AudioFormat; bytes: number; createdAt: string; favorite?: boolean; meta?: unknown };
 type PersistedSettings = {
   mode: "music" | "sfx";
   model: string;
@@ -38,6 +38,8 @@ export default function Home() {
   const [playbackVolume, setPlaybackVolume] = useState(0.8);
   const [mock, setMock] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [batchCount, setBatchCount] = useState(1);
+  const [batchProgress, setBatchProgress] = useState("");
   const [result, setResult] = useState<Result | null>(null);
   const [libraryItems, setLibraryItems] = useState<LibraryItem[]>([]);
   const [libraryBusy, setLibraryBusy] = useState(false);
@@ -101,6 +103,15 @@ export default function Home() {
     await loadLibrary();
   }
 
+  async function toggleFavorite(filename: string, favorite: boolean) {
+    await fetch("/api/library", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ filename, favorite }),
+    });
+    await loadLibrary();
+  }
+
   function applySettings(settings: ReusableGenerationSettings) {
     setMode(settings.mode);
     setModel(settings.model);
@@ -141,20 +152,29 @@ export default function Home() {
   async function generate() {
     setBusy(true);
     setResult(null);
+    setBatchProgress("");
     try {
       const parsedSeed = seed.trim() ? Number(seed) : undefined;
-      const response = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ prompt, negativePrompt, mode, model, duration, steps, cfgScale, format, mock, ...(parsedSeed !== undefined ? { seed: parsedSeed } : {}) }),
-      });
-      const json = (await response.json()) as Result;
-      setResult(json);
-      if (json.ok) await loadLibrary();
+      const variationSeeds = parsedSeed !== undefined ? buildVariationSeeds(parsedSeed, batchCount) : Array.from({ length: batchCount }, () => undefined as number | undefined);
+      let latest: Result | null = null;
+      for (let index = 0; index < variationSeeds.length; index += 1) {
+        setBatchProgress(variationSeeds.length > 1 ? `Variation ${index + 1}/${variationSeeds.length}${variationSeeds[index] !== undefined ? ` • seed ${variationSeeds[index]}` : ""}` : "");
+        const response = await fetch("/api/generate", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ prompt, negativePrompt, mode, model, duration, steps, cfgScale, format, mock, ...(variationSeeds[index] !== undefined ? { seed: variationSeeds[index] } : {}) }),
+        });
+        latest = (await response.json()) as Result;
+        setResult(latest);
+        if (!latest.ok) break;
+        await loadLibrary();
+      }
+      if (latest?.ok) await loadLibrary();
     } catch (error) {
       setResult({ ok: false, error: error instanceof Error ? error.message : "Unknown request failure" });
     } finally {
       setBusy(false);
+      setBatchProgress("");
     }
   }
 
@@ -230,6 +250,24 @@ export default function Home() {
                   ))}
                 </div>
 
+                <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-3">
+                  <div className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-white/45">Prompt templates</div>
+                  <div className="grid gap-2 md:grid-cols-2">
+                    {promptTemplateGroups.map((group) => (
+                      <details key={group.id} className="rounded-2xl border border-white/10 bg-black/20 p-3">
+                        <summary className="cursor-pointer text-sm font-semibold text-white/75">{group.label}</summary>
+                        <div className="mt-2 flex flex-col gap-2">
+                          {group.templates.map((template) => (
+                            <button key={template} type="button" onClick={() => setPrompt(template)} className="rounded-xl border border-white/10 bg-white/[0.04] p-2 text-left text-xs leading-5 text-white/58 hover:bg-white/10">
+                              {template}
+                            </button>
+                          ))}
+                        </div>
+                      </details>
+                    ))}
+                  </div>
+                </div>
+
                 <label className="block text-sm font-medium text-white/70">Negative prompt</label>
                 <input value={negativePrompt} onChange={(e) => setNegativePrompt(e.target.value)} className="input" />
 
@@ -298,14 +336,19 @@ export default function Home() {
                   </ul>
                 </div>
 
+                <Field label={`Batch variations: ${batchCount}`} tip="Generate 1–8 variations. With a fixed seed, each pass increments the seed so experiments stay organized instead of becoming soup.">
+                  <input type="range" min="1" max="8" value={batchCount} onChange={(e) => setBatchCount(Number(e.target.value))} className="w-full accent-amber-200" />
+                  {seed && batchCount > 1 && <div className="mt-2 text-xs text-white/45">Seeds: {buildVariationSeeds(Number(seed), batchCount).join(", ")}</div>}
+                </Field>
+
                 <button onClick={generate} disabled={busy} className="w-full rounded-full bg-white px-6 py-4 font-bold text-black shadow-[0_0_50px_rgba(255,255,255,.18)] transition hover:scale-[1.01] disabled:cursor-wait disabled:opacity-60">
-                  {busy ? "Generating… audio goblins negotiating royalties" : `Generate ${format.toUpperCase()}`}
+                  {busy ? (batchProgress || "Generating… audio goblins negotiating royalties") : batchCount > 1 ? `Generate ${batchCount} variations` : `Generate ${format.toUpperCase()}`}
                 </button>
               </div>
             </div>
 
             {result && <ResultPanel result={result} playbackVolume={playbackVolume} onLoadConfig={loadConfigFromMetadata} onDelete={deleteLibraryItem} />}
-            <LibraryPanel items={libraryItems} playbackVolume={playbackVolume} busy={libraryBusy} onRefresh={loadLibrary} onDelete={deleteLibraryItem} onLoadConfig={loadConfigFromMetadata} />
+            <LibraryPanel items={libraryItems} playbackVolume={playbackVolume} busy={libraryBusy} onRefresh={loadLibrary} onDelete={deleteLibraryItem} onLoadConfig={loadConfigFromMetadata} onToggleFavorite={toggleFavorite} />
           </motion.section>
         </section>
       </div>
@@ -363,6 +406,108 @@ export function AudioPreview({ src, volume, label }: { src?: string; volume: num
   return <audio ref={audioRef} src={src} controls aria-label={label} className="w-full" />;
 }
 
+function AudioAnalysis({ src, compact = false }: { src: string; compact?: boolean }) {
+  const [mode, setMode] = useState<"waveform" | "spectrogram">("waveform");
+  const [status, setStatus] = useState("Analyzing pixels of sound...");
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function draw() {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const gradient = ctx.createLinearGradient(0, 0, canvas.width, 0);
+      gradient.addColorStop(0, "rgba(110, 231, 183, 0.95)");
+      gradient.addColorStop(0.5, "rgba(125, 211, 252, 0.95)");
+      gradient.addColorStop(1, "rgba(244, 114, 182, 0.95)");
+      try {
+        const response = await fetch(src);
+        const buffer = await response.arrayBuffer();
+        const AudioContextCtor = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (!AudioContextCtor) throw new Error("Web Audio unavailable");
+        const audioContext = new AudioContextCtor();
+        const decoded = await audioContext.decodeAudioData(buffer.slice(0));
+        await audioContext.close();
+        if (cancelled) return;
+        const data = decoded.getChannelData(0);
+        if (mode === "waveform") drawWaveform(ctx, canvas, data, gradient);
+        else drawSpectrogram(ctx, canvas, data);
+        setStatus(`${mode === "waveform" ? "Waveform" : "Spectrogram"} • ${decoded.duration.toFixed(1)}s • ${decoded.sampleRate.toLocaleString()} Hz`);
+      } catch {
+        if (cancelled) return;
+        drawFallback(ctx, canvas, gradient);
+        setStatus("Preview analysis unavailable for this browser/audio file — fallback goblin glyphs shown.");
+      }
+    }
+    draw();
+    return () => { cancelled = true; };
+  }, [src, mode]);
+
+  return (
+    <div className={clsx("mt-3 rounded-2xl border border-white/10 bg-black/28 p-3", compact && "p-2")}>
+      <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="text-xs font-bold uppercase tracking-[0.18em] text-white/45">Audio analysis</div>
+        <Segmented compact value={mode} options={[{ value: "waveform", label: "Wave" }, { value: "spectrogram", label: "Spec" }]} onChange={(value) => setMode(value as "waveform" | "spectrogram")} />
+      </div>
+      <canvas ref={canvasRef} width={900} height={compact ? 96 : 150} className="h-24 w-full rounded-xl border border-white/10 bg-black/35 sm:h-32" />
+      <div className="mt-2 text-xs text-white/45">{status}</div>
+    </div>
+  );
+}
+
+function drawWaveform(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, data: Float32Array, stroke: CanvasGradient) {
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  const step = Math.max(1, Math.floor(data.length / canvas.width));
+  for (let x = 0; x < canvas.width; x += 1) {
+    const start = x * step;
+    let min = 1;
+    let max = -1;
+    for (let i = 0; i < step && start + i < data.length; i += 1) {
+      const value = data[start + i];
+      min = Math.min(min, value);
+      max = Math.max(max, value);
+    }
+    const y1 = ((1 - max) / 2) * canvas.height;
+    const y2 = ((1 - min) / 2) * canvas.height;
+    ctx.moveTo(x, y1);
+    ctx.lineTo(x, y2);
+  }
+  ctx.stroke();
+}
+
+function drawSpectrogram(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, data: Float32Array) {
+  const step = Math.max(1, Math.floor(data.length / canvas.width));
+  for (let x = 0; x < canvas.width; x += 1) {
+    const start = x * step;
+    let energy = 0;
+    let crossings = 0;
+    for (let i = 1; i < step && start + i < data.length; i += 1) {
+      const prev = data[start + i - 1];
+      const value = data[start + i];
+      energy += Math.abs(value);
+      if ((prev < 0 && value >= 0) || (prev >= 0 && value < 0)) crossings += 1;
+    }
+    energy = Math.min(1, energy / step * 8);
+    const hue = 170 + Math.min(120, crossings * 3);
+    const height = Math.max(2, energy * canvas.height);
+    ctx.fillStyle = `hsla(${hue}, 95%, ${45 + energy * 30}%, 0.9)`;
+    ctx.fillRect(x, canvas.height - height, 1, height);
+  }
+}
+
+function drawFallback(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, fill: CanvasGradient) {
+  ctx.fillStyle = fill;
+  for (let x = 0; x < canvas.width; x += 8) {
+    const h = 12 + Math.abs(Math.sin(x * 0.035)) * (canvas.height - 20);
+    ctx.fillRect(x, canvas.height - h, 4, h);
+  }
+}
+
 function ResultPanel({ result, playbackVolume, onLoadConfig, onDelete }: { result: Result; playbackVolume: number; onLoadConfig: (meta: unknown) => void; onDelete: (filename: string) => void }) {
   return (
     <div className="mt-5 min-w-0 rounded-3xl border border-white/10 bg-black/35 p-4">
@@ -376,6 +521,7 @@ function ResultPanel({ result, playbackVolume, onLoadConfig, onDelete }: { resul
             </div>
           </div>
           <AudioPreview src={result.audioUrl} volume={playbackVolume} label={`Generated audio preview for ${result.filename ?? "latest render"}`} />
+          {result.audioUrl && <AudioAnalysis src={result.audioUrl} />}
           <MetadataSummary meta={result.meta} metadataUrl={result.metadataUrl} onLoadConfig={onLoadConfig} />
           <pre className="mt-3 max-h-52 max-w-full overflow-auto rounded-2xl bg-black/40 p-3 font-mono text-xs text-white/62">{JSON.stringify(result.meta, null, 2)}</pre>
         </>
@@ -389,7 +535,7 @@ function ResultPanel({ result, playbackVolume, onLoadConfig, onDelete }: { resul
   );
 }
 
-function LibraryPanel({ items, playbackVolume, busy, onRefresh, onDelete, onLoadConfig }: { items: LibraryItem[]; playbackVolume: number; busy: boolean; onRefresh: () => void; onDelete: (filename: string) => void; onLoadConfig: (meta: unknown) => void }) {
+function LibraryPanel({ items, playbackVolume, busy, onRefresh, onDelete, onLoadConfig, onToggleFavorite }: { items: LibraryItem[]; playbackVolume: number; busy: boolean; onRefresh: () => void; onDelete: (filename: string) => void; onLoadConfig: (meta: unknown) => void; onToggleFavorite: (filename: string, favorite: boolean) => void }) {
   return (
     <section className="mt-5 rounded-3xl border border-white/10 bg-black/25 p-4">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -410,17 +556,22 @@ function LibraryPanel({ items, playbackVolume, busy, onRefresh, onDelete, onLoad
             <article key={item.filename} className="min-w-0 rounded-2xl border border-white/10 bg-black/30 p-3">
               <div className="mb-3 flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
                 <div className="min-w-0">
-                  <div className="truncate font-semibold text-white/85">{item.filename}</div>
+                  <div className="truncate font-semibold text-white/85">{item.favorite ? "★ " : ""}{item.filename}</div>
                   <div className="text-xs uppercase tracking-[0.16em] text-white/40">
                     {item.format} • {formatBytes(item.bytes)} • {new Date(item.createdAt).toLocaleString()}
                   </div>
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-2">
+                  <button onClick={() => onToggleFavorite(item.filename, !item.favorite)} className={clsx("inline-flex min-h-10 items-center justify-center rounded-full border px-3 py-2 text-xs font-bold leading-none", item.favorite ? "border-amber-200/40 bg-amber-200/20 text-amber-100" : "border-white/10 bg-white/[0.05] text-white/55 hover:bg-white/10")}>
+                    {item.favorite ? "Starred" : "Star"}
+                  </button>
                   <a href={item.downloadUrl} download={item.filename} className="inline-flex min-h-10 items-center justify-center rounded-full bg-white px-3 py-2 text-xs font-bold leading-none text-black hover:bg-emerald-100">Download</a>
+                  {item.bundleUrl && <a href={item.bundleUrl} download className="inline-flex min-h-10 items-center justify-center rounded-full border border-violet-200/20 bg-violet-200/10 px-3 py-2 text-xs font-bold leading-none text-violet-100 hover:bg-violet-200/20">Bundle</a>}
                   <button onClick={() => onDelete(item.filename)} className="inline-flex min-h-10 items-center justify-center rounded-full border border-red-300/35 bg-red-500/20 px-3 py-2 text-xs font-bold leading-none text-red-100 hover:bg-red-500/30">Delete</button>
                 </div>
               </div>
               <AudioPreview src={item.audioUrl} volume={playbackVolume} label={`Library audio preview for ${item.filename}`} />
+              <AudioAnalysis src={item.audioUrl} compact />
               <MetadataSummary meta={item.meta} metadataUrl={item.metadataUrl} compact onLoadConfig={onLoadConfig} />
             </article>
           ))}

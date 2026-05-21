@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import path from "node:path";
-import { mkdir, readdir, readFile, stat, unlink } from "node:fs/promises";
-import { isSafeAudioFilename, metadataPathForAudio, metadataUrlForAudio } from "@/lib/library";
+import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { isFavoriteMetadata, isSafeAudioFilename, metadataPathForAudio, metadataUrlForAudio, toggleFavoriteMetadata } from "@/lib/library";
 
 export const runtime = "nodejs";
 
@@ -13,6 +13,8 @@ type LibraryItem = {
   format: "mp3" | "wav";
   bytes: number;
   createdAt: string;
+  favorite: boolean;
+  bundleUrl: string;
   meta?: unknown;
 };
 
@@ -44,6 +46,8 @@ export async function GET() {
           format,
           bytes: info.size,
           createdAt: info.birthtime.toISOString(),
+          favorite: isFavoriteMetadata(meta),
+          bundleUrl: `/api/library/bundle?filename=${encodeURIComponent(filename)}`,
           meta,
         };
       }),
@@ -52,6 +56,31 @@ export async function GET() {
     return NextResponse.json({ ok: true, items });
   } catch (error) {
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Unknown error" }, { status: 500 });
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  try {
+    const { filename, favorite } = (await request.json()) as { filename?: string; favorite?: boolean };
+    if (!filename || !isSafeAudioFilename(filename) || typeof favorite !== "boolean") {
+      return NextResponse.json({ ok: false, error: "Invalid favorite request" }, { status: 400 });
+    }
+    const fullPath = path.join(outputDir(), filename);
+    await stat(fullPath);
+    const metaPath = metadataPathForAudio(fullPath);
+    let meta: unknown = {};
+    try {
+      meta = JSON.parse(await readFile(metaPath, "utf8"));
+    } catch {
+      meta = { filename, audioUrl: `/outputs/${filename}`, metadataUrl: metadataUrlForAudio(filename) };
+    }
+    const updated = toggleFavoriteMetadata(meta, favorite);
+    await writeFile(metaPath, JSON.stringify(updated, null, 2));
+    return NextResponse.json({ ok: true, meta: updated, favorite });
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? (error as { code?: unknown }).code : undefined;
+    const status = code === "ENOENT" ? 404 : 500;
+    return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Unknown error" }, { status });
   }
 }
 
