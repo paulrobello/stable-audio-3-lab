@@ -1,0 +1,38 @@
+default_stages: [pre-commit, pre-push]
+fail_fast: false
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: check-yaml
+      - id: check-json
+      - id: pretty-format-json
+        args: [--autofix, --no-sort-keys]
+        exclude: ^package-lock\.json$
+
+  - repo: local
+    hooks:
+      - id: format
+        name: format
+        entry: make
+        language: system
+        pass_filenames: false
+        args: [fmt]
+
+      - id: lint
+        name: lint
+        entry: make
+        language: system
+        pass_filenames: false
+        args: [lint]

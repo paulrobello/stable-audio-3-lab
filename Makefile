@@ -1,4 +1,4 @@
-.PHONY: build test lint fmt typecheck checkall dev
+.PHONY: build test lint fmt typecheck checkall dev pre-commit pre-commit-install pre-commit-update
 
 dev:
 	npm run dev
@@ -19,3 +19,12 @@ fmt:
 	@echo "No formatter configured."
 
 checkall: test build
+
+pre-commit:
+	pre-commit run --all-files
+
+pre-commit-install:
+	pre-commit install --install-hooks --hook-type pre-commit --hook-type pre-push
+
+pre-commit-update:
+	pre-commit autoupdate

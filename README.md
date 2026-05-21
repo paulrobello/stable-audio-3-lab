@@ -128,6 +128,8 @@ npm run py:mock    # generate public/outputs/mock.wav from CLI
 
 make checkall      # test + build
 make typecheck     # TypeScript only
+make pre-commit    # run pre-commit hooks on all files
+make pre-commit-install # install pre-commit and pre-push git hooks
 ```
 
 ## Environment variables
