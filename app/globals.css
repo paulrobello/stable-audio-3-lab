@@ -1,0 +1,53 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import "tailwindcss";
+
+:root {
+  --bg: #05060a;
+  --panel: rgba(255, 255, 255, 0.08);
+  --panel-strong: rgba(255, 255, 255, 0.13);
+  --line: rgba(255, 255, 255, 0.14);
+  --text: #f8fafc;
+  --muted: #aeb7c7;
+  --accent: #9cffd3;
+  --accent-2: #9bb7ff;
+  --hot: #ff73c7;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); }
+body { font-family: 'Inter', system-ui, -apple-system, Segoe UI, sans-serif; }
+button, input, textarea, select { font: inherit; }
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 15% 10%, rgba(156, 255, 211, 0.22), transparent 28rem),
+    radial-gradient(circle at 85% 18%, rgba(155, 183, 255, 0.22), transparent 30rem),
+    radial-gradient(circle at 60% 85%, rgba(255, 115, 199, 0.12), transparent 28rem),
+    linear-gradient(135deg, rgba(255,255,255,0.04), transparent 45%);
+  filter: saturate(1.2);
+}
+
+::selection { background: rgba(156,255,211,.32); }
+
+.input {
+  width: 100%;
+  border-radius: 1.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(0, 0, 0, 0.35);
+  padding: 0.875rem 1rem;
+  color: white;
+  outline: none;
+}
+
+.input:focus {
+  box-shadow: 0 0 0 4px rgba(167, 243, 208, 0.28);
+}
+
+.input option {
+  background: #090b12;
+  color: white;
+}

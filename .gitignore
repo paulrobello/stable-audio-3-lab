@@ -1,0 +1,70 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.*
+
+# Next.js / React
+.next/
+out/
+build/
+dist/
+next-env.d.ts
+*.tsbuildinfo
+
+# Environment / local config
+.env
+.env.*
+!.env.example
+*.local
+*.local.*
+
+# Python / model runtime
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+vendor/
+.cache/
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.gguf
+
+# Generated audio and metadata
+public/outputs/*.wav
+public/outputs/*.mp3
+public/outputs/*.json
+public/outputs/*.tmp.wav
+!public/outputs/.gitkeep
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Local agent/tooling state from git-ci guide
+*-mcp.json
+.gemini/
+.gemini-clipboard/
+.claude/.cc2cc-session-id
+.claude/scheduled_tasks.lock
+claude_scratch/
+.pi/extensions/discord-relay/state.json
+docs/superpowers
+docs/playgrounds
+.superpowers
+.claude/statusline-*
+.pi/status-footer.json
+.worktrees/

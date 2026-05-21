@@ -1,0 +1,38 @@
+{
+  "name": "stable-audio-3-lab",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3007",
+    "build": "next build",
+    "start": "next start -p 3007",
+    "lint": "npm run typecheck",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "py:mock": "python3 scripts/generate_audio.py --mock --mode sfx --prompt 'crisp sci-fi door whoosh, metallic air pressure' --duration 4 --out public/outputs/mock.wav"
+  },
+  "dependencies": {
+    "@heroicons/react": "latest",
+    "clsx": "latest",
+    "framer-motion": "latest",
+    "next": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@testing-library/react": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "jsdom": "latest",
+    "typescript": "latest",
+    "vitest": "latest",
+    "tailwindcss": "latest",
+    "@tailwindcss/postcss": "latest"
+  },
+  "overrides": {
+    "postcss": "8.5.15"
+  }
+}
