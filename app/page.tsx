@@ -7,7 +7,7 @@ import { controlTips, modelOptions, promptPresets, promptTemplateGroups, buildVa
 import { settingsFromMetadata, type ReusableGenerationSettings } from "@/lib/metadata-settings";
 
 type AudioFormat = "mp3" | "wav";
-type PlaybackState = { currentTime: number; duration: number };
+type PlaybackState = { currentTime: number; duration: number; isPlaying?: boolean };
 type Result = { ok: boolean; audioUrl?: string; metadataUrl?: string; filename?: string; meta?: unknown; error?: string; detail?: unknown };
 export type LibraryItem = { filename: string; audioUrl: string; downloadUrl: string; metadataUrl?: string; bundleUrl?: string; batchRunId?: string; batchBundleUrl?: string; format: AudioFormat; bytes: number; createdAt: string; favorite?: boolean; notes?: string; rating?: number; meta?: unknown };
 type PersistedSettings = {
@@ -455,22 +455,28 @@ export function clampPlaybackVolume(volume: number) {
   return Math.min(Math.max(volume, 0), 1);
 }
 
-export function AudioPreview({ src, volume, label, onPlaybackChange }: { src?: string; volume: number; label: string; onPlaybackChange?: (state: PlaybackState) => void }) {
+export function AudioPreview({ src, volume, label, hiddenPlayer = false, onReady, onPlaybackChange }: { src?: string; volume: number; label: string; hiddenPlayer?: boolean; onReady?: (audio: HTMLAudioElement | null) => void; onPlaybackChange?: (state: PlaybackState) => void }) {
   const audioRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
     if (audioRef.current) audioRef.current.volume = clampPlaybackVolume(volume);
   }, [volume]);
 
+  useEffect(() => {
+    onReady?.(audioRef.current);
+    return () => onReady?.(null);
+  }, [onReady]);
+
   function reportPlayback(event: React.SyntheticEvent<HTMLAudioElement>) {
     const audio = event.currentTarget;
     onPlaybackChange?.({
       currentTime: Number.isFinite(audio.currentTime) ? audio.currentTime : 0,
       duration: Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0,
+      isPlaying: !audio.paused && !audio.ended,
     });
   }
 
-  return <audio ref={audioRef} src={src} controls aria-label={label} className="w-full" onTimeUpdate={reportPlayback} onLoadedMetadata={reportPlayback} onSeeking={reportPlayback} onSeeked={reportPlayback} onEnded={reportPlayback} />;
+  return <audio ref={audioRef} src={src} controls={!hiddenPlayer} aria-label={label} className={hiddenPlayer ? "hidden" : "w-full"} onTimeUpdate={reportPlayback} onLoadedMetadata={reportPlayback} onSeeking={reportPlayback} onSeeked={reportPlayback} onPlaying={reportPlayback} onPause={reportPlayback} onEnded={reportPlayback} />;
 }
 
 export function libraryItemSearchText(item: LibraryItem) {
@@ -529,6 +535,12 @@ export function buildPlayheadOverlayPercentage({ currentTime, duration }: Playba
   return Math.round((clampedTime / duration) * 10000) / 100;
 }
 
+export function buildSeekTimeFromPointer({ clientX, rectLeft, rectWidth, duration }: { clientX: number; rectLeft: number; rectWidth: number; duration: number }) {
+  if (!Number.isFinite(rectWidth) || rectWidth <= 0 || !Number.isFinite(duration) || duration <= 0) return 0;
+  const ratio = Math.min(Math.max((clientX - rectLeft) / rectWidth, 0), 1);
+  return Math.round(ratio * duration * 1000) / 1000;
+}
+
 function readMetaString(meta: unknown, key: string) {
   if (!meta || typeof meta !== "object") return undefined;
   const value = (meta as Record<string, unknown>)[key];
@@ -577,7 +589,7 @@ export function analysisImageFilename(src: string, mode: "waveform" | "spectrogr
   return filename.replace(/\.(mp3|wav)$/i, `.${mode}.png`);
 }
 
-function AudioAnalysis({ src, compact = false, cropWindow, playback }: { src: string; compact?: boolean; cropWindow?: { start: number; end: number; duration: number }; playback?: PlaybackState }) {
+function AudioAnalysis({ src, compact = false, cropWindow, playback, onSeek }: { src: string; compact?: boolean; cropWindow?: { start: number; end: number; duration: number }; playback?: PlaybackState; onSeek?: (time: number) => void }) {
   const [mode, setMode] = useState<"waveform" | "spectrogram">("waveform");
   const [status, setStatus] = useState("Analyzing pixels of sound...");
   const [downloadReady, setDownloadReady] = useState(false);
@@ -635,6 +647,12 @@ function AudioAnalysis({ src, compact = false, cropWindow, playback }: { src: st
     link.click();
   }
 
+  function seekFromWaveform(event: React.MouseEvent<HTMLDivElement>) {
+    if (!onSeek) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    onSeek(buildSeekTimeFromPointer({ clientX: event.clientX, rectLeft: rect.left, rectWidth: rect.width, duration: playback?.duration || cropWindow?.duration || 0 }));
+  }
+
   return (
     <div className={clsx("mt-3 rounded-2xl border border-white/10 bg-black/28 p-3", compact && "p-2")}>
       <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -646,7 +664,7 @@ function AudioAnalysis({ src, compact = false, cropWindow, playback }: { src: st
           </button>
         </div>
       </div>
-      <div className="relative">
+      <div className={clsx("relative", onSeek && "cursor-pointer")} role={onSeek ? "button" : undefined} tabIndex={onSeek ? 0 : undefined} aria-label={onSeek ? "Seek waveform player" : undefined} onClick={seekFromWaveform}>
         <canvas ref={canvasRef} width={900} height={compact ? 96 : 150} className="h-24 w-full rounded-xl border border-white/10 bg-black/35 sm:h-32" />
         {cropOverlay && (
           <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-xl border border-orange-200/20" aria-label="Crop selection overlay">
@@ -811,8 +829,35 @@ function LibraryPanel({
   onSaveAnnotation: (filename: string, notes: string, rating: number | null) => void;
 }) {
   const [playbackByFilename, setPlaybackByFilename] = useState<Record<string, PlaybackState>>({});
+  const [volumeByFilename, setVolumeByFilename] = useState<Record<string, number>>({});
+  const audioRefs = useRef<Record<string, HTMLAudioElement | null>>({});
+
   function updatePlayback(filename: string, playback: PlaybackState) {
     setPlaybackByFilename((current) => ({ ...current, [filename]: playback }));
+  }
+
+  function setAudioRef(filename: string, audio: HTMLAudioElement | null) {
+    audioRefs.current[filename] = audio;
+  }
+
+  function toggleLibraryPlayback(filename: string) {
+    const audio = audioRefs.current[filename];
+    if (!audio) return;
+    if (audio.paused) void audio.play();
+    else audio.pause();
+  }
+
+  function changeLibraryVolume(filename: string, volume: number) {
+    const nextVolume = clampPlaybackVolume(volume);
+    setVolumeByFilename((current) => ({ ...current, [filename]: nextVolume }));
+    const audio = audioRefs.current[filename];
+    if (audio) audio.volume = nextVolume;
+  }
+
+  function seekLibraryAudio(filename: string, time: number) {
+    const audio = audioRefs.current[filename];
+    if (!audio || !Number.isFinite(time)) return;
+    audio.currentTime = Math.min(Math.max(time, 0), Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : time);
   }
 
   return (
@@ -863,9 +908,17 @@ function LibraryPanel({
                   <button onClick={() => onDelete(item.filename)} className="inline-flex min-h-10 items-center justify-center rounded-full border border-red-300/35 bg-red-500/20 px-3 py-2 text-xs font-bold leading-none text-red-100 hover:bg-red-500/30">Delete</button>
                 </div>
               </div>
-              <AudioPreview src={item.audioUrl} volume={playbackVolume} label={`Library audio preview for ${item.filename}`} onPlaybackChange={(playback) => updatePlayback(item.filename, playback)} />
+              <AudioPreview src={item.audioUrl} volume={volumeByFilename[item.filename] ?? playbackVolume} label={`Library audio preview for ${item.filename}`} hiddenPlayer onReady={(audio) => setAudioRef(item.filename, audio)} onPlaybackChange={(playback) => updatePlayback(item.filename, playback)} />
+              <CropControls
+                item={item}
+                playback={playbackByFilename[item.filename]}
+                playbackVolume={volumeByFilename[item.filename] ?? playbackVolume}
+                onTogglePlay={() => toggleLibraryPlayback(item.filename)}
+                onVolumeChange={(volume) => changeLibraryVolume(item.filename, volume)}
+                onSeek={(time) => seekLibraryAudio(item.filename, time)}
+                onCrop={onCrop}
+              />
               <AnnotationControls item={item} onSave={onSaveAnnotation} />
-              <CropControls item={item} playback={playbackByFilename[item.filename]} onCrop={onCrop} />
               <MetadataSummary meta={item.meta} metadataUrl={item.metadataUrl} compact onLoadConfig={onLoadConfig} />
             </article>
           ))}
@@ -924,7 +977,23 @@ function readCropControlDuration(meta: unknown) {
   return undefined;
 }
 
-function CropControls({ item, playback, onCrop }: { item: LibraryItem; playback?: PlaybackState; onCrop: (filename: string, start: number, end: number) => void }) {
+function CropControls({
+  item,
+  playback,
+  playbackVolume,
+  onTogglePlay,
+  onVolumeChange,
+  onSeek,
+  onCrop,
+}: {
+  item: LibraryItem;
+  playback?: PlaybackState;
+  playbackVolume: number;
+  onTogglePlay: () => void;
+  onVolumeChange: (volume: number) => void;
+  onSeek: (time: number) => void;
+  onCrop: (filename: string, start: number, end: number) => void;
+}) {
   const maxDuration = readCropControlDuration(item.meta) ?? 30;
   const initialEnd = Math.min(maxDuration, 8);
   const [start, setStart] = useState(0);
@@ -937,6 +1006,7 @@ function CropControls({ item, playback, onCrop }: { item: LibraryItem; playback?
 
   const safeStart = Math.min(start, Math.max(0, maxDuration - Math.min(0.25, maxDuration)));
   const safeEnd = Math.max(safeStart + Math.min(0.25, maxDuration), Math.min(end, maxDuration));
+  const isPlaying = playback?.isPlaying === true;
   return (
     <div className="mt-3 rounded-2xl border border-orange-200/10 bg-orange-200/[0.045] p-3">
       <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -956,7 +1026,18 @@ function CropControls({ item, playback, onCrop }: { item: LibraryItem; playback?
           <input type="range" min={Math.min(0.25, maxDuration)} max={maxDuration} step="0.25" value={safeEnd} onChange={(event) => setEnd(Math.max(Number(event.target.value), safeStart + Math.min(0.25, maxDuration)))} className="mt-1 w-full accent-orange-200" />
         </label>
       </div>
-      <AudioAnalysis src={item.audioUrl} compact cropWindow={{ start: safeStart, end: safeEnd, duration: maxDuration }} playback={playback} />
+      <div className="mt-3 grid gap-3 rounded-2xl border border-cyan-200/10 bg-cyan-200/[0.035] p-3 md:grid-cols-[auto_minmax(0,1fr)_10rem] md:items-center">
+        <button type="button" onClick={onTogglePlay} className="inline-flex min-h-10 items-center justify-center rounded-full border border-cyan-200/25 bg-cyan-200/12 px-4 py-2 text-xs font-bold leading-none text-cyan-100 hover:bg-cyan-200/20" aria-label={`${isPlaying ? "Pause" : "Play"} ${item.filename}`}>
+          {isPlaying ? "Pause" : "Play"}
+        </button>
+        <div className="text-xs text-white/48">
+          Waveform player • {formatPlaybackTime(playback?.currentTime ?? 0)} / {formatPlaybackTime(playback?.duration || maxDuration)}
+        </div>
+        <label className="text-xs text-white/50">Volume {Math.round(playbackVolume * 100)}%
+          <input type="range" min="0" max="100" value={Math.round(playbackVolume * 100)} onChange={(event) => onVolumeChange(Number(event.target.value) / 100)} className="mt-1 w-full accent-cyan-200" />
+        </label>
+      </div>
+      <AudioAnalysis src={item.audioUrl} compact cropWindow={{ start: safeStart, end: safeEnd, duration: maxDuration }} playback={playback} onSeek={onSeek} />
     </div>
   );
 }

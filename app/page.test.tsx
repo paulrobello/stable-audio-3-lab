@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { AudioPreview, buildCropOverlayPercentages, buildPlayheadOverlayPercentage, buildSpectrogramBins, clampPlaybackVolume, filterLibraryItems, libraryItemSearchText, selectedComparisonItems } from "./page";
+import { AudioPreview, buildCropOverlayPercentages, buildPlayheadOverlayPercentage, buildSeekTimeFromPointer, buildSpectrogramBins, clampPlaybackVolume, filterLibraryItems, libraryItemSearchText, selectedComparisonItems } from "./page";
 
 describe("playback volume", () => {
   it("clamps saved playback volume into the browser audio range", () => {
@@ -26,7 +26,15 @@ describe("playback volume", () => {
     Object.defineProperty(audio, "duration", { configurable: true, value: 10 });
     fireEvent.timeUpdate(audio);
 
-    expect(onPlaybackChange).toHaveBeenCalledWith({ currentTime: 4, duration: 10 });
+    expect(onPlaybackChange).toHaveBeenCalledWith({ currentTime: 4, duration: 10, isPlaying: false });
+  });
+
+  it("can hide native browser chrome when waveform controls own playback", () => {
+    render(<AudioPreview src="/outputs/test.mp3" volume={0.37} label="Hidden preview" hiddenPlayer />);
+
+    const audio = screen.getByLabelText("Hidden preview") as HTMLAudioElement;
+    expect(audio.hasAttribute("controls")).toBe(false);
+    expect(audio.className).toContain("hidden");
   });
 });
 
@@ -87,6 +95,12 @@ describe("crop waveform overlay", () => {
     expect(buildPlayheadOverlayPercentage({ currentTime: -1, duration: 10 })).toBe(0);
     expect(buildPlayheadOverlayPercentage({ currentTime: 12, duration: 10 })).toBe(100);
     expect(buildPlayheadOverlayPercentage({ currentTime: 12, duration: 0 })).toBe(0);
+  });
+
+  it("maps waveform pointer position to a clamped seek time", () => {
+    expect(buildSeekTimeFromPointer({ clientX: 60, rectLeft: 10, rectWidth: 100, duration: 20 })).toBe(10);
+    expect(buildSeekTimeFromPointer({ clientX: -10, rectLeft: 10, rectWidth: 100, duration: 20 })).toBe(0);
+    expect(buildSeekTimeFromPointer({ clientX: 140, rectLeft: 10, rectWidth: 100, duration: 20 })).toBe(20);
   });
 });
 

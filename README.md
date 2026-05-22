@@ -339,7 +339,7 @@ The run ZIP contains every matching audio file, its `.json` sidecar, per-item an
 
 ### Audio cropping
 
-Every library item includes a **Crop audio** panel with start/end sliders. The crop panel renders the waveform directly under the sliders with an orange selected-region overlay, dimmed out-of-crop audio, live start/end labels, and a cyan playback playhead that follows the audio player above it, so you can see exactly what is playing and what will be cut before pressing **Crop**. Cropping never mutates the source file; it creates a new sibling clip plus metadata sidecar:
+Every library item includes a **Crop audio** panel with start/end sliders. The native browser media chrome is hidden in the library; the waveform is the player. It includes Play/Pause, a volume slider, click-to-seek behavior, an orange selected-region overlay, dimmed out-of-crop audio, live start/end labels, and a cyan playback playhead. Notes and ratings sit below the waveform player so the listening/cropping controls stay together. Cropping never mutates the source file; it creates a new sibling clip plus metadata sidecar:
 
 ```text
 public/outputs/sa3-sfx-123.mp3
