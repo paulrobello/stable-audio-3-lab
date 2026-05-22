@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildVariationSeeds, promptTemplateGroups } from "./generation";
-import { applyLibraryAnnotationMetadata, buildAnalysisSummary, buildAnalysisSummaryFilename, buildBatchBundleFilename, buildBatchManifest, buildBundleFilename, buildCropFilename, buildCropMetadata, buildStoredZip, isFavoriteMetadata, isSafeBatchRunId, normalizeCropWindow, normalizeLibraryAnnotation, validateCropFitsDuration, toggleFavoriteMetadata } from "./library";
+import { applyLibraryAnnotationMetadata, buildAnalysisSummary, buildAnalysisSummaryFilename, buildBatchBundleFilename, buildBatchManifest, buildBundleFilename, buildCropFilename, buildCropMetadata, buildRenderScreenshotFilename, buildRenderScreenshotSvg, buildStoredZip, isFavoriteMetadata, isSafeBatchRunId, normalizeCropWindow, normalizeLibraryAnnotation, validateCropFitsDuration, toggleFavoriteMetadata } from "./library";
 
 describe("prompt templates", () => {
   it("ships templates for foley, ui stings, loops, trailer hits, ambience, and music beds", () => {
@@ -107,6 +107,22 @@ describe("export bundles", () => {
   it("adds a safe analysis summary filename for bundle exports", () => {
     expect(buildAnalysisSummaryFilename("sa3-music-123.mp3")).toBe("sa3-music-123.analysis-summary.json");
     expect(() => buildAnalysisSummaryFilename("../../bad.wav")).toThrow(/Invalid/);
+  });
+
+  it("adds a rendered screenshot image entry for bundle exports", () => {
+    expect(buildRenderScreenshotFilename("sa3-music-123.mp3")).toBe("sa3-music-123.render-screenshot.svg");
+    expect(() => buildRenderScreenshotFilename("../../bad.wav")).toThrow(/Invalid/);
+
+    const svg = buildRenderScreenshotSvg({
+      filename: "sa3-music-123.mp3",
+      metadata: { backend: "mlx", settings: { prompt: "glassy arps", mode: "music", model: "medium", duration: 12, seed: 47 } },
+    });
+
+    expect(svg).toContain("<svg");
+    expect(svg).toContain("glassy arps");
+    expect(svg).toContain("medium");
+    expect(svg).toContain("seed 47");
+    expect(svg).not.toContain("<script");
   });
 
   it("summarizes render settings for bundle exports", () => {

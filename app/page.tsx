@@ -7,7 +7,7 @@ import { controlTips, modelOptions, promptPresets, promptTemplateGroups, buildVa
 import { settingsFromMetadata, type ReusableGenerationSettings } from "@/lib/metadata-settings";
 
 type AudioFormat = "mp3" | "wav";
-type PlaybackState = { currentTime: number; duration: number; isPlaying?: boolean };
+type PlaybackState = { currentTime: number; duration: number; isPlaying?: boolean; error?: string };
 type Result = { ok: boolean; audioUrl?: string; metadataUrl?: string; filename?: string; meta?: unknown; error?: string; detail?: unknown };
 export type LibraryItem = { filename: string; audioUrl: string; downloadUrl: string; metadataUrl?: string; bundleUrl?: string; batchRunId?: string; batchBundleUrl?: string; format: AudioFormat; bytes: number; createdAt: string; favorite?: boolean; notes?: string; rating?: number; meta?: unknown };
 type PersistedSettings = {
@@ -407,6 +407,7 @@ export default function Home() {
               onLoadConfig={loadConfigFromMetadata}
               onToggleFavorite={toggleFavorite}
               onSaveAnnotation={saveLibraryAnnotation}
+              onPlaybackVolumeChange={setPlaybackVolume}
             />
           </motion.section>
         </section>
@@ -453,6 +454,15 @@ function TipLabel({ title, tip }: { title: string; tip?: string }) {
 export function clampPlaybackVolume(volume: number) {
   if (!Number.isFinite(volume)) return 0.8;
   return Math.min(Math.max(volume, 0), 1);
+}
+
+export async function playAudioElement(audio: HTMLAudioElement) {
+  try {
+    await audio.play();
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : "Browser rejected playback";
+  }
 }
 
 export function AudioPreview({ src, volume, label, hiddenPlayer = false, onReady, onPlaybackChange }: { src?: string; volume: number; label: string; hiddenPlayer?: boolean; onReady?: (audio: HTMLAudioElement | null) => void; onPlaybackChange?: (state: PlaybackState) => void }) {
@@ -539,6 +549,21 @@ export function buildSeekTimeFromPointer({ clientX, rectLeft, rectWidth, duratio
   if (!Number.isFinite(rectWidth) || rectWidth <= 0 || !Number.isFinite(duration) || duration <= 0) return 0;
   const ratio = Math.min(Math.max((clientX - rectLeft) / rectWidth, 0), 1);
   return Math.round(ratio * duration * 1000) / 1000;
+}
+
+export function buildSeekTimeFromKeyboard({ key, currentTime, duration }: { key: string; currentTime: number; duration: number }) {
+  if (!Number.isFinite(duration) || duration <= 0) return undefined;
+  const current = Number.isFinite(currentTime) ? currentTime : 0;
+  const step = key === "PageUp" || key === "PageDown" ? 5 : 1;
+  let next: number | undefined;
+  if (key === "ArrowRight") next = current + step;
+  if (key === "ArrowLeft") next = current - step;
+  if (key === "PageUp") next = current + step;
+  if (key === "PageDown") next = current - step;
+  if (key === "Home") next = 0;
+  if (key === "End") next = duration;
+  if (next === undefined) return undefined;
+  return Math.round(Math.min(Math.max(next, 0), duration) * 1000) / 1000;
 }
 
 function readMetaString(meta: unknown, key: string) {
@@ -653,6 +678,14 @@ function AudioAnalysis({ src, compact = false, cropWindow, playback, onSeek }: {
     onSeek(buildSeekTimeFromPointer({ clientX: event.clientX, rectLeft: rect.left, rectWidth: rect.width, duration: playback?.duration || cropWindow?.duration || 0 }));
   }
 
+  function seekFromKeyboard(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (!onSeek) return;
+    const nextTime = buildSeekTimeFromKeyboard({ key: event.key, currentTime: playback?.currentTime ?? 0, duration: playback?.duration || cropWindow?.duration || 0 });
+    if (nextTime === undefined) return;
+    event.preventDefault();
+    onSeek(nextTime);
+  }
+
   return (
     <div className={clsx("mt-3 rounded-2xl border border-white/10 bg-black/28 p-3", compact && "p-2")}>
       <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -664,7 +697,7 @@ function AudioAnalysis({ src, compact = false, cropWindow, playback, onSeek }: {
           </button>
         </div>
       </div>
-      <div className={clsx("relative", onSeek && "cursor-pointer")} role={onSeek ? "button" : undefined} tabIndex={onSeek ? 0 : undefined} aria-label={onSeek ? "Seek waveform player" : undefined} onClick={seekFromWaveform}>
+      <div className={clsx("relative", onSeek && "cursor-pointer")} role={onSeek ? "button" : undefined} tabIndex={onSeek ? 0 : undefined} aria-label={onSeek ? "Seek waveform player with click or arrow keys" : undefined} onClick={seekFromWaveform} onKeyDown={seekFromKeyboard}>
         <canvas ref={canvasRef} width={900} height={compact ? 96 : 150} className="h-24 w-full rounded-xl border border-white/10 bg-black/35 sm:h-32" />
         {cropOverlay && (
           <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-xl border border-orange-200/20" aria-label="Crop selection overlay">
@@ -810,6 +843,7 @@ function LibraryPanel({
   onLoadConfig,
   onToggleFavorite,
   onSaveAnnotation,
+  onPlaybackVolumeChange,
 }: {
   items: LibraryItem[];
   totalItems: number;
@@ -827,9 +861,9 @@ function LibraryPanel({
   onLoadConfig: (meta: unknown) => void;
   onToggleFavorite: (filename: string, favorite: boolean) => void;
   onSaveAnnotation: (filename: string, notes: string, rating: number | null) => void;
+  onPlaybackVolumeChange: (volume: number) => void;
 }) {
   const [playbackByFilename, setPlaybackByFilename] = useState<Record<string, PlaybackState>>({});
-  const [volumeByFilename, setVolumeByFilename] = useState<Record<string, number>>({});
   const audioRefs = useRef<Record<string, HTMLAudioElement | null>>({});
 
   function updatePlayback(filename: string, playback: PlaybackState) {
@@ -840,18 +874,28 @@ function LibraryPanel({
     audioRefs.current[filename] = audio;
   }
 
-  function toggleLibraryPlayback(filename: string) {
+  async function toggleLibraryPlayback(filename: string) {
     const audio = audioRefs.current[filename];
     if (!audio) return;
-    if (audio.paused) void audio.play();
-    else audio.pause();
+    if (audio.paused) {
+      const error = await playAudioElement(audio);
+      if (error) {
+        setPlaybackByFilename((current) => ({
+          ...current,
+          [filename]: { ...(current[filename] ?? { currentTime: 0, duration: 0 }), isPlaying: false, error },
+        }));
+      }
+    } else {
+      audio.pause();
+    }
   }
 
-  function changeLibraryVolume(filename: string, volume: number) {
+  function changeLibraryVolume(volume: number) {
     const nextVolume = clampPlaybackVolume(volume);
-    setVolumeByFilename((current) => ({ ...current, [filename]: nextVolume }));
-    const audio = audioRefs.current[filename];
-    if (audio) audio.volume = nextVolume;
+    onPlaybackVolumeChange(nextVolume);
+    Object.values(audioRefs.current).forEach((audio) => {
+      if (audio) audio.volume = nextVolume;
+    });
   }
 
   function seekLibraryAudio(filename: string, time: number) {
@@ -908,13 +952,13 @@ function LibraryPanel({
                   <button onClick={() => onDelete(item.filename)} className="inline-flex min-h-10 items-center justify-center rounded-full border border-red-300/35 bg-red-500/20 px-3 py-2 text-xs font-bold leading-none text-red-100 hover:bg-red-500/30">Delete</button>
                 </div>
               </div>
-              <AudioPreview src={item.audioUrl} volume={volumeByFilename[item.filename] ?? playbackVolume} label={`Library audio preview for ${item.filename}`} hiddenPlayer onReady={(audio) => setAudioRef(item.filename, audio)} onPlaybackChange={(playback) => updatePlayback(item.filename, playback)} />
+              <AudioPreview src={item.audioUrl} volume={playbackVolume} label={`Library audio preview for ${item.filename}`} hiddenPlayer onReady={(audio) => setAudioRef(item.filename, audio)} onPlaybackChange={(playback) => updatePlayback(item.filename, playback)} />
               <CropControls
                 item={item}
                 playback={playbackByFilename[item.filename]}
-                playbackVolume={volumeByFilename[item.filename] ?? playbackVolume}
-                onTogglePlay={() => toggleLibraryPlayback(item.filename)}
-                onVolumeChange={(volume) => changeLibraryVolume(item.filename, volume)}
+                playbackVolume={playbackVolume}
+                onTogglePlay={() => void toggleLibraryPlayback(item.filename)}
+                onVolumeChange={changeLibraryVolume}
                 onSeek={(time) => seekLibraryAudio(item.filename, time)}
                 onCrop={onCrop}
               />
@@ -1033,10 +1077,11 @@ function CropControls({
         <div className="text-xs text-white/48">
           Waveform player • {formatPlaybackTime(playback?.currentTime ?? 0)} / {formatPlaybackTime(playback?.duration || maxDuration)}
         </div>
-        <label className="text-xs text-white/50">Volume {Math.round(playbackVolume * 100)}%
+        <label className="text-xs text-white/50">Global volume {Math.round(playbackVolume * 100)}%
           <input type="range" min="0" max="100" value={Math.round(playbackVolume * 100)} onChange={(event) => onVolumeChange(Number(event.target.value) / 100)} className="mt-1 w-full accent-cyan-200" />
         </label>
       </div>
+      {playback?.error && <div className="mt-2 rounded-xl border border-pink-300/20 bg-pink-500/10 px-3 py-2 text-xs text-pink-100">Playback blocked: {playback.error}</div>}
       <AudioAnalysis src={item.audioUrl} compact cropWindow={{ start: safeStart, end: safeEnd, duration: maxDuration }} playback={playback} onSeek={onSeek} />
     </div>
   );

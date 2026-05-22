@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { AudioPreview, buildCropOverlayPercentages, buildPlayheadOverlayPercentage, buildSeekTimeFromPointer, buildSpectrogramBins, clampPlaybackVolume, filterLibraryItems, libraryItemSearchText, selectedComparisonItems } from "./page";
+import { AudioPreview, buildCropOverlayPercentages, buildPlayheadOverlayPercentage, buildSeekTimeFromKeyboard, buildSeekTimeFromPointer, buildSpectrogramBins, clampPlaybackVolume, filterLibraryItems, libraryItemSearchText, playAudioElement, selectedComparisonItems } from "./page";
 
 describe("playback volume", () => {
   it("clamps saved playback volume into the browser audio range", () => {
@@ -35,6 +35,13 @@ describe("playback volume", () => {
     const audio = screen.getByLabelText("Hidden preview") as HTMLAudioElement;
     expect(audio.hasAttribute("controls")).toBe(false);
     expect(audio.className).toContain("hidden");
+  });
+
+  it("surfaces play rejection messages instead of swallowing browser playback failures", async () => {
+    const audio = document.createElement("audio");
+    audio.play = vi.fn().mockRejectedValue(new Error("NotAllowedError"));
+
+    await expect(playAudioElement(audio)).resolves.toBe("NotAllowedError");
   });
 });
 
@@ -101,6 +108,16 @@ describe("crop waveform overlay", () => {
     expect(buildSeekTimeFromPointer({ clientX: 60, rectLeft: 10, rectWidth: 100, duration: 20 })).toBe(10);
     expect(buildSeekTimeFromPointer({ clientX: -10, rectLeft: 10, rectWidth: 100, duration: 20 })).toBe(0);
     expect(buildSeekTimeFromPointer({ clientX: 140, rectLeft: 10, rectWidth: 100, duration: 20 })).toBe(20);
+  });
+
+  it("maps keyboard shortcuts to clamped waveform seek times", () => {
+    expect(buildSeekTimeFromKeyboard({ key: "ArrowRight", currentTime: 5, duration: 20 })).toBe(6);
+    expect(buildSeekTimeFromKeyboard({ key: "ArrowLeft", currentTime: 0.5, duration: 20 })).toBe(0);
+    expect(buildSeekTimeFromKeyboard({ key: "PageUp", currentTime: 5, duration: 20 })).toBe(10);
+    expect(buildSeekTimeFromKeyboard({ key: "PageDown", currentTime: 3, duration: 20 })).toBe(0);
+    expect(buildSeekTimeFromKeyboard({ key: "Home", currentTime: 9, duration: 20 })).toBe(0);
+    expect(buildSeekTimeFromKeyboard({ key: "End", currentTime: 9, duration: 20 })).toBe(20);
+    expect(buildSeekTimeFromKeyboard({ key: "Tab", currentTime: 9, duration: 20 })).toBeUndefined();
   });
 });
 

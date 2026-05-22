@@ -55,7 +55,7 @@ The app was built for Paul's M4 Max MacBook Pro with 128GB unified memory and us
 - **Generation Controls**: Adjust prompt, negative prompt, duration, steps, CFG, seed, format, and backend-backed mock/real behavior.
 - **MP3 and WAV Output**: MP3 is the default for smaller shareable renders; WAV is available for raw/editable output.
 - **Persistent Settings**: UI settings are saved in `localStorage` under `stable-audio-3-lab:settings:v1`.
-- **Default Playback Volume**: Every preview player uses the shared persisted volume setting, because surprise goblin volume is rude.
+- **Global Playback Volume**: Every preview player and library waveform player uses one shared persisted volume setting, because surprise goblin volume is rude.
 
 ### Model Backends
 
@@ -72,8 +72,8 @@ The app was built for Paul's M4 Max MacBook Pro with 128GB unified memory and us
 - **Favorite Keepers**: Star library items so the good goblins do not get lost in the noise pile.
 - **Notes and Ratings**: Add optional per-render notes plus 1–5 star ratings for quick A/B judgment calls.
 - **Download and Delete**: Download audio keepers or delete cursed renders with confirmation.
-- **Export Bundles**: Download a `.bundle.zip` containing the audio file plus its metadata sidecar for sharing experiments.
-- **Batch Run Bundles**: Multi-variation runs get a shared batch ID and one-click `Run ZIP` export for the entire variation set.
+- **Export Bundles**: Download a `.bundle.zip` containing the audio file, metadata sidecar, analysis summary, and rendered screenshot card for sharing experiments.
+- **Batch Run Bundles**: Multi-variation runs get a shared batch ID and one-click `Run ZIP` export for the entire variation set, including per-render screenshot cards.
 - **Audio Cropping**: Trim any library item into a shorter MP3/WAV clip while preserving source metadata and crop provenance.
 - **Metadata Sidecars**: Every output gets a `.json` sidecar with prompt, settings, backend, seed, runtime, favorite state, annotations, batch lineage, crop lineage, and Python output tails.
 - **Load Config**: Restore prompt/settings/seed from an existing library item to iterate from a prior render.
@@ -347,11 +347,20 @@ curl -L "http://localhost:3007/api/library/bundle?batchRunId=batch-20260521-abc1
   -o batch-20260521-abc123.variation-run.zip
 ```
 
-The run ZIP contains every matching audio file, its `.json` sidecar, per-item analysis summaries, and a `<batchRunId>.manifest.json` that lists variations in deterministic order.
+The run ZIP contains every matching audio file, its `.json` sidecar, per-item analysis summaries, per-render `*.render-screenshot.svg` capture cards, and a `<batchRunId>.manifest.json` that lists variations in deterministic order.
+
+Single-item bundles include the same visual capture card beside the audio, metadata, and analysis summary:
+
+```text
+sa3-music-123.mp3
+sa3-music-123.mp3.json
+sa3-music-123.analysis-summary.json
+sa3-music-123.render-screenshot.svg
+```
 
 ### Audio cropping
 
-Every library item includes a **Crop audio** panel with start/end sliders. The native browser media chrome is hidden in the library; the waveform is the player. It includes Play/Pause, a volume slider, click-to-seek behavior, an orange selected-region overlay, dimmed out-of-crop audio, live start/end labels, and a cyan playback playhead. Notes and ratings sit below the waveform player so the listening/cropping controls stay together. Cropping never mutates the source file; it creates a new sibling clip plus metadata sidecar:
+Every library item includes a **Crop audio** panel with start/end sliders. The native browser media chrome is hidden in the library; the waveform is the player. It includes Play/Pause, one global volume slider shared by all items, click-to-seek behavior, keyboard seeking with arrow keys/PageUp/PageDown/Home/End, surfaced playback-permission errors if the browser rejects `play()`, an orange selected-region overlay, dimmed out-of-crop audio, live start/end labels, and a cyan playback playhead. Notes and ratings sit below the waveform player so the listening/cropping controls stay together. Cropping never mutates the source file; it creates a new sibling clip plus metadata sidecar:
 
 ```text
 public/outputs/sa3-sfx-123.mp3
@@ -441,8 +450,8 @@ make pre-commit
 * **Batch Variation Workflow** - Generate up to 8 variations from the same prompt; fixed seeds increment deterministically and selected renders can be compared side by side.
 * **Favorite Keepers** - Starred library renders persist favorite state in metadata sidecars and can be filtered in the library.
 * **Prompt Template Drawers** - Foley, UI stings, loops, trailer hits, ambience, and music bed templates are built into the prompt UI.
-* **Export Bundles** - Library rows can export a `.bundle.zip` with audio plus metadata for sharing experiments.
-* **Waveform Library Player** - Native media chrome is hidden in library rows; the waveform provides Play/Pause, per-item volume, click-to-seek, crop markers, and a live cyan playhead.
+* **Export Bundles** - Library rows can export a `.bundle.zip` with audio, metadata, an analysis summary, and a rendered screenshot card for sharing experiments.
+* **Waveform Library Player** - Native media chrome is hidden in library rows; the waveform provides Play/Pause, global volume, click/keyboard seeking, crop markers, playback-error feedback, and a live cyan playhead.
 * **Audio Cropping** - Library rows can trim clips into new audio files with metadata preserving source/crop lineage.
 * **Notes, Ratings, and Batch Run ZIPs** - Library sidecars store annotations, and multi-variation runs export as deterministic bundle ZIPs with manifests.
 * **Music and SFX Generation** - Local browser workflow for both music and sound effects.
@@ -454,13 +463,11 @@ make pre-commit
 
 ### Where we're going
 
-* Rendered screenshot capture inside export bundles.
-* Keyboard shortcuts for the waveform seek surface.
-* Surfaced browser playback errors when autoplay/audio permissions reject `play()`.
-* Optional reset-to-global-volume affordance for per-item volume overrides.
+* Optional PNG export for the server-generated SVG render capture cards.
+* Optional stale playback-state pruning after library deletes/refreshes.
 
 ## What's new
 
 ### v0.1.0
 
-* Initial Stable Audio 3 Lab app with Next.js UI, mock mode, real MLX inference, library management, metadata sidecars, seed controls, default playback volume, waveform/spectrogram previews, waveform-as-player library rows, batch variations, comparison view, prompt templates, favorites, notes/ratings, crop controls, single-item bundles, batch-run ZIP exports, and README screenshots.
+* Initial Stable Audio 3 Lab app with Next.js UI, mock mode, real MLX inference, library management, metadata sidecars, seed controls, global playback volume, waveform/spectrogram previews, waveform-as-player library rows, keyboard seeking, playback-error feedback, batch variations, comparison view, prompt templates, favorites, notes/ratings, crop controls, rendered screenshot cards in bundles, single-item bundles, batch-run ZIP exports, and README screenshots.

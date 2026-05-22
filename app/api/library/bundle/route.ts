@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import path from "node:path";
 import { readdir, readFile } from "node:fs/promises";
-import { buildAnalysisSummary, buildAnalysisSummaryFilename, buildBatchBundleFilename, buildBatchManifest, buildBundleFilename, buildStoredZip, isSafeAudioFilename, isSafeBatchRunId, metadataFilenameForAudio, metadataPathForAudio, readBatchRunId } from "@/lib/library";
+import { buildAnalysisSummary, buildAnalysisSummaryFilename, buildBatchBundleFilename, buildBatchManifest, buildBundleFilename, buildRenderScreenshotFilename, buildRenderScreenshotSvg, buildStoredZip, isSafeAudioFilename, isSafeBatchRunId, metadataFilenameForAudio, metadataPathForAudio, readBatchRunId } from "@/lib/library";
 
 export const runtime = "nodejs";
 
@@ -29,11 +29,13 @@ export async function GET(request: NextRequest) {
       parsedMetadata = { filename, audioUrl: `/outputs/${filename}` };
     }
     const analysisSummary = Buffer.from(JSON.stringify(buildAnalysisSummary({ filename, metadata: parsedMetadata }), null, 2));
+    const renderScreenshot = Buffer.from(buildRenderScreenshotSvg({ filename, metadata: parsedMetadata }));
 
     const zip = buildStoredZip([
       { name: filename, data: audio },
       { name: metadataFilenameForAudio(filename), data: metadata },
       { name: buildAnalysisSummaryFilename(filename), data: analysisSummary },
+      { name: buildRenderScreenshotFilename(filename), data: renderScreenshot },
     ]);
 
     return new NextResponse(zip, {
@@ -81,6 +83,7 @@ async function buildBatchBundleResponse(batchRunId: string) {
     { name: item.filename, data: item.audio },
     { name: metadataFilenameForAudio(item.filename), data: item.metadataBuffer },
     { name: buildAnalysisSummaryFilename(item.filename), data: Buffer.from(JSON.stringify(buildAnalysisSummary({ filename: item.filename, metadata: item.metadata }), null, 2)) },
+    { name: buildRenderScreenshotFilename(item.filename), data: Buffer.from(buildRenderScreenshotSvg({ filename: item.filename, metadata: item.metadata })) },
   ]);
   entries.push({ name: `${batchRunId}.manifest.json`, data: Buffer.from(JSON.stringify(manifest, null, 2)) });
 

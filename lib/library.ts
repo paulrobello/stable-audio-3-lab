@@ -181,6 +181,77 @@ export function buildAnalysisSummaryFilename(filename: string) {
   return filename.replace(/\.(mp3|wav)$/i, ".analysis-summary.json");
 }
 
+export function buildRenderScreenshotFilename(filename: string) {
+  if (!isSafeAudioFilename(filename)) throw new Error("Invalid audio filename");
+  return filename.replace(/\.(mp3|wav)$/i, ".render-screenshot.svg");
+}
+
+export function buildRenderScreenshotSvg({ filename, metadata }: { filename: string; metadata: unknown }) {
+  if (!isSafeAudioFilename(filename)) throw new Error("Invalid audio filename");
+  const summary = buildAnalysisSummary({ filename, metadata });
+  const prompt = summary.prompt || "No prompt metadata";
+  const negativePrompt = summary.negativePrompt || "";
+  const badges = [summary.mode, summary.model, summary.backend, typeof summary.duration === "number" ? `${summary.duration}s` : undefined, typeof summary.seed === "number" ? `seed ${summary.seed}` : undefined].filter(Boolean) as string[];
+  const promptLines = wrapSvgText(prompt, 58, 5);
+  const negativeLines = negativePrompt ? wrapSvgText(`Avoid: ${negativePrompt}`, 68, 2) : [];
+  const badgeText = badges.join(" • ");
+  const escapedFilename = escapeSvg(filename);
+  const promptText = promptLines.map((line, index) => `<text x="54" y="${214 + index * 28}" class="prompt">${escapeSvg(line)}</text>`).join("");
+  const negativeText = negativeLines.map((line, index) => `<text x="54" y="${376 + index * 22}" class="negative">${escapeSvg(line)}</text>`).join("");
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675" role="img" aria-label="Stable Audio 3 render screenshot for ${escapedFilename}">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="#04110d"/><stop offset="0.55" stop-color="#111827"/><stop offset="1" stop-color="#2e1065"/></linearGradient>
+    <linearGradient id="wave" x1="0" x2="1"><stop offset="0" stop-color="#6ee7b7"/><stop offset="0.5" stop-color="#7dd3fc"/><stop offset="1" stop-color="#f472b6"/></linearGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="10" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <style>.eyebrow{fill:#a7f3d0;font:700 22px ui-sans-serif,system-ui;letter-spacing:5px}.title{fill:white;font:700 54px ui-sans-serif,system-ui}.file{fill:#d1d5db;font:500 24px ui-monospace,SFMono-Regular,Menlo,monospace}.badge{fill:#e0f2fe;font:700 23px ui-sans-serif,system-ui}.prompt{fill:white;font:600 30px ui-sans-serif,system-ui}.negative{fill:#fef3c7;font:500 22px ui-sans-serif,system-ui}.small{fill:#94a3b8;font:600 20px ui-sans-serif,system-ui}</style>
+  </defs>
+  <rect width="1200" height="675" fill="url(#bg)"/>
+  <circle cx="1040" cy="95" r="190" fill="#22d3ee" opacity="0.14" filter="url(#glow)"/>
+  <circle cx="158" cy="578" r="230" fill="#34d399" opacity="0.12" filter="url(#glow)"/>
+  <rect x="34" y="34" width="1132" height="607" rx="42" fill="rgba(255,255,255,0.07)" stroke="rgba(255,255,255,0.18)"/>
+  <text x="54" y="88" class="eyebrow">STABLE AUDIO 3 LAB</text>
+  <text x="54" y="152" class="title">Render capture</text>
+  <text x="54" y="184" class="file">${escapedFilename}</text>
+  <rect x="54" y="440" width="1092" height="120" rx="28" fill="rgba(0,0,0,0.34)" stroke="rgba(255,255,255,0.12)"/>
+  ${Array.from({ length: 84 }, (_, index) => {
+    const height = 18 + Math.abs(Math.sin(index * 0.48)) * 78 + Math.abs(Math.sin(index * 0.13)) * 18;
+    const x = 78 + index * 12.5;
+    const y = 500 - height / 2;
+    return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="5" height="${height.toFixed(1)}" rx="2.5" fill="url(#wave)" opacity="0.86"/>`;
+  }).join("")}
+  <rect x="54" y="586" width="1092" height="34" rx="17" fill="rgba(14,165,233,0.14)" stroke="rgba(125,211,252,0.20)"/>
+  <text x="76" y="609" class="badge">${escapeSvg(badgeText || "metadata unavailable")}</text>
+  ${promptText}
+  ${negativeText}
+  <text x="54" y="410" class="small">Included automatically in bundle exports for visual provenance.</text>
+</svg>`;
+}
+
+function wrapSvgText(text: string, maxChars: number, maxLines: number) {
+  const words = text.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    const next = current ? `${current} ${word}` : word;
+    if (next.length > maxChars && current) {
+      lines.push(current);
+      current = word;
+      if (lines.length >= maxLines) break;
+    } else {
+      current = next;
+    }
+  }
+  if (current && lines.length < maxLines) lines.push(current);
+  if (words.length > 0 && lines.length === maxLines && lines.join(" ").length < text.length) {
+    lines[lines.length - 1] = `${lines[lines.length - 1].replace(/\s+$/, "")}…`;
+  }
+  return lines;
+}
+
+function escapeSvg(value: string) {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\"/g, "&quot;").replace(/'/g, "&apos;");
+}
+
 export type CropWindow = { start: number; end: number; duration: number };
 
 export function normalizeCropWindow({ start, end }: { start: number; end: number }): CropWindow {
