@@ -8,7 +8,7 @@ import { settingsFromMetadata, type ReusableGenerationSettings } from "@/lib/met
 
 type AudioFormat = "mp3" | "wav";
 type Result = { ok: boolean; audioUrl?: string; metadataUrl?: string; filename?: string; meta?: unknown; error?: string; detail?: unknown };
-export type LibraryItem = { filename: string; audioUrl: string; downloadUrl: string; metadataUrl?: string; bundleUrl?: string; format: AudioFormat; bytes: number; createdAt: string; favorite?: boolean; meta?: unknown };
+export type LibraryItem = { filename: string; audioUrl: string; downloadUrl: string; metadataUrl?: string; bundleUrl?: string; batchRunId?: string; batchBundleUrl?: string; format: AudioFormat; bytes: number; createdAt: string; favorite?: boolean; notes?: string; rating?: number; meta?: unknown };
 type PersistedSettings = {
   mode: "music" | "sfx";
   model: string;
@@ -122,6 +122,15 @@ export default function Home() {
     await loadLibrary();
   }
 
+  async function saveLibraryAnnotation(filename: string, notes: string, rating: number | null) {
+    await fetch("/api/library", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ filename, notes, rating }),
+    });
+    await loadLibrary();
+  }
+
   async function cropLibraryItem(filename: string, start: number, end: number) {
     const response = await fetch("/api/library/crop", {
       method: "POST",
@@ -186,13 +195,14 @@ export default function Home() {
     try {
       const parsedSeed = seed.trim() ? Number(seed) : undefined;
       const variationSeeds = parsedSeed !== undefined ? buildVariationSeeds(parsedSeed, batchCount) : Array.from({ length: batchCount }, () => undefined as number | undefined);
+      const batchRunId = variationSeeds.length > 1 ? buildClientBatchRunId() : undefined;
       let latest: Result | null = null;
       for (let index = 0; index < variationSeeds.length; index += 1) {
         setBatchProgress(variationSeeds.length > 1 ? `Variation ${index + 1}/${variationSeeds.length}${variationSeeds[index] !== undefined ? ` • seed ${variationSeeds[index]}` : ""}` : "");
         const response = await fetch("/api/generate", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ prompt, negativePrompt, mode, model, duration, steps, cfgScale, format, mock, ...(variationSeeds[index] !== undefined ? { seed: variationSeeds[index] } : {}) }),
+          body: JSON.stringify({ prompt, negativePrompt, mode, model, duration, steps, cfgScale, format, mock, ...(variationSeeds[index] !== undefined ? { seed: variationSeeds[index] } : {}), ...(batchRunId ? { batchRunId, variationIndex: index, variationCount: variationSeeds.length } : {}) }),
         });
         latest = (await response.json()) as Result;
         setResult(latest);
@@ -395,6 +405,7 @@ export default function Home() {
               onCrop={cropLibraryItem}
               onLoadConfig={loadConfigFromMetadata}
               onToggleFavorite={toggleFavorite}
+              onSaveAnnotation={saveLibraryAnnotation}
             />
           </motion.section>
         </section>
@@ -471,6 +482,9 @@ export function libraryItemSearchText(item: LibraryItem) {
     settings?.model,
     typeof settings?.duration === "number" ? `${settings.duration}s` : undefined,
     typeof settings?.seed === "number" ? `seed ${settings.seed}` : undefined,
+    readString(record.notes),
+    readNumber(record.rating) !== undefined ? `${readNumber(record.rating)} stars rating` : undefined,
+    readString((record.batch && typeof record.batch === "object" ? (record.batch as Record<string, unknown>) : {}).batchRunId),
   ]
     .filter(Boolean)
     .join(" ")
@@ -489,6 +503,27 @@ export function filterLibraryItems(items: LibraryItem[], query: string, favorite
 
 export function selectedComparisonItems(items: LibraryItem[], selectedFilenames: Set<string>) {
   return items.filter((item) => selectedFilenames.has(item.filename));
+}
+
+export function buildCropOverlayPercentages({ start, end, duration }: { start: number; end: number; duration: number }) {
+  const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : 1;
+  const clampedStart = Math.min(Math.max(Number.isFinite(start) ? start : 0, 0), safeDuration);
+  const clampedEnd = Math.min(Math.max(Number.isFinite(end) ? end : clampedStart, clampedStart), safeDuration);
+  const startPercent = Math.round((clampedStart / safeDuration) * 10000) / 100;
+  const endPercent = Math.round((clampedEnd / safeDuration) * 10000) / 100;
+  return { left: startPercent, width: Math.max(0, Math.round((endPercent - startPercent) * 100) / 100), start: startPercent, end: endPercent };
+}
+
+function readMetaString(meta: unknown, key: string) {
+  if (!meta || typeof meta !== "object") return undefined;
+  const value = (meta as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function readMetaNumber(meta: unknown, key: string) {
+  if (!meta || typeof meta !== "object") return undefined;
+  const value = (meta as Record<string, unknown>)[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function readString(value: unknown) {
@@ -527,11 +562,14 @@ export function analysisImageFilename(src: string, mode: "waveform" | "spectrogr
   return filename.replace(/\.(mp3|wav)$/i, `.${mode}.png`);
 }
 
-function AudioAnalysis({ src, compact = false }: { src: string; compact?: boolean }) {
+function AudioAnalysis({ src, compact = false, cropWindow }: { src: string; compact?: boolean; cropWindow?: { start: number; end: number; duration: number } }) {
   const [mode, setMode] = useState<"waveform" | "spectrogram">("waveform");
   const [status, setStatus] = useState("Analyzing pixels of sound...");
   const [downloadReady, setDownloadReady] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const cropOverlay = cropWindow ? buildCropOverlayPercentages(cropWindow) : undefined;
+  const cropStartLabel = cropWindow ? cropWindow.start.toFixed(2) : "0.00";
+  const cropEndLabel = cropWindow ? cropWindow.end.toFixed(2) : "0.00";
 
   useEffect(() => {
     let cancelled = false;
@@ -591,8 +629,19 @@ function AudioAnalysis({ src, compact = false }: { src: string; compact?: boolea
           </button>
         </div>
       </div>
-      <canvas ref={canvasRef} width={900} height={compact ? 96 : 150} className="h-24 w-full rounded-xl border border-white/10 bg-black/35 sm:h-32" />
-      <div className="mt-2 text-xs text-white/45">{status}</div>
+      <div className="relative">
+        <canvas ref={canvasRef} width={900} height={compact ? 96 : 150} className="h-24 w-full rounded-xl border border-white/10 bg-black/35 sm:h-32" />
+        {cropOverlay && (
+          <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-xl border border-orange-200/20" aria-label="Crop selection overlay">
+            <div className="absolute inset-y-0 bg-black/45" style={{ left: 0, width: `${cropOverlay.left}%` }} />
+            <div className="absolute inset-y-0 bg-black/45" style={{ left: `${cropOverlay.end}%`, right: 0 }} />
+            <div className="absolute inset-y-0 border-x-2 border-orange-200/95 bg-orange-300/14 shadow-[0_0_26px_rgba(251,146,60,.32)]" style={{ left: `${cropOverlay.left}%`, width: `${cropOverlay.width}%` }} />
+            <div className="absolute top-1 rounded-full border border-orange-200/30 bg-black/70 px-2 py-1 text-[10px] font-bold leading-none text-orange-100" style={{ left: `${cropOverlay.start}%`, transform: "translateX(-50%)" }}>{cropStartLabel}s</div>
+            <div className="absolute bottom-1 rounded-full border border-orange-200/30 bg-black/70 px-2 py-1 text-[10px] font-bold leading-none text-orange-100" style={{ left: `${cropOverlay.end}%`, transform: "translateX(-50%)" }}>{cropEndLabel}s</div>
+          </div>
+        )}
+      </div>
+      <div className="mt-2 text-xs text-white/45">{cropOverlay ? `Selected crop ${cropStartLabel}s → ${cropEndLabel}s • ` : ""}{status}</div>
     </div>
   );
 }
@@ -719,6 +768,7 @@ function LibraryPanel({
   onCrop,
   onLoadConfig,
   onToggleFavorite,
+  onSaveAnnotation,
 }: {
   items: LibraryItem[];
   totalItems: number;
@@ -735,6 +785,7 @@ function LibraryPanel({
   onCrop: (filename: string, start: number, end: number) => void;
   onLoadConfig: (meta: unknown) => void;
   onToggleFavorite: (filename: string, favorite: boolean) => void;
+  onSaveAnnotation: (filename: string, notes: string, rating: number | null) => void;
 }) {
   return (
     <section className="mt-5 rounded-3xl border border-white/10 bg-black/25 p-4">
@@ -780,18 +831,58 @@ function LibraryPanel({
                   </button>
                   <a href={item.downloadUrl} download={item.filename} className="inline-flex min-h-10 items-center justify-center rounded-full bg-white px-3 py-2 text-xs font-bold leading-none text-black hover:bg-emerald-100">Download</a>
                   {item.bundleUrl && <a href={item.bundleUrl} download className="inline-flex min-h-10 items-center justify-center rounded-full border border-violet-200/20 bg-violet-200/10 px-3 py-2 text-xs font-bold leading-none text-violet-100 hover:bg-violet-200/20">Bundle</a>}
+                  {item.batchBundleUrl && <a href={item.batchBundleUrl} download className="inline-flex min-h-10 items-center justify-center rounded-full border border-fuchsia-200/20 bg-fuchsia-200/10 px-3 py-2 text-xs font-bold leading-none text-fuchsia-100 hover:bg-fuchsia-200/20">Run ZIP</a>}
                   <button onClick={() => onDelete(item.filename)} className="inline-flex min-h-10 items-center justify-center rounded-full border border-red-300/35 bg-red-500/20 px-3 py-2 text-xs font-bold leading-none text-red-100 hover:bg-red-500/30">Delete</button>
                 </div>
               </div>
               <AudioPreview src={item.audioUrl} volume={playbackVolume} label={`Library audio preview for ${item.filename}`} />
+              <AnnotationControls item={item} onSave={onSaveAnnotation} />
               <CropControls item={item} onCrop={onCrop} />
-              <AudioAnalysis src={item.audioUrl} compact />
               <MetadataSummary meta={item.meta} metadataUrl={item.metadataUrl} compact onLoadConfig={onLoadConfig} />
             </article>
           ))}
         </div>
       )}
     </section>
+  );
+}
+
+function buildClientBatchRunId() {
+  const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+  const random = Math.random().toString(36).slice(2, 8);
+  return `batch-${stamp}-${random}`;
+}
+
+function AnnotationControls({ item, onSave }: { item: LibraryItem; onSave: (filename: string, notes: string, rating: number | null) => void }) {
+  const [notes, setNotes] = useState(item.notes ?? readMetaString(item.meta, "notes") ?? "");
+  const [rating, setRating] = useState(String(item.rating ?? readMetaNumber(item.meta, "rating") ?? ""));
+
+  useEffect(() => {
+    setNotes(item.notes ?? readMetaString(item.meta, "notes") ?? "");
+    setRating(String(item.rating ?? readMetaNumber(item.meta, "rating") ?? ""));
+  }, [item.filename, item.notes, item.rating, item.meta]);
+
+  return (
+    <div className="mt-3 rounded-2xl border border-amber-200/10 bg-amber-200/[0.04] p-3">
+      <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="text-xs font-bold uppercase tracking-[0.18em] text-amber-100/70">Notes & rating</div>
+          <div className="text-xs text-white/45">Tag keepers, misses, mix notes, and 1–5 star gut checks.</div>
+        </div>
+        <button type="button" onClick={() => onSave(item.filename, notes, rating ? Number(rating) : null)} className="inline-flex min-h-9 items-center justify-center rounded-full border border-amber-200/20 bg-amber-200/12 px-3 py-2 text-xs font-bold leading-none text-amber-100 hover:bg-amber-200/20">
+          Save notes
+        </button>
+      </div>
+      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_9rem]">
+        <textarea value={notes} maxLength={1000} rows={2} placeholder="What worked? What should change next pass?" onChange={(event) => setNotes(event.target.value)} className="min-h-16 w-full resize-y rounded-2xl border border-white/10 bg-black/24 p-3 text-sm text-white outline-none ring-amber-200/20 transition placeholder:text-white/30 focus:ring-4" />
+        <label className="text-xs text-white/50">Rating
+          <select value={rating} onChange={(event) => setRating(event.target.value)} className="mt-1 w-full rounded-2xl border border-white/10 bg-black/45 p-3 text-sm text-white outline-none">
+            <option value="">Unrated</option>
+            {[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>{"★".repeat(value)}{value < 5 ? "☆".repeat(5 - value) : ""}</option>)}
+          </select>
+        </label>
+      </div>
+    </div>
   );
 }
 
@@ -837,6 +928,7 @@ function CropControls({ item, onCrop }: { item: LibraryItem; onCrop: (filename: 
           <input type="range" min={Math.min(0.25, maxDuration)} max={maxDuration} step="0.25" value={safeEnd} onChange={(event) => setEnd(Math.max(Number(event.target.value), safeStart + Math.min(0.25, maxDuration)))} className="mt-1 w-full accent-orange-200" />
         </label>
       </div>
+      <AudioAnalysis src={item.audioUrl} compact cropWindow={{ start: safeStart, end: safeEnd, duration: maxDuration }} />
     </div>
   );
 }
@@ -845,6 +937,8 @@ function MetadataSummary({ meta, metadataUrl, compact = false, onLoadConfig }: {
   const settings = settingsFromMetadata(meta);
   const renderDurationMs = readGenerationDurationMs(meta);
   const backend = readBackend(meta);
+  const notes = readMetaString(meta, "notes");
+  const rating = readMetaNumber(meta, "rating");
   if (!settings) {
     return (
       <div className="mt-3 rounded-2xl border border-dashed border-white/10 bg-white/[0.03] p-3 text-xs text-white/42">
@@ -869,6 +963,8 @@ function MetadataSummary({ meta, metadataUrl, compact = false, onLoadConfig }: {
         </div>
       </div>
       {settings.prompt && <p className="text-sm leading-6 text-white/78">“{settings.prompt}”</p>}
+      {rating && <p className="mt-1 text-xs font-semibold text-amber-100">Rating: {"★".repeat(rating)}{"☆".repeat(5 - rating)}</p>}
+      {notes && <p className="mt-1 text-xs leading-5 text-amber-50/70">Notes: {notes}</p>}
       {!compact && settings.negativePrompt && <p className="mt-1 text-xs leading-5 text-white/45">Avoided: {settings.negativePrompt}</p>}
       <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-white/55">
         {settings.model && <span className="rounded-full bg-white/[0.07] px-2.5 py-1">{settings.model}</span>}

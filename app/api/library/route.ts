@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import path from "node:path";
 import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
-import { isFavoriteMetadata, isSafeAudioFilename, metadataPathForAudio, metadataUrlForAudio, toggleFavoriteMetadata } from "@/lib/library";
+import { applyLibraryAnnotationMetadata, isFavoriteMetadata, isSafeAudioFilename, metadataPathForAudio, metadataUrlForAudio, readBatchRunId, toggleFavoriteMetadata } from "@/lib/library";
 
 export const runtime = "nodejs";
 
@@ -14,7 +14,11 @@ type LibraryItem = {
   bytes: number;
   createdAt: string;
   favorite: boolean;
+  notes?: string;
+  rating?: number;
   bundleUrl: string;
+  batchRunId?: string;
+  batchBundleUrl?: string;
   meta?: unknown;
 };
 
@@ -38,6 +42,10 @@ export async function GET() {
           // Older generated files may not have sidecar metadata. That's fine.
         }
         const format = filename.endsWith(".mp3") ? "mp3" : "wav";
+        const metaRecord = meta && typeof meta === "object" ? (meta as Record<string, unknown>) : {};
+        const batchRunId = readBatchRunId(meta);
+        const rating = typeof metaRecord.rating === "number" && Number.isFinite(metaRecord.rating) ? metaRecord.rating : undefined;
+        const notes = typeof metaRecord.notes === "string" ? metaRecord.notes : undefined;
         return {
           filename,
           audioUrl: `/outputs/${filename}`,
@@ -47,7 +55,11 @@ export async function GET() {
           bytes: info.size,
           createdAt: info.birthtime.toISOString(),
           favorite: isFavoriteMetadata(meta),
+          notes,
+          rating,
           bundleUrl: `/api/library/bundle?filename=${encodeURIComponent(filename)}`,
+          batchRunId,
+          batchBundleUrl: batchRunId ? `/api/library/bundle?batchRunId=${encodeURIComponent(batchRunId)}` : undefined,
           meta,
         };
       }),
@@ -61,9 +73,12 @@ export async function GET() {
 
 export async function PATCH(request: NextRequest) {
   try {
-    const { filename, favorite } = (await request.json()) as { filename?: string; favorite?: boolean };
-    if (!filename || !isSafeAudioFilename(filename) || typeof favorite !== "boolean") {
-      return NextResponse.json({ ok: false, error: "Invalid favorite request" }, { status: 400 });
+    const body = (await request.json()) as { filename?: string; favorite?: boolean; notes?: string; rating?: number | string | null };
+    const { filename } = body;
+    const hasFavorite = typeof body.favorite === "boolean";
+    const hasAnnotation = "notes" in body || "rating" in body;
+    if (!filename || !isSafeAudioFilename(filename) || (!hasFavorite && !hasAnnotation)) {
+      return NextResponse.json({ ok: false, error: "Invalid library metadata request" }, { status: 400 });
     }
     const fullPath = path.join(outputDir(), filename);
     await stat(fullPath);
@@ -74,12 +89,14 @@ export async function PATCH(request: NextRequest) {
     } catch {
       meta = { filename, audioUrl: `/outputs/${filename}`, metadataUrl: metadataUrlForAudio(filename) };
     }
-    const updated = toggleFavoriteMetadata(meta, favorite);
+    let updated = meta;
+    if (hasFavorite) updated = toggleFavoriteMetadata(updated, body.favorite!);
+    if (hasAnnotation) updated = applyLibraryAnnotationMetadata(updated, body);
     await writeFile(metaPath, JSON.stringify(updated, null, 2));
-    return NextResponse.json({ ok: true, meta: updated, favorite });
+    return NextResponse.json({ ok: true, meta: updated });
   } catch (error) {
     const code = error && typeof error === "object" && "code" in error ? (error as { code?: unknown }).code : undefined;
-    const status = code === "ENOENT" ? 404 : 500;
+    const status = code === "ENOENT" ? 404 : error instanceof Error && /Invalid/.test(error.message) ? 400 : 500;
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Unknown error" }, { status });
   }
 }

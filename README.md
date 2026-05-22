@@ -70,10 +70,12 @@ The app was built for Paul's M4 Max MacBook Pro with 128GB unified memory and us
 - **Generated Audio Library**: Listen to previous generations directly in the browser.
 - **Waveform and Spectrogram Views**: Inspect rendered audio visually with per-item Wave/Spec previews.
 - **Favorite Keepers**: Star library items so the good goblins do not get lost in the noise pile.
+- **Notes and Ratings**: Add optional per-render notes plus 1–5 star ratings for quick A/B judgment calls.
 - **Download and Delete**: Download audio keepers or delete cursed renders with confirmation.
 - **Export Bundles**: Download a `.bundle.zip` containing the audio file plus its metadata sidecar for sharing experiments.
+- **Batch Run Bundles**: Multi-variation runs get a shared batch ID and one-click `Run ZIP` export for the entire variation set.
 - **Audio Cropping**: Trim any library item into a shorter MP3/WAV clip while preserving source metadata and crop provenance.
-- **Metadata Sidecars**: Every output gets a `.json` sidecar with prompt, settings, backend, seed, runtime, favorite state, crop lineage, and Python output tails.
+- **Metadata Sidecars**: Every output gets a `.json` sidecar with prompt, settings, backend, seed, runtime, favorite state, annotations, batch lineage, crop lineage, and Python output tails.
 - **Load Config**: Restore prompt/settings/seed from an existing library item to iterate from a prior render.
 - **Metadata Cleanup**: Deleting a library item removes both the audio file and sidecar metadata.
 
@@ -266,10 +268,10 @@ http://localhost:3007
 * Enter a musical prompt such as tempo, genre, instruments, mix style, and mood.
 * Use the prompt template drawers for loops, ambience, trailer hits, or music beds when you want a fast starting point.
 * Start around 8 steps and CFG 1–2.
-* Set **Batch variations** above 1 to run multiple variations; with a fixed seed, each pass increments the seed.
+* Set **Batch variations** above 1 to run multiple variations; with a fixed seed, each pass increments the seed and the whole run gets a shared batch ID.
 * Click **Generate MP3** or **Generate WAV**.
 * Preview the render in-browser and inspect the Wave/Spec audio analysis panel.
-* Download the keeper, star it, export a bundle, or use **Load config** from the Library to iterate.
+* Download the keeper, star it, add notes/ratings, export a single-file bundle, export the full `Run ZIP`, or use **Load config** from the Library to iterate.
 
 ## Quick start SFX workflow
 
@@ -280,7 +282,7 @@ http://localhost:3007
 * Keep duration short for Foley/UI sounds, usually 1–8 seconds.
 * Start with 4–8 steps for quick drafts.
 * Generate, preview, inspect Wave/Spec analysis, and download the result.
-* Use the Library to compare variations, star keepers, export bundles, and delete cursed noises before they multiply.
+* Use the Library to compare variations, star keepers, add notes/ratings, export single items or whole variation-run bundles, and delete cursed noises before they multiply.
 
 ## Reproducible seeds
 
@@ -312,17 +314,32 @@ Metadata includes:
 * generation runtime in milliseconds
 * backend (`mlx` or `torch`)
 * favorite/star state
+* optional notes and 1–5 star rating annotations
 * prompt and negative prompt
 * mode, model, duration, steps, CFG, format, mock/real mode
 * seed, when present
+* batch run ID and variation index/count, when generated as a multi-variation run
 * crop provenance, when a file was trimmed from another render
 * Python process stdout/stderr tail
 
-The Library UI can download the audio, download the JSON metadata, export an audio+metadata bundle, star keepers, crop shorter clips, load metadata back into the settings panel, inspect waveform/spectrogram previews, or delete both files after confirmation.
+The Library UI can download the audio, download the JSON metadata, export an audio+metadata bundle, export a whole variation-run ZIP, star keepers, add notes/ratings, crop shorter clips, load metadata back into the settings panel, inspect waveform/spectrogram previews, or delete both files after confirmation.
+
+### Notes, ratings, and batch exports
+
+Each library item has a **Notes & rating** panel. Notes are trimmed, capped at 1000 characters, and ratings are optional 1–5 star values. Saving annotations updates only the JSON sidecar; the source audio is untouched.
+
+Batch generation assigns all variations in a single UI run the same `batch.batchRunId` plus `variationIndex` and `variationCount`. Any item from that run shows a **Run ZIP** button that downloads the entire variation set:
+
+```bash
+curl -L "http://localhost:3007/api/library/bundle?batchRunId=batch-20260521-abc123" \
+  -o batch-20260521-abc123.variation-run.zip
+```
+
+The run ZIP contains every matching audio file, its `.json` sidecar, per-item analysis summaries, and a `<batchRunId>.manifest.json` that lists variations in deterministic order.
 
 ### Audio cropping
 
-Every library item includes a **Crop audio** panel with start/end sliders. Cropping never mutates the source file; it creates a new sibling clip plus metadata sidecar:
+Every library item includes a **Crop audio** panel with start/end sliders. The crop panel renders the waveform directly under the sliders with an orange selected-region overlay, dimmed out-of-crop audio, and live start/end labels, so you can see exactly what will be cut before pressing **Crop**. Cropping never mutates the source file; it creates a new sibling clip plus metadata sidecar:
 
 ```text
 public/outputs/sa3-sfx-123.mp3
@@ -360,7 +377,9 @@ make pre-commit-install # install pre-commit and pre-push git hooks
 ```text
 app/
   api/generate/route.ts    # POST endpoint that calls scripts/generate_audio.py
-  api/library/route.ts     # GET/DELETE endpoint for generated audio library
+  api/library/route.ts     # GET/PATCH/DELETE endpoint for generated audio library
+  api/library/bundle/route.ts # Single-item and batch-run ZIP exports
+  api/library/crop/route.ts   # FFmpeg crop endpoint
   page.tsx                 # Main browser UI
 docs/
   music_mode.png           # README screenshot for Music mode

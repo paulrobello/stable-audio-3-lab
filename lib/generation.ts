@@ -18,6 +18,22 @@ export const generateSchema = z.object({
   format: z.enum(["mp3", "wav"]).optional().default("mp3"),
   seed: z.coerce.number().int().min(0).max(2147483647).optional(),
   mock: z.boolean().optional().default(false),
+  batchRunId: z.string().regex(/^(?!\.)(?!.*\.\.)(?=.{1,80}$)[a-zA-Z0-9][a-zA-Z0-9._-]*$/).optional(),
+  variationIndex: z.coerce.number().int().min(0).max(99).optional(),
+  variationCount: z.coerce.number().int().min(1).max(99).optional(),
+}).superRefine((value, ctx) => {
+  const hasBatchRun = value.batchRunId !== undefined;
+  const hasVariationIndex = value.variationIndex !== undefined;
+  const hasVariationCount = value.variationCount !== undefined;
+  if (hasBatchRun && (!hasVariationIndex || !hasVariationCount)) {
+    ctx.addIssue({ code: "custom", message: "Batch generation requires variationIndex and variationCount", path: ["batchRunId"] });
+  }
+  if (!hasBatchRun && (hasVariationIndex || hasVariationCount)) {
+    ctx.addIssue({ code: "custom", message: "Variation fields require batchRunId", path: [hasVariationIndex ? "variationIndex" : "variationCount"] });
+  }
+  if (hasVariationIndex && hasVariationCount && value.variationIndex! >= value.variationCount!) {
+    ctx.addIssue({ code: "custom", message: "variationIndex must be less than variationCount", path: ["variationIndex"] });
+  }
 });
 
 export type GenerateRequest = z.infer<typeof generateSchema>;

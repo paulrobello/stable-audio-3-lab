@@ -85,12 +85,45 @@ export function buildLibraryMetadata({
       seed: input.seed,
       mock: input.mock,
     },
+    ...(input.batchRunId ? { batch: { batchRunId: input.batchRunId, variationIndex: input.variationIndex ?? 0, variationCount: input.variationCount ?? 1 } } : {}),
     python,
   };
 }
 
 export function isFavoriteMetadata(meta: unknown) {
   return !!meta && typeof meta === "object" && (meta as Record<string, unknown>).favorite === true;
+}
+
+export type LibraryAnnotation = { notes: string; rating: number | null };
+
+export function normalizeLibraryAnnotation(input: unknown, previous: Partial<LibraryAnnotation> = {}): LibraryAnnotation {
+  const record = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const notesValue = "notes" in record ? (typeof record.notes === "string" ? record.notes.trim() : "") : (previous.notes ?? "");
+  if (notesValue.length > 1000) throw new Error("Invalid notes: must be 1000 characters or fewer");
+  const ratingValue = "rating" in record ? record.rating : previous.rating;
+  let rating: number | null = null;
+  if (ratingValue !== undefined && ratingValue !== null && ratingValue !== "") {
+    const numericRating = Number(ratingValue);
+    if (!Number.isInteger(numericRating) || numericRating < 1 || numericRating > 5) throw new Error("Invalid rating: must be 1-5 or empty");
+    rating = numericRating;
+  }
+  return { notes: notesValue, rating };
+}
+
+export function applyLibraryAnnotationMetadata<T>(meta: T, annotationInput: unknown, annotatedAt = new Date().toISOString()): T & { notes?: string; rating?: number; annotatedAt?: string } {
+  const base = meta && typeof meta === "object" ? meta : ({} as T);
+  const baseRecord = base as T & Record<string, unknown>;
+  const previous = {
+    notes: typeof baseRecord.notes === "string" ? baseRecord.notes : "",
+    rating: typeof baseRecord.rating === "number" && Number.isFinite(baseRecord.rating) ? baseRecord.rating : null,
+  };
+  const annotation = normalizeLibraryAnnotation(annotationInput, previous);
+  return {
+    ...baseRecord,
+    notes: annotation.notes || undefined,
+    rating: annotation.rating ?? undefined,
+    annotatedAt,
+  };
 }
 
 export function toggleFavoriteMetadata<T>(meta: T, favorite: boolean): T & { favorite: boolean; favoritedAt?: string } {
@@ -105,6 +138,42 @@ export function toggleFavoriteMetadata<T>(meta: T, favorite: boolean): T & { fav
 export function buildBundleFilename(filename: string) {
   if (!isSafeAudioFilename(filename)) throw new Error("Invalid audio filename");
   return filename.replace(/\.(mp3|wav)$/i, ".bundle.zip");
+}
+
+export function isSafeBatchRunId(batchRunId: string) {
+  return /^(?!\.)(?!.*\.\.)(?=.{1,80}$)[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(batchRunId);
+}
+
+export function buildBatchBundleFilename(batchRunId: string) {
+  if (!isSafeBatchRunId(batchRunId)) throw new Error("Invalid batch run id");
+  return `${batchRunId}.variation-run.zip`;
+}
+
+export function readBatchRunId(metadata: unknown) {
+  if (!metadata || typeof metadata !== "object") return undefined;
+  const batch = (metadata as Record<string, unknown>).batch;
+  if (!batch || typeof batch !== "object") return undefined;
+  const batchRunId = (batch as Record<string, unknown>).batchRunId;
+  return typeof batchRunId === "string" && isSafeBatchRunId(batchRunId) ? batchRunId : undefined;
+}
+
+export function buildBatchManifest({ batchRunId, items }: { batchRunId: string; items: { filename: string; metadata: unknown }[] }) {
+  if (!isSafeBatchRunId(batchRunId)) throw new Error("Invalid batch run id");
+  const sorted = [...items].sort((a, b) => readVariationIndex(a.metadata) - readVariationIndex(b.metadata) || a.filename.localeCompare(b.filename));
+  return {
+    batchRunId,
+    variationCount: sorted.length,
+    createdAt: new Date().toISOString(),
+    items: sorted.map((item) => ({ filename: item.filename, variationIndex: readVariationIndex(item.metadata), metadata: item.metadata })),
+  };
+}
+
+function readVariationIndex(metadata: unknown) {
+  if (!metadata || typeof metadata !== "object") return 0;
+  const batch = (metadata as Record<string, unknown>).batch;
+  if (!batch || typeof batch !== "object") return 0;
+  const value = (batch as Record<string, unknown>).variationIndex;
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 export function buildAnalysisSummaryFilename(filename: string) {

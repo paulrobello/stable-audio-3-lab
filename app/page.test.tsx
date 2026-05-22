@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { AudioPreview, buildSpectrogramBins, clampPlaybackVolume, filterLibraryItems, libraryItemSearchText, selectedComparisonItems } from "./page";
+import { AudioPreview, buildCropOverlayPercentages, buildSpectrogramBins, clampPlaybackVolume, filterLibraryItems, libraryItemSearchText, selectedComparisonItems } from "./page";
 
 describe("playback volume", () => {
   it("clamps saved playback volume into the browser audio range", () => {
@@ -60,6 +60,14 @@ describe("comparison selection", () => {
     ];
 
     expect(selectedComparisonItems(items, new Set(["b.wav", "missing"]))).toEqual([items[1]]);
+  });
+});
+
+describe("crop waveform overlay", () => {
+  it("maps crop start/end seconds to clamped waveform percentages", () => {
+    expect(buildCropOverlayPercentages({ start: 2, end: 5, duration: 10 })).toEqual({ left: 20, width: 30, start: 20, end: 50 });
+    expect(buildCropOverlayPercentages({ start: -1, end: 15, duration: 10 })).toEqual({ left: 0, width: 100, start: 0, end: 100 });
+    expect(buildCropOverlayPercentages({ start: 3, end: 3, duration: 10 })).toEqual({ left: 30, width: 0, start: 30, end: 30 });
   });
 });
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildVariationSeeds, promptTemplateGroups } from "./generation";
-import { buildAnalysisSummary, buildAnalysisSummaryFilename, buildBundleFilename, buildCropFilename, buildCropMetadata, buildStoredZip, normalizeCropWindow, validateCropFitsDuration, isFavoriteMetadata, toggleFavoriteMetadata } from "./library";
+import { applyLibraryAnnotationMetadata, buildAnalysisSummary, buildAnalysisSummaryFilename, buildBatchBundleFilename, buildBatchManifest, buildBundleFilename, buildCropFilename, buildCropMetadata, buildStoredZip, isFavoriteMetadata, isSafeBatchRunId, normalizeCropWindow, normalizeLibraryAnnotation, validateCropFitsDuration, toggleFavoriteMetadata } from "./library";
 
 describe("prompt templates", () => {
   it("ships templates for foley, ui stings, loops, trailer hits, ambience, and music beds", () => {
@@ -31,10 +31,66 @@ describe("favorite metadata", () => {
   });
 });
 
+describe("library annotations", () => {
+  it("normalizes optional notes and ratings for metadata sidecars", () => {
+    expect(normalizeLibraryAnnotation({ notes: "  Keeper after crop.  ", rating: 4 })).toEqual({ notes: "Keeper after crop.", rating: 4 });
+    expect(normalizeLibraryAnnotation({ notes: "", rating: null })).toEqual({ notes: "", rating: null });
+    expect(normalizeLibraryAnnotation({ rating: 5 }, { notes: "Keep me", rating: 2 })).toEqual({ notes: "Keep me", rating: 5 });
+    expect(normalizeLibraryAnnotation({ notes: "New note" }, { notes: "Old", rating: 3 })).toEqual({ notes: "New note", rating: 3 });
+    expect(() => normalizeLibraryAnnotation({ notes: "x".repeat(1001), rating: 3 })).toThrow(/notes/i);
+    expect(() => normalizeLibraryAnnotation({ notes: "ok", rating: 6 })).toThrow(/rating/i);
+  });
+
+  it("applies notes and ratings without disturbing existing metadata", () => {
+    const updated = applyLibraryAnnotationMetadata(
+      { filename: "sa3-music-123.mp3", settings: { prompt: "bass loop" }, favorite: true },
+      { notes: "Mix is wide", rating: 5 },
+      "2026-05-21T13:00:00.000Z",
+    );
+
+    expect(updated).toMatchObject({
+      filename: "sa3-music-123.mp3",
+      settings: { prompt: "bass loop" },
+      favorite: true,
+      notes: "Mix is wide",
+      rating: 5,
+      annotatedAt: "2026-05-21T13:00:00.000Z",
+    });
+  });
+
+  it("preserves omitted fields when applying partial annotation updates", () => {
+    expect(applyLibraryAnnotationMetadata({ notes: "Keep me", rating: 2 }, { rating: 5 })).toMatchObject({ notes: "Keep me", rating: 5 });
+    expect(applyLibraryAnnotationMetadata({ notes: "Old", rating: 3 }, { notes: "New" })).toMatchObject({ notes: "New", rating: 3 });
+    expect(applyLibraryAnnotationMetadata({ notes: "Clear rating", rating: 4 }, { rating: null })).toMatchObject({ notes: "Clear rating" });
+  });
+});
+
 describe("export bundles", () => {
   it("creates a safe zip filename for audio + metadata bundles", () => {
     expect(buildBundleFilename("sa3-music-123.mp3")).toBe("sa3-music-123.bundle.zip");
     expect(() => buildBundleFilename("../bad.mp3")).toThrow(/Invalid/);
+  });
+
+  it("creates safe batch run bundle filenames", () => {
+    expect(isSafeBatchRunId("batch-20260521-abc123")).toBe(true);
+    expect(isSafeBatchRunId("../bad")).toBe(false);
+    expect(isSafeBatchRunId(".")).toBe(false);
+    expect(isSafeBatchRunId("..hidden")).toBe(false);
+    expect(buildBatchBundleFilename("batch-20260521-abc123")).toBe("batch-20260521-abc123.variation-run.zip");
+    expect(() => buildBatchBundleFilename("../bad")).toThrow(/Invalid/);
+  });
+
+  it("builds a batch manifest with deterministic ordered variations", () => {
+    const manifest = buildBatchManifest({
+      batchRunId: "batch-20260521-abc123",
+      items: [
+        { filename: "sa3-music-b.mp3", metadata: { batch: { variationIndex: 1, variationCount: 2 }, settings: { prompt: "b" } } },
+        { filename: "sa3-music-a.mp3", metadata: { batch: { variationIndex: 0, variationCount: 2 }, settings: { prompt: "a" } } },
+      ],
+    });
+
+    expect(manifest).toMatchObject({ batchRunId: "batch-20260521-abc123", variationCount: 2 });
+    expect(manifest.items.map((item) => item.filename)).toEqual(["sa3-music-a.mp3", "sa3-music-b.mp3"]);
   });
 
   it("builds a stored zip containing audio and metadata entries", () => {

@@ -60,6 +60,22 @@ describe("normalizeGenerationRequest", () => {
     expect(request.seed).toBe(123456);
   });
 
+  it("requires consistent batch variation metadata", () => {
+    const base = {
+      prompt: "repeatable sci-fi impact with clean transient",
+      mode: "sfx",
+      model: "small-sfx",
+      duration: 3,
+      steps: 12,
+      cfgScale: 1,
+    };
+
+    expect(normalizeGenerationRequest({ ...base, batchRunId: "batch-abc123", variationIndex: 0, variationCount: 2 }).batchRunId).toBe("batch-abc123");
+    expect(() => normalizeGenerationRequest({ ...base, batchRunId: "batch-abc123", variationIndex: 2, variationCount: 2 })).toThrow();
+    expect(() => normalizeGenerationRequest({ ...base, variationIndex: 0, variationCount: 2 })).toThrow();
+    expect(() => normalizeGenerationRequest({ ...base, batchRunId: "batch-abc123" })).toThrow();
+  });
+
   it("explains the non-obvious generation controls", () => {
     expect(controlTips.steps.body).toContain("Start at 8");
     expect(controlTips.cfgScale.body).toContain("Prompt strength");
