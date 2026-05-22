@@ -392,6 +392,7 @@ export default function Home() {
             {comparisonItems.length > 0 && <ComparisonPanel items={comparisonItems} playbackVolume={playbackVolume} onClear={() => setComparisonFilenames(new Set<string>())} onLoadConfig={loadConfigFromMetadata} />}
             <LibraryPanel
               items={filteredLibraryItems}
+              liveItems={libraryItems}
               totalItems={libraryItems.length}
               playbackVolume={playbackVolume}
               busy={libraryBusy}
@@ -528,6 +529,11 @@ export function filterLibraryItems(items: LibraryItem[], query: string, favorite
 
 export function selectedComparisonItems(items: LibraryItem[], selectedFilenames: Set<string>) {
   return items.filter((item) => selectedFilenames.has(item.filename));
+}
+
+export function prunePlaybackState(current: Record<string, PlaybackState>, items: Pick<LibraryItem, "filename">[]) {
+  const liveFilenames = new Set(items.map((item) => item.filename));
+  return Object.fromEntries(Object.entries(current).filter(([filename]) => liveFilenames.has(filename)));
 }
 
 export function buildCropOverlayPercentages({ start, end, duration }: { start: number; end: number; duration: number }) {
@@ -828,6 +834,7 @@ function ComparisonPanel({ items, playbackVolume, onClear, onLoadConfig }: { ite
 
 function LibraryPanel({
   items,
+  liveItems,
   totalItems,
   playbackVolume,
   busy,
@@ -846,6 +853,7 @@ function LibraryPanel({
   onPlaybackVolumeChange,
 }: {
   items: LibraryItem[];
+  liveItems: LibraryItem[];
   totalItems: number;
   playbackVolume: number;
   busy: boolean;
@@ -865,6 +873,14 @@ function LibraryPanel({
 }) {
   const [playbackByFilename, setPlaybackByFilename] = useState<Record<string, PlaybackState>>({});
   const audioRefs = useRef<Record<string, HTMLAudioElement | null>>({});
+
+  useEffect(() => {
+    setPlaybackByFilename((current) => prunePlaybackState(current, liveItems));
+    const liveFilenames = new Set(liveItems.map((item) => item.filename));
+    for (const filename of Object.keys(audioRefs.current)) {
+      if (!liveFilenames.has(filename)) delete audioRefs.current[filename];
+    }
+  }, [liveItems]);
 
   function updatePlayback(filename: string, playback: PlaybackState) {
     setPlaybackByFilename((current) => ({ ...current, [filename]: playback }));

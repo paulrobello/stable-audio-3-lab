@@ -464,10 +464,9 @@ make pre-commit
 ### Where we're going
 
 * Optional PNG export for the server-generated SVG render capture cards.
-* Optional stale playback-state pruning after library deletes/refreshes.
 
 ## What's new
 
 ### v0.1.0
 
-* Initial Stable Audio 3 Lab app with Next.js UI, mock mode, real MLX inference, library management, metadata sidecars, seed controls, global playback volume, waveform/spectrogram previews, waveform-as-player library rows, keyboard seeking, playback-error feedback, batch variations, comparison view, prompt templates, favorites, notes/ratings, crop controls, rendered screenshot cards in bundles, single-item bundles, batch-run ZIP exports, and README screenshots.
+* Initial Stable Audio 3 Lab app with Next.js UI, mock mode, real MLX inference, library management, metadata sidecars, seed controls, global playback volume, waveform/spectrogram previews, waveform-as-player library rows, keyboard seeking, playback-error feedback, stale playback-state pruning after refresh/delete, batch variations, comparison view, prompt templates, favorites, notes/ratings, crop controls, rendered screenshot cards in bundles, single-item bundles, batch-run ZIP exports, and README screenshots.

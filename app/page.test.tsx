@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { AudioPreview, buildCropOverlayPercentages, buildPlayheadOverlayPercentage, buildSeekTimeFromKeyboard, buildSeekTimeFromPointer, buildSpectrogramBins, clampPlaybackVolume, filterLibraryItems, libraryItemSearchText, playAudioElement, selectedComparisonItems } from "./page";
+import { AudioPreview, buildCropOverlayPercentages, buildPlayheadOverlayPercentage, buildSeekTimeFromKeyboard, buildSeekTimeFromPointer, buildSpectrogramBins, clampPlaybackVolume, filterLibraryItems, libraryItemSearchText, playAudioElement, prunePlaybackState, selectedComparisonItems } from "./page";
 
 describe("playback volume", () => {
   it("clamps saved playback volume into the browser audio range", () => {
@@ -87,6 +87,35 @@ describe("comparison selection", () => {
     ];
 
     expect(selectedComparisonItems(items, new Set(["b.wav", "missing"]))).toEqual([items[1]]);
+  });
+});
+
+describe("library playback state", () => {
+  it("prunes playback state for library items no longer present after refresh or delete", () => {
+    const current = {
+      "keep.mp3": { currentTime: 3, duration: 12, isPlaying: true },
+      "deleted.wav": { currentTime: 1, duration: 4, error: "NotAllowedError" },
+    };
+    const items = [
+      { filename: "keep.mp3", audioUrl: "/keep.mp3", downloadUrl: "/keep.mp3", format: "mp3" as const, bytes: 1, createdAt: "2026-05-21T12:00:00.000Z" },
+    ];
+
+    expect(prunePlaybackState(current, items)).toEqual({
+      "keep.mp3": { currentTime: 3, duration: 12, isPlaying: true },
+    });
+  });
+
+  it("keeps playback state for hidden filtered items that still exist in the full library", () => {
+    const current = {
+      "visible.mp3": { currentTime: 2, duration: 8 },
+      "hidden-but-live.wav": { currentTime: 6, duration: 10, isPlaying: false },
+    };
+    const allLibraryItems = [
+      { filename: "visible.mp3", audioUrl: "/visible.mp3", downloadUrl: "/visible.mp3", format: "mp3" as const, bytes: 1, createdAt: "2026-05-21T12:00:00.000Z" },
+      { filename: "hidden-but-live.wav", audioUrl: "/hidden-but-live.wav", downloadUrl: "/hidden-but-live.wav", format: "wav" as const, bytes: 1, createdAt: "2026-05-21T12:01:00.000Z" },
+    ];
+
+    expect(prunePlaybackState(current, allLibraryItems)).toEqual(current);
   });
 });
 
