@@ -339,7 +339,7 @@ The run ZIP contains every matching audio file, its `.json` sidecar, per-item an
 
 ### Audio cropping
 
-Every library item includes a **Crop audio** panel with start/end sliders. The crop panel renders the waveform directly under the sliders with an orange selected-region overlay, dimmed out-of-crop audio, and live start/end labels, so you can see exactly what will be cut before pressing **Crop**. Cropping never mutates the source file; it creates a new sibling clip plus metadata sidecar:
+Every library item includes a **Crop audio** panel with start/end sliders. The crop panel renders the waveform directly under the sliders with an orange selected-region overlay, dimmed out-of-crop audio, live start/end labels, and a cyan playback playhead that follows the audio player above it, so you can see exactly what is playing and what will be cut before pressing **Crop**. Cropping never mutates the source file; it creates a new sibling clip plus metadata sidecar:
 
 ```text
 public/outputs/sa3-sfx-123.mp3

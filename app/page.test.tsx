@@ -1,6 +1,6 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
-import { AudioPreview, buildCropOverlayPercentages, buildSpectrogramBins, clampPlaybackVolume, filterLibraryItems, libraryItemSearchText, selectedComparisonItems } from "./page";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { AudioPreview, buildCropOverlayPercentages, buildPlayheadOverlayPercentage, buildSpectrogramBins, clampPlaybackVolume, filterLibraryItems, libraryItemSearchText, selectedComparisonItems } from "./page";
 
 describe("playback volume", () => {
   it("clamps saved playback volume into the browser audio range", () => {
@@ -15,6 +15,18 @@ describe("playback volume", () => {
 
     const audio = screen.getByLabelText("Test preview") as HTMLAudioElement;
     expect(audio.volume).toBe(0.37);
+  });
+
+  it("reports playback timing changes from audio events", () => {
+    const onPlaybackChange = vi.fn();
+    render(<AudioPreview src="/outputs/test.mp3" volume={0.37} label="Test preview" onPlaybackChange={onPlaybackChange} />);
+
+    const audio = screen.getByLabelText("Test preview") as HTMLAudioElement;
+    Object.defineProperty(audio, "currentTime", { configurable: true, value: 4 });
+    Object.defineProperty(audio, "duration", { configurable: true, value: 10 });
+    fireEvent.timeUpdate(audio);
+
+    expect(onPlaybackChange).toHaveBeenCalledWith({ currentTime: 4, duration: 10 });
   });
 });
 
@@ -68,6 +80,13 @@ describe("crop waveform overlay", () => {
     expect(buildCropOverlayPercentages({ start: 2, end: 5, duration: 10 })).toEqual({ left: 20, width: 30, start: 20, end: 50 });
     expect(buildCropOverlayPercentages({ start: -1, end: 15, duration: 10 })).toEqual({ left: 0, width: 100, start: 0, end: 100 });
     expect(buildCropOverlayPercentages({ start: 3, end: 3, duration: 10 })).toEqual({ left: 30, width: 0, start: 30, end: 30 });
+  });
+
+  it("maps audio playback time to a clamped waveform playhead percentage", () => {
+    expect(buildPlayheadOverlayPercentage({ currentTime: 4, duration: 10 })).toBe(40);
+    expect(buildPlayheadOverlayPercentage({ currentTime: -1, duration: 10 })).toBe(0);
+    expect(buildPlayheadOverlayPercentage({ currentTime: 12, duration: 10 })).toBe(100);
+    expect(buildPlayheadOverlayPercentage({ currentTime: 12, duration: 0 })).toBe(0);
   });
 });
 

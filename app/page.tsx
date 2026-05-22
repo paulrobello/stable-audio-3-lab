@@ -7,6 +7,7 @@ import { controlTips, modelOptions, promptPresets, promptTemplateGroups, buildVa
 import { settingsFromMetadata, type ReusableGenerationSettings } from "@/lib/metadata-settings";
 
 type AudioFormat = "mp3" | "wav";
+type PlaybackState = { currentTime: number; duration: number };
 type Result = { ok: boolean; audioUrl?: string; metadataUrl?: string; filename?: string; meta?: unknown; error?: string; detail?: unknown };
 export type LibraryItem = { filename: string; audioUrl: string; downloadUrl: string; metadataUrl?: string; bundleUrl?: string; batchRunId?: string; batchBundleUrl?: string; format: AudioFormat; bytes: number; createdAt: string; favorite?: boolean; notes?: string; rating?: number; meta?: unknown };
 type PersistedSettings = {
@@ -454,14 +455,22 @@ export function clampPlaybackVolume(volume: number) {
   return Math.min(Math.max(volume, 0), 1);
 }
 
-export function AudioPreview({ src, volume, label }: { src?: string; volume: number; label: string }) {
+export function AudioPreview({ src, volume, label, onPlaybackChange }: { src?: string; volume: number; label: string; onPlaybackChange?: (state: PlaybackState) => void }) {
   const audioRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
     if (audioRef.current) audioRef.current.volume = clampPlaybackVolume(volume);
   }, [volume]);
 
-  return <audio ref={audioRef} src={src} controls aria-label={label} className="w-full" />;
+  function reportPlayback(event: React.SyntheticEvent<HTMLAudioElement>) {
+    const audio = event.currentTarget;
+    onPlaybackChange?.({
+      currentTime: Number.isFinite(audio.currentTime) ? audio.currentTime : 0,
+      duration: Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0,
+    });
+  }
+
+  return <audio ref={audioRef} src={src} controls aria-label={label} className="w-full" onTimeUpdate={reportPlayback} onLoadedMetadata={reportPlayback} onSeeking={reportPlayback} onSeeked={reportPlayback} onEnded={reportPlayback} />;
 }
 
 export function libraryItemSearchText(item: LibraryItem) {
@@ -514,6 +523,12 @@ export function buildCropOverlayPercentages({ start, end, duration }: { start: n
   return { left: startPercent, width: Math.max(0, Math.round((endPercent - startPercent) * 100) / 100), start: startPercent, end: endPercent };
 }
 
+export function buildPlayheadOverlayPercentage({ currentTime, duration }: PlaybackState) {
+  if (!Number.isFinite(duration) || duration <= 0 || !Number.isFinite(currentTime)) return 0;
+  const clampedTime = Math.min(Math.max(currentTime, 0), duration);
+  return Math.round((clampedTime / duration) * 10000) / 100;
+}
+
 function readMetaString(meta: unknown, key: string) {
   if (!meta || typeof meta !== "object") return undefined;
   const value = (meta as Record<string, unknown>)[key];
@@ -562,12 +577,14 @@ export function analysisImageFilename(src: string, mode: "waveform" | "spectrogr
   return filename.replace(/\.(mp3|wav)$/i, `.${mode}.png`);
 }
 
-function AudioAnalysis({ src, compact = false, cropWindow }: { src: string; compact?: boolean; cropWindow?: { start: number; end: number; duration: number } }) {
+function AudioAnalysis({ src, compact = false, cropWindow, playback }: { src: string; compact?: boolean; cropWindow?: { start: number; end: number; duration: number }; playback?: PlaybackState }) {
   const [mode, setMode] = useState<"waveform" | "spectrogram">("waveform");
   const [status, setStatus] = useState("Analyzing pixels of sound...");
   const [downloadReady, setDownloadReady] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const cropOverlay = cropWindow ? buildCropOverlayPercentages(cropWindow) : undefined;
+  const playheadPercent = playback ? buildPlayheadOverlayPercentage(playback) : undefined;
+  const playheadLabel = playback ? formatPlaybackTime(playback.currentTime) : "0:00";
   const cropStartLabel = cropWindow ? cropWindow.start.toFixed(2) : "0.00";
   const cropEndLabel = cropWindow ? cropWindow.end.toFixed(2) : "0.00";
 
@@ -638,6 +655,12 @@ function AudioAnalysis({ src, compact = false, cropWindow }: { src: string; comp
             <div className="absolute inset-y-0 border-x-2 border-orange-200/95 bg-orange-300/14 shadow-[0_0_26px_rgba(251,146,60,.32)]" style={{ left: `${cropOverlay.left}%`, width: `${cropOverlay.width}%` }} />
             <div className="absolute top-1 rounded-full border border-orange-200/30 bg-black/70 px-2 py-1 text-[10px] font-bold leading-none text-orange-100" style={{ left: `${cropOverlay.start}%`, transform: "translateX(-50%)" }}>{cropStartLabel}s</div>
             <div className="absolute bottom-1 rounded-full border border-orange-200/30 bg-black/70 px-2 py-1 text-[10px] font-bold leading-none text-orange-100" style={{ left: `${cropOverlay.end}%`, transform: "translateX(-50%)" }}>{cropEndLabel}s</div>
+          </div>
+        )}
+        {playheadPercent !== undefined && (
+          <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-xl" aria-label="Playback playhead overlay">
+            <div className="absolute inset-y-0 w-0.5 bg-cyan-200 shadow-[0_0_18px_rgba(125,211,252,.78)]" style={{ left: `${playheadPercent}%` }} />
+            <div className="absolute top-1 rounded-full border border-cyan-200/35 bg-black/75 px-2 py-1 text-[10px] font-bold leading-none text-cyan-100" style={{ left: `${playheadPercent}%`, transform: "translateX(-50%)" }}>{playheadLabel}</div>
           </div>
         )}
       </div>
@@ -787,6 +810,11 @@ function LibraryPanel({
   onToggleFavorite: (filename: string, favorite: boolean) => void;
   onSaveAnnotation: (filename: string, notes: string, rating: number | null) => void;
 }) {
+  const [playbackByFilename, setPlaybackByFilename] = useState<Record<string, PlaybackState>>({});
+  function updatePlayback(filename: string, playback: PlaybackState) {
+    setPlaybackByFilename((current) => ({ ...current, [filename]: playback }));
+  }
+
   return (
     <section className="mt-5 rounded-3xl border border-white/10 bg-black/25 p-4">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -835,9 +863,9 @@ function LibraryPanel({
                   <button onClick={() => onDelete(item.filename)} className="inline-flex min-h-10 items-center justify-center rounded-full border border-red-300/35 bg-red-500/20 px-3 py-2 text-xs font-bold leading-none text-red-100 hover:bg-red-500/30">Delete</button>
                 </div>
               </div>
-              <AudioPreview src={item.audioUrl} volume={playbackVolume} label={`Library audio preview for ${item.filename}`} />
+              <AudioPreview src={item.audioUrl} volume={playbackVolume} label={`Library audio preview for ${item.filename}`} onPlaybackChange={(playback) => updatePlayback(item.filename, playback)} />
               <AnnotationControls item={item} onSave={onSaveAnnotation} />
-              <CropControls item={item} onCrop={onCrop} />
+              <CropControls item={item} playback={playbackByFilename[item.filename]} onCrop={onCrop} />
               <MetadataSummary meta={item.meta} metadataUrl={item.metadataUrl} compact onLoadConfig={onLoadConfig} />
             </article>
           ))}
@@ -896,7 +924,7 @@ function readCropControlDuration(meta: unknown) {
   return undefined;
 }
 
-function CropControls({ item, onCrop }: { item: LibraryItem; onCrop: (filename: string, start: number, end: number) => void }) {
+function CropControls({ item, playback, onCrop }: { item: LibraryItem; playback?: PlaybackState; onCrop: (filename: string, start: number, end: number) => void }) {
   const maxDuration = readCropControlDuration(item.meta) ?? 30;
   const initialEnd = Math.min(maxDuration, 8);
   const [start, setStart] = useState(0);
@@ -928,7 +956,7 @@ function CropControls({ item, onCrop }: { item: LibraryItem; onCrop: (filename: 
           <input type="range" min={Math.min(0.25, maxDuration)} max={maxDuration} step="0.25" value={safeEnd} onChange={(event) => setEnd(Math.max(Number(event.target.value), safeStart + Math.min(0.25, maxDuration)))} className="mt-1 w-full accent-orange-200" />
         </label>
       </div>
-      <AudioAnalysis src={item.audioUrl} compact cropWindow={{ start: safeStart, end: safeEnd, duration: maxDuration }} />
+      <AudioAnalysis src={item.audioUrl} compact cropWindow={{ start: safeStart, end: safeEnd, duration: maxDuration }} playback={playback} />
     </div>
   );
 }
@@ -992,6 +1020,13 @@ function readBackend(meta: unknown) {
   if (!meta || typeof meta !== "object") return undefined;
   const value = (meta as Record<string, unknown>).backend;
   return value === "mlx" || value === "torch" ? value : undefined;
+}
+
+function formatPlaybackTime(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
+  const minutes = Math.floor(seconds / 60);
+  const wholeSeconds = Math.floor(seconds % 60);
+  return `${minutes}:${String(wholeSeconds).padStart(2, "0")}`;
 }
 
 function formatDuration(ms: number) {
