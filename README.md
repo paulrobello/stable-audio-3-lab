@@ -103,7 +103,7 @@ Sound FX mode with SFX-focused prompts and the same local generation workflow.
 * Node.js 20 or newer.
 * Python 3.11 or newer.
 * `uv` for the vendored Stable Audio 3 Python environment.
-* `ffmpeg` for MP3 conversion.
+* `ffmpeg` and `ffprobe` for MP3 conversion, crop rendering, and real media-duration validation.
 * `hfdownloader` for Hugging Face model downloads.
 * A Hugging Face account with Stability's gated model terms accepted for real inference.
 
@@ -322,7 +322,19 @@ Metadata includes:
 * crop provenance, when a file was trimmed from another render
 * Python process stdout/stderr tail
 
-The Library UI can download the audio, download the JSON metadata, export an audio+metadata bundle, export a whole variation-run ZIP, star keepers, add notes/ratings, crop shorter clips, load metadata back into the settings panel, inspect waveform/spectrogram previews, or delete both files after confirmation.
+The Library UI can download the audio, download the JSON metadata, export an audio+metadata bundle, export a whole variation-run ZIP, star keepers, add notes/ratings, crop shorter clips, load metadata back into the settings panel, play and seek directly from the waveform, inspect waveform/spectrogram previews, or delete both files after confirmation.
+
+### Waveform library player
+
+Library rows hide the native browser audio chrome and use the Wave panel as the primary player surface. The player keeps listening and editing controls together:
+
+* **Play/Pause** beside the crop controls.
+* **Per-item volume** slider for A/B listening without changing global defaults.
+* **Click-to-seek waveform** with clamped pointer-to-time mapping.
+* **Cyan playback playhead** with a timestamp that follows the hidden `<audio>` element.
+* **Orange crop selection** with dimmed out-of-range regions and live start/end labels.
+
+Notes and ratings intentionally sit below this player/crop area so annotation does not interrupt playback or crop selection.
 
 ### Notes, ratings, and batch exports
 
@@ -430,7 +442,9 @@ make pre-commit
 * **Favorite Keepers** - Starred library renders persist favorite state in metadata sidecars and can be filtered in the library.
 * **Prompt Template Drawers** - Foley, UI stings, loops, trailer hits, ambience, and music bed templates are built into the prompt UI.
 * **Export Bundles** - Library rows can export a `.bundle.zip` with audio plus metadata for sharing experiments.
+* **Waveform Library Player** - Native media chrome is hidden in library rows; the waveform provides Play/Pause, per-item volume, click-to-seek, crop markers, and a live cyan playhead.
 * **Audio Cropping** - Library rows can trim clips into new audio files with metadata preserving source/crop lineage.
+* **Notes, Ratings, and Batch Run ZIPs** - Library sidecars store annotations, and multi-variation runs export as deterministic bundle ZIPs with manifests.
 * **Music and SFX Generation** - Local browser workflow for both music and sound effects.
 * **Full MLX Backend** - All UI models route through the official Apple Silicon optimized runtime by default.
 * **Library Management** - Playback, search, favorite filtering, comparison selection, download, metadata download, config reload, refresh, and delete.
@@ -441,11 +455,12 @@ make pre-commit
 ### Where we're going
 
 * Rendered screenshot capture inside export bundles.
-* Optional notes and ratings for library items.
-* Batch-level export bundles for a whole variation run.
+* Keyboard shortcuts for the waveform seek surface.
+* Surfaced browser playback errors when autoplay/audio permissions reject `play()`.
+* Optional reset-to-global-volume affordance for per-item volume overrides.
 
 ## What's new
 
 ### v0.1.0
 
-* Initial Stable Audio 3 Lab app with Next.js UI, mock mode, real MLX inference, library management, metadata sidecars, seed controls, default playback volume, waveform/spectrogram previews, batch variations, comparison view, prompt templates, favorites, crop controls, export bundles, and README screenshots.
+* Initial Stable Audio 3 Lab app with Next.js UI, mock mode, real MLX inference, library management, metadata sidecars, seed controls, default playback volume, waveform/spectrogram previews, waveform-as-player library rows, batch variations, comparison view, prompt templates, favorites, notes/ratings, crop controls, single-item bundles, batch-run ZIP exports, and README screenshots.
