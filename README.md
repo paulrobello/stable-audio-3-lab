@@ -463,7 +463,6 @@ make pre-commit
 
 ### Where we're going
 
-* Optional PNG export for the server-generated SVG render capture cards.
 
 ## What's new
 
