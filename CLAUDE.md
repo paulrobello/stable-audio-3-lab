@@ -51,3 +51,7 @@ No formatter is configured (`make fmt` is a no-op).
 - Environment config via `.env.local` (see `.env.example` for all vars)
 - Settings persisted in `localStorage` under `stable-audio-3-lab:settings:v1`
 - Pre-commit hooks configured via `.pre-commit-config.yaml` (gitleaks, trailing whitespace, YAML/JSON validation)
+
+## Claude Code Skill
+
+A `stable-audio` skill is available at `skills/stable-audio/SKILL.md` and symlinked to `~/.claude/skills/stable-audio`. It enables any agent to generate SFX and music via the local API without knowing the project internals. The skill auto-starts the dev server if needed and uses sensible defaults (medium model / 60s for music, small-sfx / appropriate duration for SFX, steps 10, cfgScale 2).
