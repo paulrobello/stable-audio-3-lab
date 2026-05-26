@@ -36,10 +36,10 @@ export function isSafeAudioFilename(filename: string) {
 export function slugifyTitle(title: string): string {
   return title
     .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
+    .replace(/[^a-z0-9\s]/g, "")
+    .replace(/\s+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "")
     .slice(0, 60);
 }
 

@@ -108,9 +108,9 @@ curl -s -X POST http://localhost:3007/api/generate \
 ```json
 {
   "ok": true,
-  "audioUrl": "/outputs/dusty-afternoon.mp3",
-  "metadataUrl": "/outputs/dusty-afternoon.json",
-  "filename": "dusty-afternoon.mp3",
+  "audioUrl": "/outputs/dusty_afternoon.mp3",
+  "metadataUrl": "/outputs/dusty_afternoon.json",
+  "filename": "dusty_afternoon.mp3",
   "title": "Dusty Afternoon",
   "meta": { ... }
 }
@@ -118,9 +118,9 @@ curl -s -X POST http://localhost:3007/api/generate \
 
 Report to the user:
 - The title (if generated): `Dusty Afternoon`
-- The filename: `dusty-afternoon.mp3`
-- The local file path: `/Users/probello/Repos/stable-audio-3-lab/public/outputs/dusty-afternoon.mp3`
-- The browser URL: `http://localhost:3007/outputs/dusty-afternoon.mp3`
+- The filename: `dusty_afternoon.mp3`
+- The local file path: `/Users/probello/Repos/stable-audio-3-lab/public/outputs/dusty_afternoon.mp3`
+- The browser URL: `http://localhost:3007/outputs/dusty_afternoon.mp3`
 
 **Failure:**
 

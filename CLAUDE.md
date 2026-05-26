@@ -48,7 +48,7 @@ No formatter is configured (`make fmt` is a no-op).
 - Path alias: `@/` maps to project root (tsconfig + vitest config)
 - Audio outputs live in `public/outputs/` (gitignored except `.gitkeep`)
 - Every generated file gets a `.json` metadata sidecar with full generation settings, timing, batch/crop lineage, title, and annotations
-- Filenames are derived from the title when provided/auto-generated (e.g. `"Neon Pulse"` → `neon-pulse.mp3`), with `-2`, `-3` suffix for duplicates; falls back to `sa3-{mode}-{timestamp}` when no title
+- Filenames are derived from the title when provided/auto-generated (e.g. `"Neon Pulse"` → `neon_pulse.mp3`), with `_2`, `_3` suffix for duplicates; falls back to `sa3-{mode}-{timestamp}` when no title
 - Models: `small-sfx`, `small-music`, `medium` — each has a max duration enforced by `normalizeGenerationRequest`
 - Environment config via `.env.local` (see `.env.example` for all vars)
 - Settings persisted in `localStorage` under `stable-audio-3-lab:settings:v1`
