@@ -43,15 +43,16 @@ export function slugifyTitle(title: string): string {
     .slice(0, 60);
 }
 
-export async function titleToFilename(title: string, format: "mp3" | "wav", outputDir: string): Promise<string> {
-  const slug = slugifyTitle(title) || "untitled";
+export async function titleToFilename(title: string, format: "mp3" | "wav", outputDir: string, mode?: string): Promise<string> {
+  let slug = slugifyTitle(title) || "untitled";
+  if (mode === "sfx") slug += "_sfx";
   const existing = await readdir(outputDir).catch(() => [] as string[]);
   const existingNames = new Set(existing);
   const base = `${slug}.${format}`;
   if (!existingNames.has(base)) return base;
   let n = 2;
-  while (existingNames.has(`${slug}-${n}.${format}`)) n += 1;
-  return `${slug}-${n}.${format}`;
+  while (existingNames.has(`${slug}_${n}.${format}`)) n += 1;
+  return `${slug}_${n}.${format}`;
 }
 
 export function metadataFilenameForAudio(filename: string) {

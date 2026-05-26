@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
     }
 
     const filename = title
-      ? await titleToFilename(title, input.format, outputDir)
+      ? await titleToFilename(title, input.format, outputDir, input.mode)
       : `sa3-${input.mode}-${Date.now()}.${input.format}`;
     const outPath = path.join(outputDir, filename);
     const python = process.env.STABLE_AUDIO_PYTHON || "python3";
