@@ -126,6 +126,27 @@ export default function Home() {
     await loadLibrary();
   }
 
+  async function regenerateTitle(filename: string, prompt: string, itemMode: string) {
+    try {
+      const titleRes = await fetch("/api/generate-title", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt, mode: itemMode }),
+      });
+      const titleJson = (await titleRes.json()) as { ok: boolean; title?: string };
+      if (titleJson.ok && titleJson.title) {
+        await fetch("/api/library", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ filename, title: titleJson.title }),
+        });
+        await loadLibrary();
+      }
+    } catch {
+      // Non-critical — skip silently.
+    }
+  }
+
   async function saveLibraryAnnotation(filename: string, notes: string, rating: number | null) {
     await fetch("/api/library", {
       method: "PATCH",
@@ -400,7 +421,7 @@ export default function Home() {
               </div>
             </div>
 
-            {result && <ResultPanel result={result} playbackVolume={playbackVolume} onLoadConfig={loadConfigFromMetadata} onDelete={deleteLibraryItem} />}
+            {result && <ResultPanel result={result} playbackVolume={playbackVolume} onLoadConfig={loadConfigFromMetadata} onDelete={deleteLibraryItem} onRegenerateTitle={regenerateTitle} />}
             {comparisonItems.length > 0 && <ComparisonPanel items={comparisonItems} playbackVolume={playbackVolume} onClear={() => setComparisonFilenames(new Set<string>())} onLoadConfig={loadConfigFromMetadata} />}
             <LibraryPanel
               items={filteredLibraryItems}
@@ -419,6 +440,7 @@ export default function Home() {
               onCrop={cropLibraryItem}
               onLoadConfig={loadConfigFromMetadata}
               onToggleFavorite={toggleFavorite}
+              onRegenerateTitle={regenerateTitle}
               onSaveAnnotation={saveLibraryAnnotation}
               onPlaybackVolumeChange={setPlaybackVolume}
             />
@@ -785,7 +807,7 @@ function drawFallback(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, 
   }
 }
 
-function ResultPanel({ result, playbackVolume, onLoadConfig, onDelete }: { result: Result; playbackVolume: number; onLoadConfig: (meta: unknown) => void; onDelete: (filename: string) => void }) {
+function ResultPanel({ result, playbackVolume, onLoadConfig, onDelete, onRegenerateTitle }: { result: Result; playbackVolume: number; onLoadConfig: (meta: unknown) => void; onDelete: (filename: string) => void; onRegenerateTitle: (filename: string, prompt: string, mode: string) => void }) {
   return (
     <div className="mt-5 min-w-0 rounded-3xl border border-white/10 bg-black/35 p-4">
       {result.ok ? (
@@ -794,6 +816,7 @@ function ResultPanel({ result, playbackVolume, onLoadConfig, onDelete }: { resul
             <div className="min-w-0 truncate font-semibold text-emerald-100">{result.title ? <>{result.title} <span className="font-normal text-white/45">• {result.filename}</span></> : <>Generated: {result.filename}</>}</div>
             <div className="flex shrink-0 flex-wrap gap-2">
               {result.audioUrl && <a href={result.audioUrl} download={result.filename} className="inline-flex min-h-10 items-center justify-center rounded-full bg-emerald-200 px-4 py-2 text-sm font-bold leading-none text-black hover:bg-white">Download {result.filename?.split(".").pop()?.toUpperCase()}</a>}
+              {result.filename && (() => { const m = result.meta && typeof result.meta === "object" ? result.meta as Record<string, unknown> : {}; const s = m.settings && typeof m.settings === "object" ? m.settings as Record<string, unknown> : {}; return s.prompt && s.mode ? <button onClick={() => onRegenerateTitle(result.filename!, String(s.prompt), String(s.mode))} className="inline-flex min-h-10 items-center justify-center rounded-full border border-cyan-300/30 bg-cyan-400/15 px-4 py-2 text-sm font-bold leading-none text-cyan-100 hover:bg-cyan-400/25">AI Title</button> : null; })()}
               {result.filename && <button onClick={() => onDelete(result.filename!)} className="inline-flex min-h-10 items-center justify-center rounded-full border border-red-300/35 bg-red-500/20 px-4 py-2 text-sm font-bold leading-none text-red-100 hover:bg-red-500/30">Delete</button>}
             </div>
           </div>
@@ -862,6 +885,7 @@ function LibraryPanel({
   onCrop,
   onLoadConfig,
   onToggleFavorite,
+  onRegenerateTitle,
   onSaveAnnotation,
   onPlaybackVolumeChange,
 }: {
@@ -881,6 +905,7 @@ function LibraryPanel({
   onCrop: (filename: string, start: number, end: number) => void;
   onLoadConfig: (meta: unknown) => void;
   onToggleFavorite: (filename: string, favorite: boolean) => void;
+  onRegenerateTitle: (filename: string, prompt: string, mode: string) => void;
   onSaveAnnotation: (filename: string, notes: string, rating: number | null) => void;
   onPlaybackVolumeChange: (volume: number) => void;
 }) {
@@ -975,6 +1000,7 @@ function LibraryPanel({
                   <button onClick={() => onToggleFavorite(item.filename, !item.favorite)} className={clsx("inline-flex min-h-10 items-center justify-center rounded-full border px-3 py-2 text-xs font-bold leading-none", item.favorite ? "border-amber-200/40 bg-amber-200/20 text-amber-100" : "border-white/10 bg-white/[0.05] text-white/55 hover:bg-white/10")}>
                     {item.favorite ? "Starred" : "Star"}
                   </button>
+                  {(() => { const m = item.meta && typeof item.meta === "object" ? item.meta as Record<string, unknown> : {}; const s = m.settings && typeof m.settings === "object" ? m.settings as Record<string, unknown> : {}; return s.prompt && s.mode ? <button onClick={() => onRegenerateTitle(item.filename, String(s.prompt), String(s.mode))} className="inline-flex min-h-10 items-center justify-center rounded-full border border-cyan-300/30 bg-cyan-400/15 px-3 py-2 text-xs font-bold leading-none text-cyan-100 hover:bg-cyan-400/25">AI Title</button> : null; })()}
                   <a href={item.downloadUrl} download={item.filename} className="inline-flex min-h-10 items-center justify-center rounded-full bg-white px-3 py-2 text-xs font-bold leading-none text-black hover:bg-emerald-100">Download</a>
                   {item.bundleUrl && <a href={item.bundleUrl} download className="inline-flex min-h-10 items-center justify-center rounded-full border border-violet-200/20 bg-violet-200/10 px-3 py-2 text-xs font-bold leading-none text-violet-100 hover:bg-violet-200/20">Bundle</a>}
                   {item.batchBundleUrl && <a href={item.batchBundleUrl} download className="inline-flex min-h-10 items-center justify-center rounded-full border border-fuchsia-200/20 bg-fuchsia-200/10 px-3 py-2 text-xs font-bold leading-none text-fuchsia-100 hover:bg-fuchsia-200/20">Run ZIP</a>}
