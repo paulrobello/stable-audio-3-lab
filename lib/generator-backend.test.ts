@@ -27,6 +27,7 @@ describe("generator backend routing", () => {
         format: "wav",
         seed: 47,
         mock: false,
+        autoTitle: false,
       },
       backend: "mlx",
       mock: false,

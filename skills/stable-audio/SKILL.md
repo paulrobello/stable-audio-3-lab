@@ -49,6 +49,10 @@ If the server doesn't respond within 30 seconds, stop and tell the user.
 | `seed` | integer | no | random | Reproducibility seed (0–2147483647). Same seed + same settings = same output. |
 | `negativePrompt` | string | no | `""` | What to avoid (max 500 chars) |
 | `mock` | boolean | no | `false` | Fast fake audio for testing without model inference |
+| `title` | string | no | — | Explicit title for the track. Used as the filename (slugified). Duplicates get a `-2`, `-3` suffix. |
+| `autoTitle` | boolean | no | `false` | Auto-generate a creative title via Ollama (phi4-mini). Overrides `title` if neither is set. Filename is derived from the generated title. |
+
+**Title resolution:** If `title` is provided, it is used directly. Otherwise, if `autoTitle` is `true`, the server calls Ollama to generate a title from the prompt. If neither is set, the filename falls back to `sa3-{mode}-{timestamp}.{format}`.
 
 ### Model guide
 
@@ -58,7 +62,7 @@ If the server doesn't respond within 30 seconds, stop and tell the user.
 | `small-music` | Fast local full-song sketches | 120s |
 | `medium` | Higher musicality, long-form up to ~6:20 | 380s |
 
-### Example: SFX
+### Example: SFX with auto-title
 
 ```bash
 curl -s -X POST http://localhost:3007/api/generate \
@@ -70,16 +74,12 @@ curl -s -X POST http://localhost:3007/api/generate \
     "duration": 6,
     "steps": 10,
     "cfgScale": 2,
-    "format": "mp3"
+    "format": "mp3",
+    "autoTitle": true
   }'
 ```
 
-### Defaults by mode
-
-- **Music:** use `"model": "medium"`, `"duration": 60` unless the user specifies otherwise.
-- **SFX:** use `"model": "small-sfx"`. The agent MUST choose a `duration` appropriate for the requested sound — short for transient effects (2–6s), longer for evolving/atmospheric sounds (10–30s). Never default to 60s for SFX.
-
-### Example: Music
+### Example: Music with explicit title
 
 ```bash
 curl -s -X POST http://localhost:3007/api/generate \
@@ -91,9 +91,15 @@ curl -s -X POST http://localhost:3007/api/generate \
     "duration": 60,
     "steps": 10,
     "cfgScale": 2,
-    "format": "mp3"
+    "format": "mp3",
+    "title": "Dusty Afternoon"
   }'
 ```
+
+### Defaults by mode
+
+- **Music:** use `"model": "medium"`, `"duration": 60` unless the user specifies otherwise.
+- **SFX:** use `"model": "small-sfx"`. The agent MUST choose a `duration` appropriate for the requested sound — short for transient effects (2–6s), longer for evolving/atmospheric sounds (10–30s). Never default to 60s for SFX.
 
 ## 3. Handle the response
 
@@ -102,17 +108,19 @@ curl -s -X POST http://localhost:3007/api/generate \
 ```json
 {
   "ok": true,
-  "audioUrl": "/outputs/sa3-sfx-1700000000000.mp3",
-  "metadataUrl": "/outputs/sa3-sfx-1700000000000.json",
-  "filename": "sa3-sfx-1700000000000.mp3",
-  "meta": { "generationSettings": { ... }, "timing": { ... } }
+  "audioUrl": "/outputs/dusty-afternoon.mp3",
+  "metadataUrl": "/outputs/dusty-afternoon.json",
+  "filename": "dusty-afternoon.mp3",
+  "title": "Dusty Afternoon",
+  "meta": { ... }
 }
 ```
 
 Report to the user:
-- The filename: `sa3-sfx-1700000000000.mp3`
-- The local file path: `/Users/probello/Repos/stable-audio-3-lab/public/outputs/sa3-sfx-1700000000000.mp3`
-- The browser URL: `http://localhost:3007/outputs/sa3-sfx-1700000000000.mp3`
+- The title (if generated): `Dusty Afternoon`
+- The filename: `dusty-afternoon.mp3`
+- The local file path: `/Users/probello/Repos/stable-audio-3-lab/public/outputs/dusty-afternoon.mp3`
+- The browser URL: `http://localhost:3007/outputs/dusty-afternoon.mp3`
 
 **Failure:**
 

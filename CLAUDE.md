@@ -25,8 +25,9 @@ No formatter is configured (`make fmt` is a no-op).
 **Single-page client app** — all UI components live in `app/page.tsx` (~1200 lines). The `components/` directory is unused.
 
 **API routes** (all in `app/api/`):
-- `POST /api/generate` — spawns Python subprocess for audio generation
-- `GET/PATCH/DELETE /api/library` — CRUD for generated audio + metadata sidecars
+- `POST /api/generate` — spawns Python subprocess for audio generation; accepts `title` (explicit) or `autoTitle` (AI-generated via Ollama) to derive the output filename from a human-readable title
+- `POST /api/generate-title` — calls local Ollama (phi4-mini by default) to generate a creative title from a prompt; also used internally by the generate route
+- `GET/PATCH/DELETE /api/library` — CRUD for generated audio + metadata sidecars (PATCH supports `title`, `favorite`, `notes`, `rating`)
 - `GET /api/library/bundle` — ZIP export (single or batch)
 - `POST /api/library/crop` — ffmpeg-based audio trimming
 
@@ -35,7 +36,7 @@ No formatter is configured (`make fmt` is a no-op).
 **Shared libraries** (`lib/`):
 - `generation.ts` — Zod request schema, model options, presets, prompt tips, batch seed generation
 - `generator-backend.ts` — MLX vs Torch backend routing, model-to-MLX mapping, CLI arg building
-- `library.ts` — metadata sidecars, custom ZIP builder (no external zip lib), crop utilities, SVG screenshot cards
+- `library.ts` — metadata sidecars, title-to-filename slugification with duplicate detection, custom ZIP builder (no external zip lib), crop utilities, SVG screenshot cards
 - `metadata-settings.ts` — deserializes metadata back into reusable UI settings ("Load config")
 
 **Data flow**: Frontend → API route → `spawn(python, generate_audio.py)` → WAV/MP3 in `public/outputs/` + JSON sidecar → library panel reads sidecars.
@@ -46,7 +47,8 @@ No formatter is configured (`make fmt` is a no-op).
 
 - Path alias: `@/` maps to project root (tsconfig + vitest config)
 - Audio outputs live in `public/outputs/` (gitignored except `.gitkeep`)
-- Every generated file gets a `.json` metadata sidecar with full generation settings, timing, batch/crop lineage, and annotations
+- Every generated file gets a `.json` metadata sidecar with full generation settings, timing, batch/crop lineage, title, and annotations
+- Filenames are derived from the title when provided/auto-generated (e.g. `"Neon Pulse"` → `neon-pulse.mp3`), with `-2`, `-3` suffix for duplicates; falls back to `sa3-{mode}-{timestamp}` when no title
 - Models: `small-sfx`, `small-music`, `medium` — each has a max duration enforced by `normalizeGenerationRequest`
 - Environment config via `.env.local` (see `.env.example` for all vars)
 - Settings persisted in `localStorage` under `stable-audio-3-lab:settings:v1`
@@ -54,4 +56,4 @@ No formatter is configured (`make fmt` is a no-op).
 
 ## Claude Code Skill
 
-A `stable-audio` skill is available at `skills/stable-audio/SKILL.md` and symlinked to `~/.claude/skills/stable-audio`. It enables any agent to generate SFX and music via the local API without knowing the project internals. The skill auto-starts the dev server if needed and uses sensible defaults (medium model / 60s for music, small-sfx / appropriate duration for SFX, steps 10, cfgScale 2).
+A `stable-audio` skill is available at `skills/stable-audio/SKILL.md` and symlinked to `~/.claude/skills/stable-audio`. It enables any agent to generate SFX and music via the local API without knowing the project internals. The skill auto-starts the dev server if needed and uses sensible defaults (medium model / 60s for music, small-sfx / appropriate duration for SFX, steps 10, cfgScale 2). Supports `title` (explicit) and `autoTitle` (Ollama-generated) parameters for named output files.

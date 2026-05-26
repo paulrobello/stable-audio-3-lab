@@ -4,7 +4,8 @@ import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 import { normalizeGenerationRequest } from "@/lib/generation";
 import { buildGeneratorArgs, resolveGenerationBackend } from "@/lib/generator-backend";
-import { buildLibraryMetadata, metadataPathForAudio } from "@/lib/library";
+import { buildLibraryMetadata, metadataPathForAudio, titleToFilename } from "@/lib/library";
+import { generateTitle } from "@/app/api/generate-title/route";
 
 export const runtime = "nodejs";
 export const maxDuration = 900;
@@ -15,7 +16,15 @@ export async function POST(request: NextRequest) {
     const input = normalizeGenerationRequest(body);
     const outputDir = path.join(process.cwd(), "public", "outputs");
     await mkdir(outputDir, { recursive: true });
-    const filename = `sa3-${input.mode}-${Date.now()}.${input.format}`;
+
+    let title: string | undefined = input.title;
+    if (!title && input.autoTitle) {
+      title = await generateTitle(input.prompt, input.mode) ?? undefined;
+    }
+
+    const filename = title
+      ? await titleToFilename(title, input.format, outputDir)
+      : `sa3-${input.mode}-${Date.now()}.${input.format}`;
     const outPath = path.join(outputDir, filename);
     const python = process.env.STABLE_AUDIO_PYTHON || "python3";
     const mock = input.mock || process.env.STABLE_AUDIO_MOCK === "true";
@@ -34,9 +43,9 @@ export async function POST(request: NextRequest) {
     if (result.code !== 0) {
       return NextResponse.json({ ok: false, error: "Python generator failed", detail: { ...result, generationDurationMs } }, { status: 500 });
     }
-    const meta = buildLibraryMetadata({ filename, input, python: result, backend, generationDurationMs });
+    const meta = buildLibraryMetadata({ filename, input, python: result, backend, generationDurationMs, title });
     await writeFile(metadataPathForAudio(outPath), JSON.stringify(meta, null, 2));
-    return NextResponse.json({ ok: true, audioUrl: `/outputs/${filename}`, metadataUrl: meta.metadataUrl, filename, meta });
+    return NextResponse.json({ ok: true, audioUrl: `/outputs/${filename}`, metadataUrl: meta.metadataUrl, filename, title, meta });
   } catch (error) {
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Unknown error" }, { status: 400 });
   }

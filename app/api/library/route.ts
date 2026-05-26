@@ -16,6 +16,7 @@ type LibraryItem = {
   favorite: boolean;
   notes?: string;
   rating?: number;
+  title?: string;
   bundleUrl: string;
   batchRunId?: string;
   batchBundleUrl?: string;
@@ -46,6 +47,7 @@ export async function GET() {
         const batchRunId = readBatchRunId(meta);
         const rating = typeof metaRecord.rating === "number" && Number.isFinite(metaRecord.rating) ? metaRecord.rating : undefined;
         const notes = typeof metaRecord.notes === "string" ? metaRecord.notes : undefined;
+        const title = typeof metaRecord.title === "string" ? metaRecord.title : undefined;
         return {
           filename,
           audioUrl: `/outputs/${filename}`,
@@ -57,6 +59,7 @@ export async function GET() {
           favorite: isFavoriteMetadata(meta),
           notes,
           rating,
+          title,
           bundleUrl: `/api/library/bundle?filename=${encodeURIComponent(filename)}`,
           batchRunId,
           batchBundleUrl: batchRunId ? `/api/library/bundle?batchRunId=${encodeURIComponent(batchRunId)}` : undefined,
@@ -73,11 +76,12 @@ export async function GET() {
 
 export async function PATCH(request: NextRequest) {
   try {
-    const body = (await request.json()) as { filename?: string; favorite?: boolean; notes?: string; rating?: number | string | null };
+    const body = (await request.json()) as { filename?: string; favorite?: boolean; notes?: string; rating?: number | string | null; title?: string };
     const { filename } = body;
     const hasFavorite = typeof body.favorite === "boolean";
     const hasAnnotation = "notes" in body || "rating" in body;
-    if (!filename || !isSafeAudioFilename(filename) || (!hasFavorite && !hasAnnotation)) {
+    const hasTitle = "title" in body;
+    if (!filename || !isSafeAudioFilename(filename) || (!hasFavorite && !hasAnnotation && !hasTitle)) {
       return NextResponse.json({ ok: false, error: "Invalid library metadata request" }, { status: 400 });
     }
     const fullPath = path.join(outputDir(), filename);
@@ -92,6 +96,7 @@ export async function PATCH(request: NextRequest) {
     let updated = meta;
     if (hasFavorite) updated = toggleFavoriteMetadata(updated, body.favorite!);
     if (hasAnnotation) updated = applyLibraryAnnotationMetadata(updated, body);
+    if (hasTitle) updated = { ...(typeof updated === "object" && updated !== null ? updated as Record<string, unknown> : {}), title: typeof body.title === "string" && body.title.trim() ? body.title.trim() : undefined };
     await writeFile(metaPath, JSON.stringify(updated, null, 2));
     return NextResponse.json({ ok: true, meta: updated });
   } catch (error) {

@@ -1,4 +1,5 @@
 import path from "node:path";
+import { readdir } from "node:fs/promises";
 import type { GenerateRequest } from "./generation";
 import type { GenerationBackend } from "./generator-backend";
 
@@ -10,6 +11,7 @@ export type GenerationMetadata = {
   metadataUrl: string;
   createdAt: string;
   backend: GenerationBackend;
+  title?: string;
   generationDurationMs?: number;
   request: GenerateRequest;
   settings: {
@@ -29,6 +31,27 @@ export type GenerationMetadata = {
 
 export function isSafeAudioFilename(filename: string) {
   return /^[a-zA-Z0-9._-]+\.(mp3|wav)$/.test(filename) && !filename.includes("..");
+}
+
+export function slugifyTitle(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 60);
+}
+
+export async function titleToFilename(title: string, format: "mp3" | "wav", outputDir: string): Promise<string> {
+  const slug = slugifyTitle(title) || "untitled";
+  const existing = await readdir(outputDir).catch(() => [] as string[]);
+  const existingNames = new Set(existing);
+  const base = `${slug}.${format}`;
+  if (!existingNames.has(base)) return base;
+  let n = 2;
+  while (existingNames.has(`${slug}-${n}.${format}`)) n += 1;
+  return `${slug}-${n}.${format}`;
 }
 
 export function metadataFilenameForAudio(filename: string) {
@@ -56,6 +79,7 @@ export function buildLibraryMetadata({
   backend = "mlx",
   createdAt = new Date().toISOString(),
   generationDurationMs,
+  title,
 }: {
   filename: string;
   input: GenerateRequest;
@@ -63,6 +87,7 @@ export function buildLibraryMetadata({
   backend?: GenerationBackend;
   createdAt?: string;
   generationDurationMs?: number;
+  title?: string;
 }): GenerationMetadata {
   if (!isSafeAudioFilename(filename)) throw new Error("Invalid audio filename");
   return {
@@ -72,6 +97,7 @@ export function buildLibraryMetadata({
     createdAt,
     backend,
     generationDurationMs,
+    ...(title ? { title } : {}),
     request: input,
     settings: {
       prompt: input.prompt,
@@ -196,6 +222,7 @@ export function buildRenderScreenshotSvg({ filename, metadata }: { filename: str
   const negativeLines = negativePrompt ? wrapSvgText(`Avoid: ${negativePrompt}`, 68, 2) : [];
   const badgeText = badges.join(" • ");
   const escapedFilename = escapeSvg(filename);
+  const title = typeof (metadata as Record<string, unknown>)?.title === "string" ? (metadata as Record<string, unknown>).title as string : "Render capture";
   const promptText = promptLines.map((line, index) => `<text x="54" y="${214 + index * 28}" class="prompt">${escapeSvg(line)}</text>`).join("");
   const negativeText = negativeLines.map((line, index) => `<text x="54" y="${376 + index * 22}" class="negative">${escapeSvg(line)}</text>`).join("");
   return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675" role="img" aria-label="Stable Audio 3 render screenshot for ${escapedFilename}">
@@ -210,7 +237,7 @@ export function buildRenderScreenshotSvg({ filename, metadata }: { filename: str
   <circle cx="158" cy="578" r="230" fill="#34d399" opacity="0.12" filter="url(#glow)"/>
   <rect x="34" y="34" width="1132" height="607" rx="42" fill="rgba(255,255,255,0.07)" stroke="rgba(255,255,255,0.18)"/>
   <text x="54" y="88" class="eyebrow">STABLE AUDIO 3 LAB</text>
-  <text x="54" y="152" class="title">Render capture</text>
+  <text x="54" y="152" class="title">${escapeSvg(title)}</text>
   <text x="54" y="184" class="file">${escapedFilename}</text>
   <rect x="54" y="440" width="1092" height="120" rx="28" fill="rgba(0,0,0,0.34)" stroke="rgba(255,255,255,0.12)"/>
   ${Array.from({ length: 84 }, (_, index) => {

@@ -18,6 +18,8 @@ export const generateSchema = z.object({
   format: z.enum(["mp3", "wav"]).optional().default("mp3"),
   seed: z.coerce.number().int().min(0).max(2147483647).optional(),
   mock: z.boolean().optional().default(false),
+  title: z.string().trim().max(200).optional(),
+  autoTitle: z.boolean().optional().default(false),
   batchRunId: z.string().regex(/^(?!\.)(?!.*\.\.)(?=.{1,80}$)[a-zA-Z0-9][a-zA-Z0-9._-]*$/).optional(),
   variationIndex: z.coerce.number().int().min(0).max(99).optional(),
   variationCount: z.coerce.number().int().min(1).max(99).optional(),

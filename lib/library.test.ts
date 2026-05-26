@@ -21,6 +21,7 @@ describe("library metadata sidecars", () => {
         format: "wav",
         seed: 47,
         mock: false,
+        autoTitle: false,
       },
       python: { code: 0, stdout: "ok", stderr: "" },
       backend: "mlx",

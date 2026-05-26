@@ -8,8 +8,8 @@ import { settingsFromMetadata, type ReusableGenerationSettings } from "@/lib/met
 
 type AudioFormat = "mp3" | "wav";
 type PlaybackState = { currentTime: number; duration: number; isPlaying?: boolean; error?: string };
-type Result = { ok: boolean; audioUrl?: string; metadataUrl?: string; filename?: string; meta?: unknown; error?: string; detail?: unknown };
-export type LibraryItem = { filename: string; audioUrl: string; downloadUrl: string; metadataUrl?: string; bundleUrl?: string; batchRunId?: string; batchBundleUrl?: string; format: AudioFormat; bytes: number; createdAt: string; favorite?: boolean; notes?: string; rating?: number; meta?: unknown };
+type Result = { ok: boolean; audioUrl?: string; metadataUrl?: string; filename?: string; title?: string; meta?: unknown; error?: string; detail?: unknown };
+export type LibraryItem = { filename: string; audioUrl: string; downloadUrl: string; metadataUrl?: string; bundleUrl?: string; batchRunId?: string; batchBundleUrl?: string; format: AudioFormat; bytes: number; createdAt: string; favorite?: boolean; notes?: string; rating?: number; title?: string; meta?: unknown };
 type PersistedSettings = {
   mode: "music" | "sfx";
   model: string;
@@ -20,6 +20,7 @@ type PersistedSettings = {
   cfgScale: number;
   format: AudioFormat;
   mock: boolean;
+  autoTitle: boolean;
   seed: string;
   playbackVolume: number;
 };
@@ -38,6 +39,7 @@ export default function Home() {
   const [seed, setSeed] = useState("");
   const [playbackVolume, setPlaybackVolume] = useState(0.8);
   const [mock, setMock] = useState(false);
+  const [autoTitle, setAutoTitle] = useState(false);
   const [busy, setBusy] = useState(false);
   const [batchCount, setBatchCount] = useState(1);
   const [batchProgress, setBatchProgress] = useState("");
@@ -69,6 +71,7 @@ export default function Home() {
         if (typeof saved.seed === "string") setSeed(saved.seed.replace(/\D/g, "").slice(0, 10));
         if (typeof saved.playbackVolume === "number") setPlaybackVolume(clampPlaybackVolume(saved.playbackVolume));
         if (typeof saved.mock === "boolean") setMock(saved.mock);
+        if (typeof saved.autoTitle === "boolean") setAutoTitle(saved.autoTitle);
       }
     } catch {
       // Bad localStorage should not break the app. Toss it into the void where bad JSON belongs.
@@ -81,9 +84,9 @@ export default function Home() {
 
   useEffect(() => {
     if (!settingsHydrated) return;
-    const settings: PersistedSettings = { mode, model, prompt, negativePrompt, duration, steps, cfgScale, format, mock, seed, playbackVolume };
+    const settings: PersistedSettings = { mode, model, prompt, negativePrompt, duration, steps, cfgScale, format, mock, autoTitle, seed, playbackVolume };
     window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-  }, [settingsHydrated, mode, model, prompt, negativePrompt, duration, steps, cfgScale, format, mock, seed, playbackVolume]);
+  }, [settingsHydrated, mode, model, prompt, negativePrompt, duration, steps, cfgScale, format, mock, autoTitle, seed, playbackVolume]);
 
   async function loadLibrary() {
     setLibraryBusy(true);
@@ -203,7 +206,7 @@ export default function Home() {
         const response = await fetch("/api/generate", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ prompt, negativePrompt, mode, model, duration, steps, cfgScale, format, mock, ...(variationSeeds[index] !== undefined ? { seed: variationSeeds[index] } : {}), ...(batchRunId ? { batchRunId, variationIndex: index, variationCount: variationSeeds.length } : {}) }),
+          body: JSON.stringify({ prompt, negativePrompt, mode, model, duration, steps, cfgScale, format, mock, autoTitle, ...(variationSeeds[index] !== undefined ? { seed: variationSeeds[index] } : {}), ...(batchRunId ? { batchRunId, variationIndex: index, variationCount: variationSeeds.length } : {}) }),
         });
         latest = (await response.json()) as Result;
         setResult(latest);
@@ -319,6 +322,15 @@ export default function Home() {
                   </div>
                   <button aria-label="Toggle mock mode" onClick={() => setMock(!mock)} className={clsx("relative h-8 w-16 shrink-0 rounded-full transition", mock ? "bg-emerald-300" : "bg-white/20")}>
                     <span className={clsx("absolute top-1 h-6 w-6 rounded-full bg-black shadow transition", mock ? "left-9" : "left-1")} />
+                  </button>
+                </div>
+                <div className="flex flex-col gap-3 rounded-3xl border border-white/10 bg-black/24 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <div className="text-sm font-medium text-white/70">Auto-title</div>
+                    <div className="text-sm text-white/55">Generate a title via Ollama</div>
+                  </div>
+                  <button aria-label="Toggle auto-title" onClick={() => setAutoTitle(!autoTitle)} className={clsx("relative h-8 w-16 shrink-0 rounded-full transition", autoTitle ? "bg-emerald-300" : "bg-white/20")}>
+                    <span className={clsx("absolute top-1 h-6 w-6 rounded-full bg-black shadow transition", autoTitle ? "left-9" : "left-1")} />
                   </button>
                 </div>
               </div>
@@ -495,6 +507,7 @@ export function libraryItemSearchText(item: LibraryItem) {
   const record = item.meta && typeof item.meta === "object" ? (item.meta as Record<string, unknown>) : {};
   const rawSource = (record.settings && typeof record.settings === "object" ? record.settings : record.request) as Record<string, unknown> | undefined;
   return [
+    item.title,
     item.filename,
     item.format,
     readString(rawSource?.prompt),
@@ -778,7 +791,7 @@ function ResultPanel({ result, playbackVolume, onLoadConfig, onDelete }: { resul
       {result.ok ? (
         <>
           <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0 truncate font-semibold text-emerald-100">Generated: {result.filename}</div>
+            <div className="min-w-0 truncate font-semibold text-emerald-100">{result.title ? <>{result.title} <span className="font-normal text-white/45">• {result.filename}</span></> : <>Generated: {result.filename}</>}</div>
             <div className="flex shrink-0 flex-wrap gap-2">
               {result.audioUrl && <a href={result.audioUrl} download={result.filename} className="inline-flex min-h-10 items-center justify-center rounded-full bg-emerald-200 px-4 py-2 text-sm font-bold leading-none text-black hover:bg-white">Download {result.filename?.split(".").pop()?.toUpperCase()}</a>}
               {result.filename && <button onClick={() => onDelete(result.filename!)} className="inline-flex min-h-10 items-center justify-center rounded-full border border-red-300/35 bg-red-500/20 px-4 py-2 text-sm font-bold leading-none text-red-100 hover:bg-red-500/30">Delete</button>}
@@ -818,7 +831,7 @@ function ComparisonPanel({ items, playbackVolume, onClear, onLoadConfig }: { ite
             <div className="mb-3 flex min-w-0 items-center justify-between gap-3">
               <div className="min-w-0">
                 <div className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-100/70">Variant {String.fromCharCode(65 + index)}</div>
-                <div className="truncate font-semibold text-white/85">{item.filename}</div>
+                <div className="truncate font-semibold text-white/85">{item.title ? <>{item.title} <span className="font-normal text-white/45">• {item.filename}</span></> : item.filename}</div>
               </div>
               {item.bundleUrl && <a href={item.bundleUrl} download className="inline-flex min-h-9 shrink-0 items-center justify-center rounded-full border border-violet-200/20 bg-violet-200/10 px-3 py-2 text-xs font-bold leading-none text-violet-100 hover:bg-violet-200/20">Bundle</a>}
             </div>
@@ -950,7 +963,7 @@ function LibraryPanel({
             <article key={item.filename} className="min-w-0 rounded-2xl border border-white/10 bg-black/30 p-3">
               <div className="mb-3 flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
                 <div className="min-w-0">
-                  <div className="truncate font-semibold text-white/85">{item.favorite ? "★ " : ""}{item.filename}</div>
+                  <div className="truncate font-semibold text-white/85">{item.favorite ? "★ " : ""}{item.title ? <>{item.title} <span className="font-normal text-white/45">• {item.filename}</span></> : item.filename}</div>
                   <div className="text-xs uppercase tracking-[0.16em] text-white/40">
                     {item.format} • {formatBytes(item.bytes)} • {new Date(item.createdAt).toLocaleString()}
                   </div>
