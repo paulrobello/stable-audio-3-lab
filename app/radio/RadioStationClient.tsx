@@ -11,7 +11,6 @@ type RadioTestVoiceResponse = { ok: boolean; audioUrl?: string; error?: string }
 type GenerateResponse = { ok: boolean; filename?: string; title?: string; audioUrl?: string; meta?: unknown; error?: string };
 const RADIO_STATE_RETRY_MS = 1500;
 const RADIO_STATE_POLL_MS = 5000;
-const RADIO_QUEUE_GENERATION_TIMEOUT_MS = 45_000;
 type RadioPlaybackPhase = "announcement" | "song";
 
 export default function RadioStationClient({ initialState = null, initialPromptModels = [] }: { initialState?: RadioStreamState | null; initialPromptModels?: string[] }) {
@@ -38,8 +37,6 @@ export default function RadioStationClient({ initialState = null, initialPromptM
   const [playbackPhase, setPlaybackPhase] = useState<RadioPlaybackPhase>(() => initialState?.currentTrack?.announcementFilename ? "announcement" : "song");
   const audioRef = useRef<HTMLAudioElement>(null);
   const testVoiceAudioRef = useRef<HTMLAudioElement>(null);
-  const maintenanceRunningRef = useRef(false);
-  const maintenancePausedRef = useRef(false);
   const loadRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const streamElapsedAtTrackStartRef = useRef(0);
   const resumeAfterStreamReloadRef = useRef(false);
@@ -85,11 +82,6 @@ export default function RadioStationClient({ initialState = null, initialPromptM
       clearInterval(poll);
     };
   }, []);
-
-  useEffect(() => {
-    if (!radioState || busy || maintenanceRunningRef.current || maintenancePausedRef.current) return;
-    void maintainQueue(radioState);
-  }, [radioState?.updatedAt]);
 
   useEffect(() => {
     setOptimisticLike(null);
@@ -230,9 +222,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
     setStatus("Generating station track as MP3...");
     try {
       const json = await generateTrackFromDraft(activeDraft, { quiet: false, announce: announceEnabled });
-      maintenancePausedRef.current = false;
       setStatus("Track registered for the radio stream. Prompt provider/model were written to metadata.");
-      if (json.state) await maintainQueue(json.state);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Track generation failed.");
     } finally {
@@ -274,70 +264,6 @@ export default function RadioStationClient({ initialState = null, initialPromptM
       });
   }
 
-  async function generateQueueTrackFromDraft(trackDraft: RadioPromptDraft, announce: boolean) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), RADIO_QUEUE_GENERATION_TIMEOUT_MS);
-    try {
-      return await generateTrackFromDraft(trackDraft, { quiet: true, announce, signal: controller.signal });
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") throw new Error("Queue track generation timed out.");
-      throw error;
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-
-  async function maintainQueue(startState: RadioStreamState) {
-    maintenanceRunningRef.current = true;
-    setBusy("maintenance");
-    setStatus("Checking radio cleanup and queue...");
-    try {
-      const cleanupJson = await postRadio({ action: "cleanup" });
-      let nextState = cleanupJson.state ?? startState;
-      let generatedCount = 0;
-      let fallbackCount = 0;
-      const maxGenerations = nextState.queueTarget + 1;
-
-      while (nextState.queueAheadCount < nextState.queueTarget && generatedCount < maxGenerations) {
-        setStatus(`Generating queue track ${generatedCount + 1} of ${maxGenerations}...`);
-        try {
-          const draftJson = await postRadio({
-            action: "draft",
-            styleId: nextState.selectedStyleId,
-            promptModel: nextState.promptModel,
-            announceEnabled: nextState.announceEnabled,
-          });
-          if (!draftJson.draft) break;
-          const trackJson = await generateQueueTrackFromDraft(draftJson.draft, nextState.announceEnabled);
-          if (!trackJson.state) break;
-          nextState = trackJson.state;
-        } catch (error) {
-          const fallbackJson = await postRadio({ action: "fallbackTrack", reason: "queue_refill_timeout" });
-          if (!fallbackJson.state) throw error;
-          nextState = fallbackJson.state;
-          fallbackCount += 1;
-        }
-        generatedCount += 1;
-      }
-
-      if (fallbackCount > 0) {
-        setStatus(`Using starred library fallback; queue ready with ${nextState.queueAheadCount} songs ahead.`);
-      } else if (generatedCount > 0) {
-        setStatus(`Queue ready with ${nextState.queueAheadCount} songs ahead.`);
-      } else if (cleanupJson.cleanedTracks?.length) {
-        setStatus(`Cleaned ${cleanupJson.cleanedTracks.length} expired unliked song${cleanupJson.cleanedTracks.length === 1 ? "" : "s"}.`);
-      } else {
-        setStatus("");
-      }
-    } catch (error) {
-      maintenancePausedRef.current = true;
-      setStatus(error instanceof Error ? error.message : "Radio maintenance failed.");
-    } finally {
-      maintenanceRunningRef.current = false;
-      setBusy(null);
-    }
-  }
-
   async function rateCurrent(rating: "up" | "down") {
     const phrase = currentTrack?.prompt ?? activeDraft?.prompt ?? "";
     const ratedTrackKey = trackFeedbackKey(currentTrack);
@@ -347,13 +273,11 @@ export default function RadioStationClient({ initialState = null, initialPromptM
     try {
       const json = await postRadio({ action: "rating", rating, styleId: currentTrack?.styleId ?? selectedStyleId, phrase });
       if (ratedTrackKey) setOptimisticLike(null);
-      maintenancePausedRef.current = false;
       if (json.rejectedTrack) {
         setStatus(json.state?.currentTrack ? `Removed "${json.rejectedTrack.title}" and skipped to "${json.state.currentTrack.title}".` : `Removed "${json.rejectedTrack.title}". Generate another station song to continue.`);
       } else {
         setStatus("Preference saved for future prompt drafts.");
       }
-      if (json.state) await maintainQueue(json.state);
     } catch (error) {
       if (ratedTrackKey) setOptimisticLike(null);
       setStatus(error instanceof Error ? error.message : "Could not save preference.");
@@ -375,9 +299,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
       if (nextTrack && nextTrack.filename !== skippedFilename) {
         setStreamReloadKey((key) => key + 1);
         setTrackElapsedSeconds(0);
-        maintenancePausedRef.current = false;
         setStatus(json.skippedTrack ? `Skipped "${json.skippedTrack.title}" and loaded "${nextTrack.title}".` : `Loaded "${nextTrack.title}".`);
-        if (!maintenanceRunningRef.current) await maintainQueue(nextState);
       } else {
         resumeAfterStreamReloadRef.current = false;
         setStatus("No queued song is available to skip to.");
@@ -399,9 +321,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
       const json = await postRadio({ action: "selectTrack", filename: track.filename });
       setStreamReloadKey((key) => key + 1);
       setTrackElapsedSeconds(0);
-      maintenancePausedRef.current = false;
       setStatus(json.state?.currentTrack ? `Now playing "${json.state.currentTrack.title}".` : "Selected lineup song.");
-      if (json.state) await maintainQueue(json.state);
     } catch (error) {
       resumeAfterStreamReloadRef.current = false;
       setStatus(error instanceof Error ? error.message : "Could not load selected song.");
@@ -425,9 +345,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
         setStreamReloadKey((key) => key + 1);
         setTrackElapsedSeconds(0);
       }
-      maintenancePausedRef.current = false;
       setStatus(json.deletedTrack ? `Deleted "${json.deletedTrack.title}" from the radio queue.` : "Deleted radio queue item.");
-      if (json.state) await maintainQueue(json.state);
     } catch (error) {
       resumeAfterStreamReloadRef.current = false;
       setStatus(error instanceof Error ? error.message : "Could not delete radio queue item.");
@@ -437,7 +355,6 @@ export default function RadioStationClient({ initialState = null, initialPromptM
   }
 
   function changeStyle(styleId: RadioStyleId) {
-    maintenancePausedRef.current = false;
     setSelectedStyleId(styleId);
     void saveConfiguration({ nextStyleId: styleId });
   }
@@ -853,6 +770,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
                           </div>
                         </div>
                         <div className="mt-1 truncate text-xs text-white/42">{track.filename}</div>
+                        <QueueTrackMetadata track={track} />
                       </div>
                     );
                   })}
@@ -995,6 +913,62 @@ function trackFeedbackKey(track: RadioTrackRecord | undefined) {
 function trackProvenanceLabel(track: RadioTrackRecord) {
   const source = track.source === "library-fallback" ? "Library fallback" : undefined;
   return [track.styleId, source, `${track.promptProvider ?? "unknown"} ${track.promptModel ?? ""}`.trim()].filter(Boolean).join(" • ");
+}
+
+function QueueTrackMetadata({ track }: { track: RadioTrackRecord }) {
+  const createdAtText = formatTrackCreatedAt(track.createdAt);
+  const ageText = formatTrackAge(track.createdAt);
+  const fileSizeText = formatBytes(track.fileSizeBytes);
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-white/38">
+      <span>
+        Created <time dateTime={track.createdAt}>{createdAtText}</time>
+      </span>
+      <span aria-hidden="true">•</span>
+      <span>{ageText}</span>
+      {fileSizeText ? (
+        <>
+          <span aria-hidden="true">•</span>
+          <span>{fileSizeText}</span>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function formatTrackCreatedAt(value: string) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
+function formatTrackAge(value: string, nowMs = Date.now()) {
+  const createdMs = Date.parse(value);
+  if (!Number.isFinite(createdMs)) return "age unknown";
+  const seconds = Math.max(0, Math.floor((nowMs - createdMs) / 1000));
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m old`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h old`;
+  return `${Math.floor(hours / 24)}d old`;
+}
+
+function formatBytes(bytes: number | undefined) {
+  if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes <= 0) return undefined;
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1000 && unitIndex < units.length - 1) {
+    value /= 1000;
+    unitIndex += 1;
+  }
+  if (unitIndex === 0) return `${Math.round(value)} ${units[unitIndex]}`;
+  const precision = value >= 10 ? 0 : 1;
+  return `${value.toFixed(precision).replace(/\.0$/, "")} ${units[unitIndex]}`;
 }
 
 function isRadioTrackLiked(track: RadioTrackRecord | undefined, state: RadioStreamState | null) {
