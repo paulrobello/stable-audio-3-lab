@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		1245B5D51B29B44E9A2B67E7 /* RadioEndpointResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CC3EFBB608E4ADC4B9F6EE1 /* RadioEndpointResolver.swift */; };
 		307DF81E9B2A6CFFB32EAC6F /* RadioAPIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B5E1918683A7065423DB90B /* RadioAPIClientTests.swift */; };
 		379D754617397768AB7BB2A5 /* PardoraApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08372637BE5403229D4E0EF6 /* PardoraApp.swift */; };
 		47B5AFCB2A7C38288B4B591A /* AppRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23BD467777D391EB06DF855E /* AppRootView.swift */; };
@@ -37,6 +38,7 @@
 		08372637BE5403229D4E0EF6 /* PardoraApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PardoraApp.swift; sourceTree = "<group>"; };
 		10A9066296E26D967D523B2D /* PardoraTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PardoraTheme.swift; sourceTree = "<group>"; };
 		23BD467777D391EB06DF855E /* AppRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRootView.swift; sourceTree = "<group>"; };
+		2CC3EFBB608E4ADC4B9F6EE1 /* RadioEndpointResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadioEndpointResolver.swift; sourceTree = "<group>"; };
 		2E4F9A7ABC4DB8DB6CCB028C /* RadioPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadioPlayer.swift; sourceTree = "<group>"; };
 		32D4A2488E0485950AC9CD79 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		4B5E1918683A7065423DB90B /* RadioAPIClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadioAPIClientTests.swift; sourceTree = "<group>"; };
@@ -74,6 +76,7 @@
 			children = (
 				761670DD56C97F39DE70353F /* RadioAPIClient.swift */,
 				E5F9FFA84DD252960323EA8D /* RadioAppModel.swift */,
+				2CC3EFBB608E4ADC4B9F6EE1 /* RadioEndpointResolver.swift */,
 				2E4F9A7ABC4DB8DB6CCB028C /* RadioPlayer.swift */,
 			);
 			path = Services;
@@ -253,6 +256,7 @@
 				D8EDCA4DD638AB42721EFEEA /* QueueView.swift in Sources */,
 				904F22FD8477C1451A6EA553 /* RadioAPIClient.swift in Sources */,
 				4986FF208E3E8933EAAB9361 /* RadioAppModel.swift in Sources */,
+				1245B5D51B29B44E9A2B67E7 /* RadioEndpointResolver.swift in Sources */,
 				5495061E41D686AF3D885E27 /* RadioModels.swift in Sources */,
 				4CAF4D72A14DACD2A168ED12 /* RadioPlayer.swift in Sources */,
 				942AD844711B208DFE8E68BA /* SettingsView.swift in Sources */,

@@ -40,8 +40,8 @@ struct NowPlayingView: View {
         .safeAreaInset(edge: .bottom) {
             playbackControls
         }
-        .task(id: model.state?.streamUrl ?? model.state?.lanStreamUrl) {
-            player.load(url: model.state?.streamURL)
+        .task(id: model.streamURL?.absoluteString) {
+            player.load(url: model.streamURL)
         }
     }
 

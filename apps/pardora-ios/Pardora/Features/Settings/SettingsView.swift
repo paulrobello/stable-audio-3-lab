@@ -6,9 +6,32 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section("Server") {
-                TextField("Radio server", text: $model.serverOrigin)
-                    .textInputAutocapitalization(.never)
-                    .keyboardType(.URL)
+                Picker("Connection", selection: $model.endpointMode) {
+                    ForEach(RadioEndpointMode.allCases) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: model.endpointMode) {
+                    model.applyEndpointMode()
+                }
+
+                if model.endpointMode == .custom {
+                    TextField("Custom server", text: $model.serverOrigin)
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.URL)
+                        .onSubmit {
+                            model.applyEndpointMode()
+                        }
+                }
+
+                LabeledContent("Using", value: model.serverOrigin)
+                LabeledContent("Mode", value: model.endpointSummary)
+                if let localServerOrigin = model.localServerOrigin {
+                    LabeledContent("Local", value: localServerOrigin)
+                }
+                LabeledContent("Public", value: model.publicServerOrigin)
+
                 Button("Test Connection") {
                     Task { await model.refresh() }
                 }

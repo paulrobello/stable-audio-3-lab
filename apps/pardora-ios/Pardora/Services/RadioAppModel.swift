@@ -4,6 +4,7 @@ import Observation
 @MainActor
 @Observable
 final class RadioAppModel {
+    var endpointMode: RadioEndpointMode
     var serverOrigin: String
     var state: RadioStreamState?
     var isRefreshing = false
@@ -11,11 +12,76 @@ final class RadioAppModel {
 
     private var client: RadioAPIClient
     private var actionClient: RadioActionClient?
+    private let localIPv4Addresses: @Sendable () -> [String]
 
-    init(serverOrigin: String = "https://radio.pardev.net", actionClient: RadioActionClient? = nil) {
+    init(
+        serverOrigin: String = RadioEndpointResolver.defaultPublicOrigin,
+        endpointMode: RadioEndpointMode = .auto,
+        actionClient: RadioActionClient? = nil,
+        localIPv4Addresses: @escaping @Sendable () -> [String] = RadioEndpointResolver.localIPv4Addresses
+    ) {
         self.serverOrigin = serverOrigin
+        self.endpointMode = endpointMode
         client = RadioAPIClient(baseURL: URL(string: serverOrigin)!)
         self.actionClient = actionClient
+        self.localIPv4Addresses = localIPv4Addresses
+    }
+
+    var localServerOrigin: String? {
+        RadioEndpointResolver.origin(from: localStreamURL)
+    }
+
+    var publicServerOrigin: String {
+        RadioEndpointResolver.origin(from: publicStreamURL) ?? RadioEndpointResolver.defaultPublicOrigin
+    }
+
+    var usesLocalEndpoint: Bool {
+        switch endpointMode {
+        case .local:
+            localServerOrigin != nil
+        case .auto:
+            RadioEndpointResolver.isSameLAN(url: localStreamURL, localIPv4Addresses: localIPv4Addresses())
+        case .publicInternet, .custom:
+            false
+        }
+    }
+
+    var streamURL: URL? {
+        if usesLocalEndpoint, let localStreamURL {
+            return localStreamURL
+        }
+
+        return publicStreamURL ?? localStreamURL
+    }
+
+    var endpointSummary: String {
+        switch endpointMode {
+        case .auto where usesLocalEndpoint:
+            "Auto selected local LAN"
+        case .auto:
+            "Auto selected public"
+        case .publicInternet:
+            "Public"
+        case .local:
+            localServerOrigin == nil ? "Local URL not detected yet" : "Local"
+        case .custom:
+            "Custom"
+        }
+    }
+
+    func applyEndpointMode() {
+        switch endpointMode {
+        case .auto:
+            serverOrigin = usesLocalEndpoint ? localServerOrigin ?? serverOrigin : publicServerOrigin
+        case .publicInternet:
+            serverOrigin = publicServerOrigin
+        case .local:
+            serverOrigin = localServerOrigin ?? RadioEndpointResolver.defaultLocalOrigin
+        case .custom:
+            serverOrigin = RadioEndpointResolver.normalizedOrigin(serverOrigin) ?? serverOrigin
+        }
+
+        updateClient()
     }
 
     func refresh() async {
@@ -30,6 +96,7 @@ final class RadioAppModel {
 
         do {
             state = try await client.fetchState()
+            applyEndpointMode()
             statusMessage = nil
         } catch {
             statusMessage = error.localizedDescription
@@ -42,6 +109,7 @@ final class RadioAppModel {
             if response.ok {
                 if let state = response.state {
                     self.state = state
+                    applyEndpointMode()
                 }
                 statusMessage = nil
             } else {
@@ -88,5 +156,21 @@ final class RadioAppModel {
             "announcementPrefix": .string(state.announcementPrefix),
             "announcementSuffix": .string(state.announcementSuffix),
         ])
+    }
+
+    private var publicStreamURL: URL? {
+        RadioEndpointResolver.streamURL(from: state?.streamUrl, relativeTo: serverOrigin)
+    }
+
+    private var localStreamURL: URL? {
+        RadioEndpointResolver.streamURL(from: state?.lanStreamUrl, relativeTo: serverOrigin)
+    }
+
+    private func updateClient() {
+        guard let baseURL = URL(string: serverOrigin) else {
+            return
+        }
+
+        client = RadioAPIClient(baseURL: baseURL)
     }
 }
