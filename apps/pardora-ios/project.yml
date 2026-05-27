@@ -24,8 +24,21 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
         MARKETING_VERSION: "0.1"
         CURRENT_PROJECT_VERSION: "1"
+  PardoraTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - PardoraTests
+    dependencies:
+      - target: Pardora
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
 schemes:
   Pardora:
     build:
       targets:
         Pardora: all
+    test:
+      targets:
+        - PardoraTests
