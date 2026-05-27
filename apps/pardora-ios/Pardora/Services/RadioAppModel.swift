@@ -12,6 +12,8 @@ final class RadioAppModel {
     var statusMessage: String?
 
     static let cloudflareVPNMessage = "Public radio endpoint returned a web login page. If you are remote, enable Cloudflare VPN/WARP, then try again."
+    static let testingConnectionMessage = "Testing radio connection..."
+    static let scanningLANMessage = "Scanning local Wi-Fi for Pardora..."
 
     private var client: RadioAPIClient
     private var actionClient: RadioActionClient?
@@ -133,6 +135,7 @@ final class RadioAppModel {
 
     func refresh() async {
         isRefreshing = true
+        statusMessage = Self.testingConnectionMessage
         defer { isRefreshing = false }
 
         var lastError: Error?
@@ -145,13 +148,18 @@ final class RadioAppModel {
             client = RadioAPIClient(baseURL: baseURL, transport: transport)
 
             do {
-                state = try await client.fetchState()
-                serverOrigin = origin
-                applyEndpointMode()
-                statusMessage = nil
+                setState(try await client.fetchState(), origin: origin)
                 return
             } catch {
                 lastError = error
+            }
+        }
+
+        if shouldDiscoverLAN {
+            statusMessage = Self.scanningLANMessage
+            if let discovered = await fetchFirstReachableState(origins: lanDiscoveryOrigins) {
+                setState(discovered.state, origin: discovered.origin)
+                return
             }
         }
 
@@ -241,12 +249,76 @@ final class RadioAppModel {
         }
     }
 
+    private var shouldDiscoverLAN: Bool {
+        switch endpointMode {
+        case .auto, .local:
+            true
+        case .publicInternet, .custom:
+            false
+        }
+    }
+
+    private var lanDiscoveryOrigins: [String] {
+        RadioEndpointResolver.lanCandidateOrigins(localIPv4Addresses: localIPv4Addresses())
+    }
+
     private func updateClient() {
         guard let baseURL = URL(string: serverOrigin) else {
             return
         }
 
         client = RadioAPIClient(baseURL: baseURL, transport: transport)
+    }
+
+    private func setState(_ state: RadioStreamState, origin: String) {
+        self.state = state
+        serverOrigin = origin
+        applyEndpointMode()
+        statusMessage = nil
+    }
+
+    private func fetchFirstReachableState(origins: [String]) async -> (origin: String, state: RadioStreamState)? {
+        let batchSize = 32
+        var startIndex = origins.startIndex
+
+        while startIndex < origins.endIndex {
+            let endIndex = origins.index(startIndex, offsetBy: batchSize, limitedBy: origins.endIndex) ?? origins.endIndex
+            let batch = Array(origins[startIndex..<endIndex])
+            if let result = await fetchFirstReachableStateBatch(origins: batch) {
+                return result
+            }
+            startIndex = endIndex
+        }
+
+        return nil
+    }
+
+    private func fetchFirstReachableStateBatch(origins: [String]) async -> (origin: String, state: RadioStreamState)? {
+        await withTaskGroup(of: (String, RadioStreamState)?.self) { group in
+            for origin in origins {
+                group.addTask { [transport] in
+                    guard let baseURL = URL(string: origin) else {
+                        return nil
+                    }
+
+                    let client = RadioAPIClient(baseURL: baseURL, transport: transport, timeoutInterval: 0.75)
+                    do {
+                        return (origin, try await client.fetchState())
+                    } catch {
+                        return nil
+                    }
+                }
+            }
+
+            while let result = await group.next() {
+                if let result {
+                    group.cancelAll()
+                    return result
+                }
+            }
+
+            return nil
+        }
     }
 
     private func networkSignature(for path: NWPath) -> String {

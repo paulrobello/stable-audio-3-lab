@@ -95,6 +95,47 @@ final class RadioAppModelTests: XCTestCase {
         XCTAssertNil(model.statusMessage)
     }
 
+    func testAutoRefreshDiscoversLANOriginBeforeStateExists() async {
+        let transport = LANDiscoveryRadioTransport()
+        let model = RadioAppModel(
+            serverOrigin: "https://radio.pardev.net",
+            endpointMode: .auto,
+            transport: transport,
+            localIPv4Addresses: { ["192.168.1.40"] }
+        )
+
+        await model.refresh()
+
+        XCTAssertEqual(model.state?.currentTrack?.title, "LAN Track")
+        XCTAssertEqual(model.serverOrigin, "http://192.168.1.207:3007")
+        XCTAssertEqual(model.streamURL?.absoluteString, "http://192.168.1.207:3007/api/radio?stream=1")
+        XCTAssertNil(model.statusMessage)
+    }
+
+    func testLocalRefreshDiscoversLANOriginBeforeStateExists() async {
+        let transport = LANDiscoveryRadioTransport()
+        let model = RadioAppModel(
+            endpointMode: .local,
+            transport: transport,
+            localIPv4Addresses: { ["192.168.1.40"] }
+        )
+
+        await model.refresh()
+
+        XCTAssertEqual(model.state?.currentTrack?.title, "LAN Track")
+        XCTAssertEqual(model.serverOrigin, "http://192.168.1.207:3007")
+        XCTAssertEqual(model.endpointSummary, "Local")
+        XCTAssertNil(model.statusMessage)
+    }
+
+    func testLANCandidateOriginsComeFromPrivateSubnet() {
+        let origins = RadioEndpointResolver.lanCandidateOrigins(localIPv4Addresses: ["127.0.0.1", "192.168.1.40"])
+
+        XCTAssertTrue(origins.contains("http://192.168.1.207:3007"))
+        XCTAssertFalse(origins.contains("http://192.168.1.40:3007"))
+        XCTAssertFalse(origins.contains("http://127.0.0.1:3007"))
+    }
+
     func testPublicEndpointHTMLSuggestsCloudflareVPN() async {
         let transport = FallbackRadioTransport()
         let model = RadioAppModel(
@@ -227,6 +268,56 @@ private actor FallbackRadioTransport: RadioTransport {
         "needsQueueFill": false,
         "streamUrl": "http://localhost:3007/api/radio?stream=1",
         "lanStreamUrl": "http://192.168.1.50:3007/api/radio?stream=1"
+      }
+    }
+    """
+}
+
+private actor LANDiscoveryRadioTransport: RadioTransport {
+    var requestedURLs: [String] = []
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        let url = try XCTUnwrap(request.url)
+        requestedURLs.append(url.absoluteString)
+
+        if url.host == "192.168.1.207" {
+            let response = try XCTUnwrap(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil))
+            return (Data(Self.lanEnvelope.utf8), response)
+        }
+
+        throw URLError(.cannotConnectToHost)
+    }
+
+    private static let lanEnvelope = """
+    {
+      "ok": true,
+      "state": {
+        "selectedStyleId": "synthwave",
+        "announceEnabled": true,
+        "promptModel": "llama3.1:8b",
+        "ttsProvider": "openai",
+        "ttsVoice": "nova",
+        "announcementPrefix": "Now playing: ",
+        "announcementSuffix": "",
+        "preferences": {},
+        "currentTrackByStyle": {},
+        "currentTrack": {
+          "id": "track-lan",
+          "filename": "lan.mp3",
+          "title": "LAN Track",
+          "prompt": "instrumental synthwave",
+          "styleId": "synthwave",
+          "announce": true,
+          "createdAt": "2026-05-27T16:00:00.000Z"
+        },
+        "history": [],
+        "updatedAt": "2026-05-27T16:00:00.000Z",
+        "streamReady": true,
+        "queueAheadCount": 0,
+        "queueTarget": 3,
+        "needsQueueFill": false,
+        "streamUrl": "https://radio.pardev.net/api/radio?stream=1",
+        "lanStreamUrl": "http://192.168.1.207:3007/api/radio?stream=1"
       }
     }
     """

@@ -77,6 +77,27 @@ enum RadioEndpointResolver {
             .contains { $0.isSameSubnet(as: remote) }
     }
 
+    static func lanCandidateOrigins(localIPv4Addresses: [String], port: Int = 3007) -> [String] {
+        let localAddresses = localIPv4Addresses
+            .compactMap(IPv4Address.init)
+            .filter { $0.isPrivate && !$0.isLoopback }
+
+        var origins: [String] = []
+        var seenPrefixes = Set<String>()
+        for address in localAddresses {
+            let prefix = address.subnetPrefix
+            guard seenPrefixes.insert(prefix).inserted else {
+                continue
+            }
+
+            for host in 1...254 where host != address.hostOctet {
+                origins.append("http://\(prefix).\(host):\(port)")
+            }
+        }
+
+        return origins
+    }
+
     static func localIPv4Addresses() -> [String] {
         var results: [String] = []
         var interfaces: UnsafeMutablePointer<ifaddrs>?
@@ -104,7 +125,8 @@ enum RadioEndpointResolver {
             )
 
             if result == 0 {
-                results.append(String(cString: hostname))
+                let bytes = hostname.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
+                results.append(String(decoding: bytes, as: UTF8.self))
             }
         }
 
@@ -133,6 +155,18 @@ private struct IPv4Address {
         octets[0] == 10 ||
             (octets[0] == 172 && (16...31).contains(octets[1])) ||
             (octets[0] == 192 && octets[1] == 168)
+    }
+
+    var isLoopback: Bool {
+        octets[0] == 127
+    }
+
+    var hostOctet: Int {
+        octets[3]
+    }
+
+    var subnetPrefix: String {
+        octets.prefix(3).map(String.init).joined(separator: ".")
     }
 
     func isSameSubnet(as other: IPv4Address) -> Bool {

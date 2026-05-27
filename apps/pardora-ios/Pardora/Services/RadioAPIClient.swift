@@ -35,10 +35,12 @@ protocol RadioActionClient: Sendable {
 struct RadioAPIClient: RadioActionClient {
     let baseURL: URL
     let transport: RadioTransport
+    let timeoutInterval: TimeInterval
 
-    init(baseURL: URL, transport: RadioTransport = URLSession.shared) {
+    init(baseURL: URL, transport: RadioTransport = URLSession.shared, timeoutInterval: TimeInterval = 10) {
         self.baseURL = baseURL
         self.transport = transport
+        self.timeoutInterval = timeoutInterval
     }
 
     func fetchState() async throws -> RadioStreamState {
@@ -60,6 +62,7 @@ struct RadioAPIClient: RadioActionClient {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.timeoutInterval = timeoutInterval
 
         if let body {
             request.httpBody = body

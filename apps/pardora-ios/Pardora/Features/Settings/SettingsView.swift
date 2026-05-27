@@ -14,6 +14,7 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
                 .onChange(of: model.endpointMode) {
                     model.applyEndpointMode()
+                    Task { await model.refresh() }
                 }
 
                 if model.endpointMode == .custom {
@@ -32,9 +33,10 @@ struct SettingsView: View {
                 }
                 LabeledContent("Public", value: model.publicServerOrigin)
 
-                Button("Test Connection") {
+                Button(model.isRefreshing ? "Testing..." : "Test Connection") {
                     Task { await model.refresh() }
                 }
+                .disabled(model.isRefreshing)
 
                 CloudflareOneButton()
             }
