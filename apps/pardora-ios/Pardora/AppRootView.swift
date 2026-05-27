@@ -35,8 +35,16 @@ struct AppRootView: View {
         TabView(selection: $selectedTab) {
             ForEach(AppTab.allCases) { tab in
                 NavigationStack {
-                    ContentUnavailableView(tab.title, systemImage: tab.symbolName)
-                        .navigationTitle(tab.title)
+                    switch tab {
+                    case .now:
+                        NowPlayingView(model: model)
+                    case .queue:
+                        QueueView(model: model)
+                    case .memory:
+                        MemoryView(model: model)
+                    case .settings:
+                        SettingsView(model: model)
+                    }
                 }
                 .tabItem {
                     Label(tab.title, systemImage: tab.symbolName)
