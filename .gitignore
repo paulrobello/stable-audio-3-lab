@@ -10,6 +10,9 @@ build/
 dist/
 next-env.d.ts
 *.tsbuildinfo
+coverage/
+playwright-report/
+test-results/
 
 # Environment / local config
 .env
@@ -20,6 +23,7 @@ next-env.d.ts
 
 # Python / model runtime
 .venv/
+venv/
 __pycache__/
 *.py[cod]
 *$py.class
@@ -45,6 +49,21 @@ yarn-error.log*
 pnpm-debug.log*
 *.log
 .stable-audio-radio/
+
+# iOS / Xcode
+DerivedData/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcuserstate
+*.xcresult
+*.xcarchive
+*.ipa
+*.dSYM/
+*.dSYM.zip
+.swiftpm/
+build-device/
+apps/pardora-ios/build-device/
+apps/pardora-ios/DerivedData/
 
 # OS / editors
 .DS_Store
