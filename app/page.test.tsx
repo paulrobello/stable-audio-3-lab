@@ -227,11 +227,68 @@ describe("main page radio lineup action", () => {
         action: "track",
         filename: "midnight_arcade.mp3",
         title: "Midnight Arcade",
+        styleId: "synthwave",
         prompt: "warm synthwave night drive",
         durationSeconds: 42,
       }),
     })));
     expect(await screen.findByRole("button", { name: "Midnight Arcade queued for radio" })).toHaveProperty("disabled", true);
+  });
+
+  it("adds a library song to the selected radio music type queue", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (input === "/api/library") {
+        return {
+          json: async () => ({
+            ok: true,
+            items: [{
+              filename: "drift_signal.mp3",
+              audioUrl: "/outputs/drift_signal.mp3",
+              downloadUrl: "/outputs/drift_signal.mp3",
+              metadataUrl: "/outputs/drift_signal.mp3.json",
+              bundleUrl: "/api/library/bundle?filename=drift_signal.mp3",
+              format: "mp3",
+              bytes: 4096,
+              createdAt: "2026-05-21T12:00:00.000Z",
+              favorite: false,
+              title: "Drift Signal",
+              meta: { title: "Drift Signal", settings: { prompt: "slow evolving ambient pads", mode: "music", model: "small-music", duration: 64, steps: 8, cfgScale: 1, format: "mp3", mock: false } },
+            }],
+          }),
+        } as Response;
+      }
+      if (input === "/api/radio") {
+        return { json: async () => ({ ok: true }) } as Response;
+      }
+      return { arrayBuffer: async () => new ArrayBuffer(0) } as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      beginPath: vi.fn(),
+      clearRect: vi.fn(),
+      createLinearGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
+      fillRect: vi.fn(),
+      lineTo: vi.fn(),
+      moveTo: vi.fn(),
+      stroke: vi.fn(),
+    } as unknown as CanvasRenderingContext2D);
+
+    render(<Home />);
+
+    fireEvent.change(await screen.findByLabelText("Radio queue"), { target: { value: "ambient" } });
+    fireEvent.click(await screen.findByRole("button", { name: "Add Drift Signal to radio lineup" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/radio", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        action: "track",
+        filename: "drift_signal.mp3",
+        title: "Drift Signal",
+        styleId: "ambient",
+        prompt: "slow evolving ambient pads",
+        durationSeconds: 64,
+      }),
+    })));
   });
 });
 

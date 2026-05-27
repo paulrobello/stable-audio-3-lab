@@ -609,6 +609,57 @@ describe("radio stream state", () => {
     expect(shouldGenerateRadioQueueTrack(state, 3)).toBe(true);
   });
 
+  it("queues generated tracks after a persisted current song when changing music styles", () => {
+    const synthCurrent = createRadioTrackRecord({
+      filename: "synth_current.mp3",
+      title: "Synth Current",
+      prompt: "warm bass",
+      styleId: "synthwave",
+      announce: false,
+    });
+    const ambientCurrent = createRadioTrackRecord({
+      filename: "ambient_current.mp3",
+      title: "Ambient Current",
+      prompt: "soft pads",
+      styleId: "ambient",
+      announce: false,
+    });
+    const ambientQueued = createRadioTrackRecord({
+      filename: "ambient_queued.mp3",
+      title: "Ambient Queued",
+      prompt: "tape drift",
+      styleId: "ambient",
+      announce: false,
+    });
+    const ambientNext = createRadioTrackRecord({
+      filename: "ambient_next.mp3",
+      title: "Ambient Next",
+      prompt: "granular cloud",
+      styleId: "ambient",
+      announce: false,
+    });
+    const state = {
+      ...defaultRadioState(),
+      selectedStyleId: "ambient" as const,
+      currentTrackByStyle: {
+        synthwave: synthCurrent.filename,
+        ambient: ambientCurrent.filename,
+      },
+      history: [synthCurrent, ambientCurrent, ambientQueued],
+    };
+
+    const queued = registerRadioTrack(state, ambientNext);
+
+    expect(queued.currentTrack?.filename).toBe("ambient_current.mp3");
+    expect(queued.history.map((track) => track.filename)).toEqual([
+      "synth_current.mp3",
+      "ambient_current.mp3",
+      "ambient_queued.mp3",
+      "ambient_next.mp3",
+    ]);
+    expect(getRadioQueueAheadCount(queued)).toBe(2);
+  });
+
   it("stops queue generation when three songs are ahead of the current song", () => {
     const tracks = ["current", "one", "two", "three"].map((name) => createRadioTrackRecord({
       filename: `${name}.mp3`,

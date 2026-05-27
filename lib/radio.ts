@@ -660,7 +660,16 @@ export function createRadioTrackRecord({
 
 export function registerRadioTrack(state: RadioState, track: RadioTrackRecord): RadioState {
   const existing = state.history.filter((item) => item.filename !== track.filename);
-  const history = state.currentTrack ? [...existing, track] : [track, ...existing];
+  const existingCurrentTrack = findCurrentTrackForStyle({ ...state, history: existing }, track.styleId);
+  const currentIndex = existingCurrentTrack
+    ? existing.findIndex((item) => item.filename === existingCurrentTrack.filename)
+    : -1;
+  const insertIndex = currentIndex >= 0
+    ? findRadioQueueInsertIndex(existing, currentIndex, track.styleId)
+    : existing.length;
+  const history = existing.length
+    ? [...existing.slice(0, insertIndex), track, ...existing.slice(insertIndex)]
+    : [track];
   const currentTrack = findCurrentTrackForStyle({ ...state, history }, track.styleId) ?? track;
   return {
     ...state,
@@ -673,6 +682,14 @@ export function registerRadioTrack(state: RadioState, track: RadioTrackRecord): 
     history: history.slice(0, 50),
     updatedAt: nextTimestamp(state.updatedAt),
   };
+}
+
+function findRadioQueueInsertIndex(history: RadioTrackRecord[], currentIndex: number, styleId: RadioStyleId) {
+  let insertIndex = currentIndex + 1;
+  for (let index = currentIndex + 1; index < history.length; index += 1) {
+    if (history[index].styleId === styleId) insertIndex = index + 1;
+  }
+  return insertIndex;
 }
 
 export function replaceRadioTrackInLineup(state: RadioState, track: RadioTrackRecord): RadioState {

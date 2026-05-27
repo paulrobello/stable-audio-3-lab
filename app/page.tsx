@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import clsx from "clsx";
 import { controlTips, modelOptions, promptPresets, promptTemplateGroups, buildVariationSeeds } from "@/lib/generation";
 import { settingsFromMetadata, type ReusableGenerationSettings } from "@/lib/metadata-settings";
+import { radioStyles, type RadioStyleId } from "@/lib/radio";
 
 type AudioFormat = "mp3" | "wav";
 type PlaybackState = { currentTime: number; duration: number; isPlaying?: boolean; error?: string };
@@ -53,6 +54,7 @@ export default function Home() {
   const [comparisonFilenames, setComparisonFilenames] = useState<Set<string>>(new Set());
   const [radioQueueBusyFilename, setRadioQueueBusyFilename] = useState<string | null>(null);
   const [radioQueuedFilenames, setRadioQueuedFilenames] = useState<Set<string>>(new Set());
+  const [radioQueueStyleId, setRadioQueueStyleId] = useState<RadioStyleId>("synthwave");
   const [radioQueueError, setRadioQueueError] = useState("");
   const [settingsHydrated, setSettingsHydrated] = useState(false);
 
@@ -181,7 +183,7 @@ export default function Home() {
       const response = await fetch("/api/radio", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(buildRadioTrackRequestFromLibraryItem(item)),
+        body: JSON.stringify(buildRadioTrackRequestFromLibraryItem(item, radioQueueStyleId)),
       });
       const json = (await response.json()) as { ok: boolean; error?: string };
       if (!json.ok) throw new Error(json.error ?? "Radio lineup request failed");
@@ -461,6 +463,7 @@ export default function Home() {
               selectedForComparison={comparisonFilenames}
               radioQueueBusyFilename={radioQueueBusyFilename}
               radioQueuedFilenames={radioQueuedFilenames}
+              radioQueueStyleId={radioQueueStyleId}
               radioQueueError={radioQueueError}
               onSearchChange={setLibraryQuery}
               onFavoritesOnlyChange={setFavoritesOnly}
@@ -474,6 +477,7 @@ export default function Home() {
               onRegenerateTitle={regenerateTitle}
               onSaveAnnotation={saveLibraryAnnotation}
               onPlaybackVolumeChange={setPlaybackVolume}
+              onRadioQueueStyleChange={setRadioQueueStyleId}
               onAddToRadio={addLibraryItemToRadio}
             />
           </motion.section>
@@ -608,13 +612,14 @@ export function prunePlaybackState(current: Record<string, PlaybackState>, items
   return Object.fromEntries(Object.entries(current).filter(([filename]) => liveFilenames.has(filename)));
 }
 
-export function buildRadioTrackRequestFromLibraryItem(item: LibraryItem) {
+export function buildRadioTrackRequestFromLibraryItem(item: LibraryItem, styleId: RadioStyleId = "synthwave") {
   const settings = settingsFromMetadata(item.meta);
   const title = item.title ?? readMetaString(item.meta, "title") ?? item.filename;
   return {
     action: "track" as const,
     filename: item.filename,
     title,
+    styleId,
     ...(settings?.prompt ? { prompt: settings.prompt } : {}),
     ...(typeof settings?.duration === "number" ? { durationSeconds: settings.duration } : {}),
   };
@@ -929,6 +934,7 @@ function LibraryPanel({
   selectedForComparison,
   radioQueueBusyFilename,
   radioQueuedFilenames,
+  radioQueueStyleId,
   radioQueueError,
   onSearchChange,
   onFavoritesOnlyChange,
@@ -942,6 +948,7 @@ function LibraryPanel({
   onRegenerateTitle,
   onSaveAnnotation,
   onPlaybackVolumeChange,
+  onRadioQueueStyleChange,
   onAddToRadio,
 }: {
   items: LibraryItem[];
@@ -955,6 +962,7 @@ function LibraryPanel({
   selectedForComparison: Set<string>;
   radioQueueBusyFilename: string | null;
   radioQueuedFilenames: Set<string>;
+  radioQueueStyleId: RadioStyleId;
   radioQueueError: string;
   onSearchChange: (query: string) => void;
   onFavoritesOnlyChange: (favoritesOnly: boolean) => void;
@@ -968,6 +976,7 @@ function LibraryPanel({
   onRegenerateTitle: (filename: string, prompt: string, mode: string) => void;
   onSaveAnnotation: (filename: string, notes: string, rating: number | null) => void;
   onPlaybackVolumeChange: (volume: number) => void;
+  onRadioQueueStyleChange: (styleId: RadioStyleId) => void;
   onAddToRadio: (item: LibraryItem) => void;
 }) {
   const [playbackByFilename, setPlaybackByFilename] = useState<Record<string, PlaybackState>>({});
@@ -1032,6 +1041,12 @@ function LibraryPanel({
             <label className="inline-flex min-h-10 items-center gap-2 rounded-full border border-white/10 bg-white/[0.05] px-4 py-2 text-sm font-semibold text-white/65">
               <input type="checkbox" checked={favoritesOnly} onChange={(event) => onFavoritesOnlyChange(event.target.checked)} className="accent-amber-200" />
               Favorites
+            </label>
+            <label className="inline-flex min-h-10 items-center gap-2 rounded-full border border-emerald-200/15 bg-emerald-200/[0.07] px-4 py-2 text-sm font-semibold text-emerald-50">
+              <span className="whitespace-nowrap">Radio queue</span>
+              <select aria-label="Radio queue" value={radioQueueStyleId} onChange={(event) => onRadioQueueStyleChange(event.target.value as RadioStyleId)} className="max-w-48 rounded-full border border-white/10 bg-black/45 px-2 py-1 text-xs text-white outline-none">
+                {radioStyles.map((style) => <option key={style.id} value={style.id}>{style.label}</option>)}
+              </select>
             </label>
             <button
               type="button"
