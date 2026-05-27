@@ -552,7 +552,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
         <header className="flex flex-col gap-3 rounded-[2rem] border border-white/10 bg-white/[0.06] p-4 shadow-2xl backdrop-blur-xl md:flex-row md:items-center md:justify-between">
           <div>
             <Link href="/" className="text-sm font-semibold text-emerald-100/75 hover:text-emerald-50">Stable Audio 3 Lab</Link>
-            <h1 className="mt-1 text-3xl font-light tracking-[-0.04em] text-white sm:mt-2 sm:text-5xl">AI Radio Station</h1>
+            <h1 className="mt-1 text-3xl font-light tracking-[-0.04em] text-white sm:mt-2 sm:text-5xl">Pardora</h1>
             <p className="mt-2 hidden max-w-2xl text-sm leading-6 text-white/58 sm:block">
               Pandora-style prompt feedback loop for local AI-generated songs, with Ollama prompt provenance and a raw MP3 stream URL.
             </p>

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Stable Audio 3 Lab",
+  title: "Pardora",
   description: "Local Next.js test rig for Stable Audio 3 music and sound effects generation.",
 };
 
