@@ -530,6 +530,59 @@ describe("radio page loading", () => {
     expect(playMock).toHaveBeenCalled();
   });
 
+  it("skips the current song and reconnects the player to the next track", async () => {
+    const nextTrack = {
+      ...currentTrack,
+      id: "track-next",
+      filename: "next_song.mp3",
+      title: "Next Song",
+      prompt: "next prompt",
+    };
+    const stateWithLineup = {
+      ...radioState,
+      currentTrack,
+      history: [currentTrack, nextTrack],
+      streamReady: true,
+      streamUrl: "/api/radio?stream=1",
+      queueAheadCount: 1,
+    };
+    const skippedState = {
+      ...stateWithLineup,
+      currentTrack: nextTrack,
+      history: [currentTrack, nextTrack],
+      queueAheadCount: 0,
+      updatedAt: "2026-05-26T12:00:01.000Z",
+    };
+    let latestState: RadioStreamState = stateWithLineup;
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as { action?: string } : {};
+      if (body.action === "skipTrack") latestState = skippedState;
+      return {
+        json: async () => ({
+          ok: true,
+          skippedTrack: body.action === "skipTrack" ? currentTrack : undefined,
+          state: latestState,
+          promptModels: ["qwen3:14b"],
+          cleanedTracks: [],
+        }),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const playMock = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    const { container } = render(<RadioStationClient initialState={stateWithLineup} initialPromptModels={["qwen3:14b"]} />);
+
+    expect(container.querySelector("audio")?.getAttribute("src")).toBe("http://localhost:3000/api/radio?stream=1");
+    fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+
+    await waitFor(() => expect(screen.getAllByText(/Now playing: Next Song/).length).toBeGreaterThan(0));
+    expect(fetchMock).toHaveBeenCalledWith("/api/radio", expect.objectContaining({
+      body: expect.stringContaining('"action":"skipTrack"'),
+    }));
+    expect(fetchMock.mock.calls.some(([_url, init]) => typeof init?.body === "string" && init.body.includes('"rating"'))).toBe(false);
+    await waitFor(() => expect(container.querySelector("audio")?.getAttribute("src")).toBe("http://localhost:3000/api/radio?stream=1&client=1"));
+    expect(playMock).toHaveBeenCalled();
+  });
+
   it("deletes a radio queue row after confirmation", async () => {
     const previousTrack = {
       ...currentTrack,

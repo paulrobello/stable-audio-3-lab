@@ -6,7 +6,7 @@ import clsx from "clsx";
 import { ForwardIcon, HandThumbDownIcon, HandThumbUpIcon, TrashIcon } from "@heroicons/react/24/solid";
 import { defaultRadioTtsVoice, getRadioTtsVoiceOptions, normalizeRadioSongLengthMinutes, radioOllamaModels, radioSongLengthMinuteOptions, radioStyles, type RadioPlaylistUrls, type RadioPromptDraft, type RadioStreamState, type RadioStyleId, type RadioTrackRecord, type RadioTtsProvider, type RadioTtsVoiceOption } from "@/lib/radio";
 
-type RadioApiResponse = { ok: boolean; state?: RadioStreamState; draft?: RadioPromptDraft; fallbackTrack?: RadioTrackRecord; rejectedTrack?: RadioTrackRecord; deletedTrack?: RadioTrackRecord; cleanedTracks?: RadioTrackRecord[]; promptModels?: string[]; voices?: RadioTtsVoiceOption[]; error?: string };
+type RadioApiResponse = { ok: boolean; state?: RadioStreamState; draft?: RadioPromptDraft; fallbackTrack?: RadioTrackRecord; rejectedTrack?: RadioTrackRecord; skippedTrack?: RadioTrackRecord; deletedTrack?: RadioTrackRecord; cleanedTracks?: RadioTrackRecord[]; promptModels?: string[]; voices?: RadioTtsVoiceOption[]; error?: string };
 type RadioTestVoiceResponse = { ok: boolean; audioUrl?: string; error?: string };
 type GenerateResponse = { ok: boolean; filename?: string; title?: string; audioUrl?: string; meta?: unknown; error?: string };
 const RADIO_STATE_RETRY_MS = 1500;
@@ -74,6 +74,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
   const songDurationSeconds = songLengthMinutes * 60;
   const trackDurationSeconds = currentTrack?.durationSeconds ?? songDurationSeconds;
   const safeTrackElapsedSeconds = Math.min(trackElapsedSeconds, trackDurationSeconds);
+  const skipDisabled = !currentTrack || (!!busy && busy !== "maintenance");
 
   useEffect(() => {
     setBrowserStreamUrl(`${window.location.origin}/api/radio?stream=1`);
@@ -361,6 +362,34 @@ export default function RadioStationClient({ initialState = null, initialPromptM
     }
   }
 
+  async function skipCurrentTrack() {
+    if (!currentTrack) return;
+    const skippedFilename = currentTrack.filename;
+    setBusy("select");
+    setStatus(`Skipping "${currentTrack.title}"...`);
+    try {
+      resumeAfterStreamReloadRef.current = true;
+      const json = await postRadio({ action: "skipTrack" });
+      const nextState = json.state;
+      const nextTrack = nextState?.currentTrack;
+      if (nextTrack && nextTrack.filename !== skippedFilename) {
+        setStreamReloadKey((key) => key + 1);
+        setTrackElapsedSeconds(0);
+        maintenancePausedRef.current = false;
+        setStatus(json.skippedTrack ? `Skipped "${json.skippedTrack.title}" and loaded "${nextTrack.title}".` : `Loaded "${nextTrack.title}".`);
+        if (!maintenanceRunningRef.current) await maintainQueue(nextState);
+      } else {
+        resumeAfterStreamReloadRef.current = false;
+        setStatus("No queued song is available to skip to.");
+      }
+    } catch (error) {
+      resumeAfterStreamReloadRef.current = false;
+      setStatus(error instanceof Error ? error.message : "Could not skip the current song.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function selectLineupTrack(track: RadioTrackRecord) {
     if (track.filename === currentTrack?.filename) return;
     setBusy("select");
@@ -611,7 +640,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
                 <HandThumbUpIcon className="h-5 w-5" />
                 <span>{currentTrackLiked ? "Liked" : "Like"}</span>
               </button>
-              <button type="button" onClick={() => void rateCurrent("down")} disabled={!!busy || !currentTrack} className="flex min-h-14 items-center justify-center gap-2 rounded-2xl border border-cyan-200/30 bg-cyan-300/12 px-3 py-3 text-sm font-bold text-cyan-50 disabled:opacity-45">
+              <button type="button" onClick={() => void skipCurrentTrack()} disabled={skipDisabled} className="flex min-h-14 items-center justify-center gap-2 rounded-2xl border border-cyan-200/30 bg-cyan-300/12 px-3 py-3 text-sm font-bold text-cyan-50 disabled:opacity-45">
                 <ForwardIcon className="h-5 w-5" />
                 <span>Skip</span>
               </button>

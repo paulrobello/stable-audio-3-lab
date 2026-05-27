@@ -184,6 +184,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, track: result.selectedTrack, state: buildRadioResponseState(result.state, request) });
     }
 
+    if (action === "skipTrack") {
+      const previousTrack = state.currentTrack;
+      const nextState = advanceRadioCurrentTrack(state);
+      const skippedTrack = previousTrack && nextState.currentTrack?.filename !== previousTrack.filename ? previousTrack : undefined;
+      if (skippedTrack) await writeRadioState(nextState);
+      return NextResponse.json({ ok: true, skippedTrack, state: buildRadioResponseState(nextState, request) });
+    }
+
     if (action === "deleteTrack") {
       const filename = typeof body.filename === "string" ? body.filename.trim() : "";
       if (!isSafeAudioFilename(filename)) return NextResponse.json({ ok: false, error: "Invalid track filename" }, { status: 400 });

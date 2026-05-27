@@ -748,6 +748,39 @@ printf '%s' '{"likedTraits":["wide neon pads"],"dislikedTraits":["thin supersaw 
     expect(saved.currentTrack?.filename).toBe("ambient_current.mp3");
   });
 
+  it("skips to the next track without recording thumbs-down feedback", async () => {
+    tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
+    process.chdir(tempCwd);
+    const stateFile = path.join(tempCwd, ".stable-audio-radio", "state.json");
+    await mkdir(path.dirname(stateFile), { recursive: true });
+    const current = createRadioTrackRecord({ filename: "current.mp3", title: "Current", prompt: "current prompt", styleId: "synthwave", announce: false });
+    const next = createRadioTrackRecord({ filename: "next.mp3", title: "Next", prompt: "next prompt", styleId: "synthwave", announce: false });
+    await writeFile(stateFile, JSON.stringify({
+      ...defaultRadioState(),
+      currentTrack: current,
+      history: [current, next],
+      preferences: { synthwave: { likes: [], dislikes: [] } },
+    }, null, 2));
+
+    const response = await POST(new NextRequest("http://localhost:3007/api/radio", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "skipTrack" }),
+    }));
+    const json = await response.json() as { ok: boolean; skippedTrack?: { filename?: string }; state?: { currentTrack?: { filename?: string }; history?: Array<{ filename?: string }>; preferences?: { synthwave?: { dislikes?: string[] } } } };
+    const saved = JSON.parse(await readFile(stateFile, "utf8")) as { currentTrack?: { filename?: string }; history?: Array<{ filename?: string; rating?: string }>; preferences?: { synthwave?: { dislikes?: string[] } } };
+
+    expect(json.ok).toBe(true);
+    expect(json.skippedTrack?.filename).toBe("current.mp3");
+    expect(json.state?.currentTrack?.filename).toBe("next.mp3");
+    expect(json.state?.history?.map((track) => track.filename)).toEqual(["current.mp3", "next.mp3"]);
+    expect(json.state?.preferences?.synthwave?.dislikes).toEqual([]);
+    expect(saved.currentTrack?.filename).toBe("next.mp3");
+    expect(saved.history?.map((track) => track.filename)).toEqual(["current.mp3", "next.mp3"]);
+    expect(saved.history?.some((track) => track.rating === "down")).toBe(false);
+    expect(saved.preferences?.synthwave?.dislikes).toEqual([]);
+  });
+
   it("persists configured radio song length in whole minutes", async () => {
     tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
     process.chdir(tempCwd);
