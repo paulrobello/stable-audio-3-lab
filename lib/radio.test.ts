@@ -18,6 +18,7 @@ import {
   findRadioTracksForCleanup,
   getRadioQueueAheadCount,
   normalizeRadioTtsConfig,
+  normalizeRadioState,
   getRadioTtsVoiceOptions,
   normalizeRadioRating,
   normalizeRadioStyleId,
@@ -37,6 +38,13 @@ import {
 } from "./radio";
 
 describe("radio station styles", () => {
+  it("defaults radio songs to two minutes and clamps configured minute values", () => {
+    expect((defaultRadioState() as { songLengthMinutes?: number }).songLengthMinutes).toBe(2);
+    expect((normalizeRadioState({ songLengthMinutes: 6 } as Parameters<typeof normalizeRadioState>[0]) as { songLengthMinutes?: number }).songLengthMinutes).toBe(6);
+    expect((normalizeRadioState({ songLengthMinutes: 9 } as Parameters<typeof normalizeRadioState>[0]) as { songLengthMinutes?: number }).songLengthMinutes).toBe(2);
+    expect((normalizeRadioState({ songLengthMinutes: 0 } as Parameters<typeof normalizeRadioState>[0]) as { songLengthMinutes?: number }).songLengthMinutes).toBe(2);
+  });
+
   it("falls back to synthwave for unknown style ids", () => {
     expect(normalizeRadioStyleId("ambient")).toBe("ambient");
     expect(normalizeRadioStyleId("missing")).toBe("synthwave");

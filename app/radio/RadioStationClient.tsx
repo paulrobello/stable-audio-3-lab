@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import { ForwardIcon, HandThumbDownIcon, HandThumbUpIcon } from "@heroicons/react/24/solid";
-import { defaultRadioTtsVoice, getRadioTtsVoiceOptions, radioOllamaModels, radioStyles, type RadioPlaylistUrls, type RadioPromptDraft, type RadioStreamState, type RadioStyleId, type RadioTrackRecord, type RadioTtsProvider, type RadioTtsVoiceOption } from "@/lib/radio";
+import { defaultRadioTtsVoice, getRadioTtsVoiceOptions, normalizeRadioSongLengthMinutes, radioOllamaModels, radioSongLengthMinuteOptions, radioStyles, type RadioPlaylistUrls, type RadioPromptDraft, type RadioStreamState, type RadioStyleId, type RadioTrackRecord, type RadioTtsProvider, type RadioTtsVoiceOption } from "@/lib/radio";
 
 type RadioApiResponse = { ok: boolean; state?: RadioStreamState; draft?: RadioPromptDraft; fallbackTrack?: RadioTrackRecord; rejectedTrack?: RadioTrackRecord; cleanedTracks?: RadioTrackRecord[]; promptModels?: string[]; voices?: RadioTtsVoiceOption[]; error?: string };
 type RadioTestVoiceResponse = { ok: boolean; audioUrl?: string; error?: string };
@@ -12,7 +12,6 @@ type GenerateResponse = { ok: boolean; filename?: string; title?: string; audioU
 const RADIO_STATE_RETRY_MS = 1500;
 const RADIO_STATE_POLL_MS = 5000;
 const RADIO_QUEUE_GENERATION_TIMEOUT_MS = 45_000;
-const RADIO_TRACK_DURATION_SECONDS = 60;
 type RadioPlaybackPhase = "announcement" | "song";
 
 export default function RadioStationClient({ initialState = null, initialPromptModels = [] }: { initialState?: RadioStreamState | null; initialPromptModels?: string[] }) {
@@ -21,6 +20,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
   const [promptModel, setPromptModel] = useState<string>(initialState?.promptModel ?? radioOllamaModels[0]);
   const [promptModels, setPromptModels] = useState<string[]>(() => cleanPromptModels(initialPromptModels));
   const [announceEnabled, setAnnounceEnabled] = useState(initialState?.announceEnabled ?? true);
+  const [songLengthMinutes, setSongLengthMinutes] = useState(() => normalizeRadioSongLengthMinutes(initialState?.songLengthMinutes));
   const [ttsProvider, setTtsProvider] = useState<RadioTtsProvider>(initialState?.ttsProvider ?? "openai");
   const [ttsVoice, setTtsVoice] = useState(initialState?.ttsVoice ?? "nova");
   const [announcementPrefix, setAnnouncementPrefix] = useState(initialState?.announcementPrefix ?? "Now playing: ");
@@ -71,7 +71,8 @@ export default function RadioStationClient({ initialState = null, initialPromptM
   const playerStreamUrl = playbackPhase === "announcement" && announcementUrl ? announcementUrl : reloadedSongStreamUrl;
   const currentTrackKey = trackFeedbackKey(currentTrack);
   const currentTrackLiked = optimisticLike?.trackKey === currentTrackKey ? optimisticLike.liked : isRadioTrackLiked(currentTrack, radioState);
-  const trackDurationSeconds = currentTrack?.durationSeconds ?? RADIO_TRACK_DURATION_SECONDS;
+  const songDurationSeconds = songLengthMinutes * 60;
+  const trackDurationSeconds = currentTrack?.durationSeconds ?? songDurationSeconds;
   const safeTrackElapsedSeconds = Math.min(trackElapsedSeconds, trackDurationSeconds);
 
   useEffect(() => {
@@ -131,6 +132,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
       setSelectedStyleId(json.state.selectedStyleId);
       setPromptModel(json.state.promptModel);
       setAnnounceEnabled(json.state.announceEnabled);
+      setSongLengthMinutes(normalizeRadioSongLengthMinutes(json.state.songLengthMinutes));
       setTtsProvider(json.state.ttsProvider);
       setTtsVoice(json.state.ttsVoice);
       setAnnouncementPrefix(json.state.announcementPrefix);
@@ -156,7 +158,10 @@ export default function RadioStationClient({ initialState = null, initialPromptM
     });
     const json = await response.json() as RadioApiResponse;
     if (!json.ok) throw new Error(json.error ?? "Radio request failed");
-    if (json.state) setRadioState(json.state);
+    if (json.state) {
+      setRadioState(json.state);
+      setSongLengthMinutes(normalizeRadioSongLengthMinutes(json.state.songLengthMinutes));
+    }
     if (json.draft) setDraft(json.draft);
     if (json.promptModels) setPromptModels(cleanPromptModels(json.promptModels));
     return json;
@@ -166,6 +171,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
     nextStyleId = selectedStyleId,
     nextPromptModel = promptModel,
     nextAnnounceEnabled = announceEnabled,
+    nextSongLengthMinutes = songLengthMinutes,
     nextTtsProvider = ttsProvider,
     nextTtsVoice = ttsVoice,
     nextAnnouncementPrefix = announcementPrefix,
@@ -174,6 +180,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
     nextStyleId?: RadioStyleId;
     nextPromptModel?: string;
     nextAnnounceEnabled?: boolean;
+    nextSongLengthMinutes?: number;
     nextTtsProvider?: RadioTtsProvider;
     nextTtsVoice?: string;
     nextAnnouncementPrefix?: string;
@@ -187,6 +194,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
         styleId: nextStyleId,
         promptModel: nextPromptModel,
         announceEnabled: nextAnnounceEnabled,
+        songLengthMinutes: nextSongLengthMinutes,
         ttsProvider: nextTtsProvider,
         ttsVoice: nextTtsVoice,
         announcementPrefix: nextAnnouncementPrefix,
@@ -241,7 +249,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
         negativePrompt: trackDraft.negativePrompt,
         mode: "music",
         model: "small-music",
-        duration: 60,
+        duration: songDurationSeconds,
         steps: 8,
         cfgScale: 1,
         format: "mp3",
@@ -261,7 +269,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
       announce,
         promptProvider: trackDraft.promptProvider,
         promptModel: trackDraft.promptModel,
-        durationSeconds: RADIO_TRACK_DURATION_SECONDS,
+        durationSeconds: songDurationSeconds,
       });
   }
 
@@ -382,6 +390,12 @@ export default function RadioStationClient({ initialState = null, initialPromptM
   function changeAnnounce(enabled: boolean) {
     setAnnounceEnabled(enabled);
     void saveConfiguration({ nextAnnounceEnabled: enabled });
+  }
+
+  function changeSongLengthMinutes(minutesInput: string) {
+    const minutes = normalizeRadioSongLengthMinutes(minutesInput);
+    setSongLengthMinutes(minutes);
+    void saveConfiguration({ nextSongLengthMinutes: minutes });
   }
 
   function changeTtsProvider(provider: RadioTtsProvider) {
@@ -611,6 +625,15 @@ export default function RadioStationClient({ initialState = null, initialPromptM
                 {promptModelOptions.map((model) => <option key={model} value={model}>{model}</option>)}
               </select>
               <input value={promptModel} onChange={(event) => setPromptModel(event.target.value)} onBlur={() => void saveConfiguration()} className="mt-2 w-full rounded-xl border border-white/10 bg-black/35 p-3 text-xs text-white outline-none" aria-label="Custom Ollama prompt model" />
+            </label>
+
+            <label className="block rounded-2xl border border-white/10 bg-white/[0.04] p-3 text-sm text-white/65">
+              Song length
+              <select value={songLengthMinutes} onChange={(event) => changeSongLengthMinutes(event.target.value)} className="mt-2 w-full rounded-xl border border-white/10 bg-black/50 p-3 text-white outline-none" aria-label="Song length">
+                {radioSongLengthMinuteOptions.map((minutes) => (
+                  <option key={minutes} value={minutes}>{minutes} minute{minutes === 1 ? "" : "s"}</option>
+                ))}
+              </select>
             </label>
 
             <label className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.04] p-3">

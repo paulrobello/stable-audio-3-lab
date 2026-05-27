@@ -651,6 +651,26 @@ printf '%s' '{"likedTraits":["wide neon pads"],"dislikedTraits":["thin supersaw 
     expect(json.state?.queueAheadCount).toBe(1);
     expect(saved.currentTrack?.filename).toBe("ambient_current.mp3");
   });
+
+  it("persists configured radio song length in whole minutes", async () => {
+    tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
+    process.chdir(tempCwd);
+    const stateFile = path.join(tempCwd, ".stable-audio-radio", "state.json");
+    await mkdir(path.dirname(stateFile), { recursive: true });
+    await writeFile(stateFile, JSON.stringify(defaultRadioState(), null, 2));
+
+    const response = await POST(new NextRequest("http://localhost:3007/api/radio", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "configure", songLengthMinutes: 5 }),
+    }));
+    const json = await response.json() as { ok: boolean; state?: { songLengthMinutes?: number } };
+    const saved = JSON.parse(await readFile(stateFile, "utf8")) as { songLengthMinutes?: number };
+
+    expect(json.ok).toBe(true);
+    expect(json.state?.songLengthMinutes).toBe(5);
+    expect(saved.songLengthMinutes).toBe(5);
+  });
 });
 
 function decodeIcyMetadata(chunk: Uint8Array | undefined) {

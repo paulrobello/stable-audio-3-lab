@@ -22,6 +22,7 @@ import {
   findRadioTracksForCleanup,
   normalizeRadioState,
   normalizeOllamaPromptModel,
+  normalizeRadioSongLengthMinutes,
   normalizeRadioTtsConfig,
   normalizeRadioStyleId,
   normalizeRadioStyleUrlParam,
@@ -102,6 +103,7 @@ export async function POST(request: NextRequest) {
         selectedStyleId: normalizeRadioStyleId(body.styleId ?? state.selectedStyleId),
         promptModel: normalizeOllamaPromptModel(body.promptModel ?? state.promptModel),
         announceEnabled: typeof body.announceEnabled === "boolean" ? body.announceEnabled : state.announceEnabled,
+        songLengthMinutes: normalizeRadioSongLengthMinutes(body.songLengthMinutes ?? state.songLengthMinutes),
         ...normalizeRadioTtsConfig({
           ttsProvider: body.ttsProvider ?? state.ttsProvider,
           ttsVoice: body.ttsVoice ?? state.ttsVoice,

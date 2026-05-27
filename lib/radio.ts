@@ -75,6 +75,7 @@ export type RadioTrackRecord = {
 export type RadioState = {
   selectedStyleId: RadioStyleId;
   announceEnabled: boolean;
+  songLengthMinutes: number;
   promptModel: string;
   ttsProvider: RadioTtsProvider;
   ttsVoice: string;
@@ -152,6 +153,8 @@ const DEFAULT_ANNOUNCEMENT_SUFFIX = "";
 const STREAM_URL = "/api/radio?stream=1";
 const RADIO_STATION_TITLE = "Stable Audio 3 Lab Radio";
 const RADIO_QUEUE_TARGET = 3;
+const DEFAULT_RADIO_SONG_LENGTH_MINUTES = 2;
+export const radioSongLengthMinuteOptions = [1, 2, 3, 4, 5, 6] as const;
 
 const radioTtsVoicesByProvider: Record<RadioTtsProvider, RadioTtsVoiceOption[]> = {
   openai: [
@@ -250,6 +253,7 @@ export function defaultRadioState(now = new Date().toISOString()): RadioState {
   return {
     selectedStyleId: "synthwave",
     announceEnabled: true,
+    songLengthMinutes: DEFAULT_RADIO_SONG_LENGTH_MINUTES,
     promptModel: DEFAULT_PROMPT_MODEL,
     ttsProvider: DEFAULT_TTS_PROVIDER,
     ttsVoice: DEFAULT_TTS_VOICE,
@@ -282,6 +286,7 @@ export function normalizeRadioState(input: Partial<RadioState> | undefined): Rad
     ...defaultRadioState(),
     ...parsed,
     selectedStyleId,
+    songLengthMinutes: normalizeRadioSongLengthMinutes(parsed.songLengthMinutes),
     promptModel: normalizeOllamaPromptModel(parsed.promptModel),
     ...normalizeRadioTtsConfig(parsed as Record<string, unknown>),
     preferences: parsed.preferences ?? {},
@@ -299,6 +304,13 @@ export function normalizeOllamaPromptModel(value: unknown): string {
 
 export function normalizeRadioRating(value: unknown): RadioRating | null {
   return value === "up" || value === "down" ? value : null;
+}
+
+export function normalizeRadioSongLengthMinutes(value: unknown): number {
+  const minutes = typeof value === "number" ? value : Number(value);
+  return radioSongLengthMinuteOptions.includes(minutes as (typeof radioSongLengthMinuteOptions)[number])
+    ? minutes
+    : DEFAULT_RADIO_SONG_LENGTH_MINUTES;
 }
 
 export function normalizeRadioTtsProvider(value: unknown): RadioTtsProvider {

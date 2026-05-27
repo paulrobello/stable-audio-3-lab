@@ -20,6 +20,7 @@ const currentTrack: RadioTrackRecord = {
 const radioState: RadioStreamState = {
   selectedStyleId: "synthwave",
   announceEnabled: true,
+  songLengthMinutes: 2,
   promptModel: "llama3.1:8b",
   ttsProvider: "openai",
   ttsVoice: "nova",
@@ -387,6 +388,70 @@ describe("radio page loading", () => {
 
     expect(screen.getByText("0:00 / 1:30")).toBeTruthy();
     expect(screen.getByRole("progressbar", { name: "Song progress" }).getAttribute("aria-valuemax")).toBe("90");
+  });
+
+  it("uses a 2 minute default song length and sends selected minutes as generation seconds", async () => {
+    const stateWithDraft = {
+      ...radioState,
+      currentDraft: {
+        id: "draft-1",
+        title: "Four Minute Drift",
+        prompt: "four minute synthwave instrumental",
+        negativePrompt: "vocals",
+        styleId: "synthwave" as const,
+        createdAt: "2026-05-26T12:00:00.000Z",
+        promptProvider: "fallback" as const,
+        promptModel: "llama3.1:8b",
+      },
+      queueAheadCount: 3,
+      needsQueueFill: false,
+    };
+    const generatedTrack = { ...currentTrack, title: "Four Minute Drift", durationSeconds: 240 };
+    const generatedState = {
+      ...stateWithDraft,
+      currentTrack: generatedTrack,
+      history: [generatedTrack],
+      songLengthMinutes: 4,
+    };
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as { action?: string; songLengthMinutes?: number; duration?: number; durationSeconds?: number } : {};
+      if (url === "/api/generate") {
+        return { json: async () => ({ ok: true, filename: "four_minute_drift.mp3", title: "Four Minute Drift" }) };
+      }
+      if (body.action === "configure") {
+        return { json: async () => ({ ok: true, state: { ...stateWithDraft, songLengthMinutes: body.songLengthMinutes }, cleanedTracks: [] }) };
+      }
+      if (body.action === "track") {
+        return { json: async () => ({ ok: true, state: generatedState, cleanedTracks: [] }) };
+      }
+      return { json: async () => ({ ok: true, state: stateWithDraft, promptModels: ["qwen3:14b"], cleanedTracks: [] }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<RadioStationClient initialState={stateWithDraft} initialPromptModels={["qwen3:14b"]} />);
+
+    const songLengthSelect = screen.getByRole("combobox", { name: "Song length" }) as HTMLSelectElement;
+    expect(songLengthSelect.value).toBe("2");
+    expect(screen.getByRole("option", { name: "1 minute" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "6 minutes" })).toBeTruthy();
+
+    fireEvent.change(songLengthSelect, { target: { value: "4" } });
+    await waitFor(() => {
+      expect(songLengthSelect.value).toBe("4");
+      const button = screen.getByRole("button", { name: "Generate station song" }) as HTMLButtonElement;
+      expect(button.disabled).toBe(false);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate station song" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/generate", expect.objectContaining({
+      body: expect.stringContaining('"duration":240'),
+    })));
+    expect(fetchMock).toHaveBeenCalledWith("/api/radio", expect.objectContaining({
+      body: expect.stringContaining('"songLengthMinutes":4'),
+    }));
+    expect(fetchMock).toHaveBeenCalledWith("/api/radio", expect.objectContaining({
+      body: expect.stringContaining('"durationSeconds":240'),
+    }));
   });
 
   it("keeps the station player on the same stream when the browser audio element ends", async () => {
