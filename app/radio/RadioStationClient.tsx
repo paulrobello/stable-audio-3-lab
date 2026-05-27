@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import { ForwardIcon, HandThumbDownIcon, HandThumbUpIcon, TrashIcon } from "@heroicons/react/24/solid";
-import { defaultRadioTtsVoice, getRadioTtsVoiceOptions, normalizeRadioSongLengthMinutes, radioOllamaModels, radioSongLengthMinuteOptions, radioStyles, type RadioPlaylistUrls, type RadioPromptDraft, type RadioStreamState, type RadioStyleId, type RadioTrackRecord, type RadioTtsProvider, type RadioTtsVoiceOption } from "@/lib/radio";
+import { defaultRadioTtsVoice, getRadioTtsVoiceOptions, normalizeRadioSongLengthMinutes, normalizeRadioUnlikedTrackExpirationHours, radioOllamaModels, radioSongLengthMinuteOptions, radioStyles, radioUnlikedTrackExpirationHourOptions, type RadioPlaylistUrls, type RadioPromptDraft, type RadioStreamState, type RadioStyleId, type RadioTrackRecord, type RadioTtsProvider, type RadioTtsVoiceOption } from "@/lib/radio";
 
 type RadioApiResponse = { ok: boolean; state?: RadioStreamState; draft?: RadioPromptDraft; fallbackTrack?: RadioTrackRecord; rejectedTrack?: RadioTrackRecord; skippedTrack?: RadioTrackRecord; deletedTrack?: RadioTrackRecord; cleanedTracks?: RadioTrackRecord[]; promptModels?: string[]; voices?: RadioTtsVoiceOption[]; error?: string };
 type RadioTestVoiceResponse = { ok: boolean; audioUrl?: string; error?: string };
@@ -21,6 +21,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
   const [promptModels, setPromptModels] = useState<string[]>(() => cleanPromptModels(initialPromptModels));
   const [announceEnabled, setAnnounceEnabled] = useState(initialState?.announceEnabled ?? true);
   const [songLengthMinutes, setSongLengthMinutes] = useState(() => normalizeRadioSongLengthMinutes(initialState?.songLengthMinutes));
+  const [unlikedTrackExpirationHours, setUnlikedTrackExpirationHours] = useState(() => normalizeRadioUnlikedTrackExpirationHours(initialState?.unlikedTrackExpirationHours));
   const [ttsProvider, setTtsProvider] = useState<RadioTtsProvider>(initialState?.ttsProvider ?? "openai");
   const [ttsVoice, setTtsVoice] = useState(initialState?.ttsVoice ?? "nova");
   const [announcementPrefix, setAnnouncementPrefix] = useState(initialState?.announcementPrefix ?? "Now playing: ");
@@ -149,6 +150,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
       setPromptModel(json.state.promptModel);
       setAnnounceEnabled(json.state.announceEnabled);
       setSongLengthMinutes(normalizeRadioSongLengthMinutes(json.state.songLengthMinutes));
+      setUnlikedTrackExpirationHours(normalizeRadioUnlikedTrackExpirationHours(json.state.unlikedTrackExpirationHours));
       setTtsProvider(json.state.ttsProvider);
       setTtsVoice(json.state.ttsVoice);
       setAnnouncementPrefix(json.state.announcementPrefix);
@@ -177,6 +179,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
     if (json.state) {
       setRadioState(json.state);
       setSongLengthMinutes(normalizeRadioSongLengthMinutes(json.state.songLengthMinutes));
+      setUnlikedTrackExpirationHours(normalizeRadioUnlikedTrackExpirationHours(json.state.unlikedTrackExpirationHours));
     }
     if (json.draft) setDraft(json.draft);
     if (json.promptModels) setPromptModels(cleanPromptModels(json.promptModels));
@@ -188,6 +191,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
     nextPromptModel = promptModel,
     nextAnnounceEnabled = announceEnabled,
     nextSongLengthMinutes = songLengthMinutes,
+    nextUnlikedTrackExpirationHours = unlikedTrackExpirationHours,
     nextTtsProvider = ttsProvider,
     nextTtsVoice = ttsVoice,
     nextAnnouncementPrefix = announcementPrefix,
@@ -197,6 +201,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
     nextPromptModel?: string;
     nextAnnounceEnabled?: boolean;
     nextSongLengthMinutes?: number;
+    nextUnlikedTrackExpirationHours?: number;
     nextTtsProvider?: RadioTtsProvider;
     nextTtsVoice?: string;
     nextAnnouncementPrefix?: string;
@@ -211,6 +216,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
         promptModel: nextPromptModel,
         announceEnabled: nextAnnounceEnabled,
         songLengthMinutes: nextSongLengthMinutes,
+        unlikedTrackExpirationHours: nextUnlikedTrackExpirationHours,
         ttsProvider: nextTtsProvider,
         ttsVoice: nextTtsVoice,
         announcementPrefix: nextAnnouncementPrefix,
@@ -518,6 +524,12 @@ export default function RadioStationClient({ initialState = null, initialPromptM
     void saveConfiguration({ nextSongLengthMinutes: minutes });
   }
 
+  function changeUnlikedTrackExpirationHours(hoursInput: string) {
+    const hours = normalizeRadioUnlikedTrackExpirationHours(hoursInput);
+    setUnlikedTrackExpirationHours(hours);
+    void saveConfiguration({ nextUnlikedTrackExpirationHours: hours });
+  }
+
   function changeTtsProvider(provider: RadioTtsProvider) {
     const nextVoice = defaultRadioTtsVoice(provider);
     setRemoteTtsVoiceOptions(null);
@@ -752,6 +764,15 @@ export default function RadioStationClient({ initialState = null, initialPromptM
               <select value={songLengthMinutes} onChange={(event) => changeSongLengthMinutes(event.target.value)} className="mt-2 w-full rounded-xl border border-white/10 bg-black/50 p-3 text-white outline-none" aria-label="Song length">
                 {radioSongLengthMinuteOptions.map((minutes) => (
                   <option key={minutes} value={minutes}>{minutes} minute{minutes === 1 ? "" : "s"}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="block rounded-2xl border border-white/10 bg-white/[0.04] p-3 text-sm text-white/65">
+              Unliked song expiration
+              <select value={unlikedTrackExpirationHours} onChange={(event) => changeUnlikedTrackExpirationHours(event.target.value)} className="mt-2 w-full rounded-xl border border-white/10 bg-black/50 p-3 text-white outline-none" aria-label="Unliked song expiration">
+                {radioUnlikedTrackExpirationHourOptions.map((hours) => (
+                  <option key={hours} value={hours}>{hours} hour{hours === 1 ? "" : "s"}</option>
                 ))}
               </select>
             </label>

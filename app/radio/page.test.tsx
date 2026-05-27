@@ -21,6 +21,7 @@ const radioState: RadioStreamState = {
   selectedStyleId: "synthwave",
   announceEnabled: true,
   songLengthMinutes: 2,
+  unlikedTrackExpirationHours: 24,
   promptModel: "llama3.1:8b",
   ttsProvider: "openai",
   ttsVoice: "nova",
@@ -452,6 +453,28 @@ describe("radio page loading", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/radio", expect.objectContaining({
       body: expect.stringContaining('"durationSeconds":240'),
     }));
+  });
+
+  it("shows and persists the unliked song expiration setting", async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as { action?: string; unlikedTrackExpirationHours?: number } : {};
+      if (body.action === "configure") {
+        return { json: async () => ({ ok: true, state: { ...radioState, unlikedTrackExpirationHours: body.unlikedTrackExpirationHours }, cleanedTracks: [] }) };
+      }
+      return { json: async () => ({ ok: true, state: radioState, promptModels: ["qwen3:14b"], cleanedTracks: [] }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<RadioStationClient initialState={radioState} initialPromptModels={["qwen3:14b"]} />);
+
+    const expirationSelect = screen.getByRole("combobox", { name: "Unliked song expiration" }) as HTMLSelectElement;
+    expect(expirationSelect.value).toBe("24");
+
+    fireEvent.change(expirationSelect, { target: { value: "72" } });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/radio", expect.objectContaining({
+      body: expect.stringContaining('"unlikedTrackExpirationHours":72'),
+    })));
   });
 
   it("keeps the station player on the same stream when the browser audio element ends", async () => {

@@ -23,6 +23,7 @@ import {
   normalizeRadioState,
   normalizeOllamaPromptModel,
   normalizeRadioSongLengthMinutes,
+  normalizeRadioUnlikedTrackExpirationHours,
   normalizeRadioTtsConfig,
   normalizeRadioStyleId,
   normalizeRadioStyleUrlParam,
@@ -104,6 +105,7 @@ export async function POST(request: NextRequest) {
         promptModel: normalizeOllamaPromptModel(body.promptModel ?? state.promptModel),
         announceEnabled: typeof body.announceEnabled === "boolean" ? body.announceEnabled : state.announceEnabled,
         songLengthMinutes: normalizeRadioSongLengthMinutes(body.songLengthMinutes ?? state.songLengthMinutes),
+        unlikedTrackExpirationHours: normalizeRadioUnlikedTrackExpirationHours(body.unlikedTrackExpirationHours ?? state.unlikedTrackExpirationHours),
         ...normalizeRadioTtsConfig({
           ttsProvider: body.ttsProvider ?? state.ttsProvider,
           ttsVoice: body.ttsVoice ?? state.ttsVoice,

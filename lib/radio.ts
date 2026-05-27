@@ -76,6 +76,7 @@ export type RadioState = {
   selectedStyleId: RadioStyleId;
   announceEnabled: boolean;
   songLengthMinutes: number;
+  unlikedTrackExpirationHours: number;
   promptModel: string;
   ttsProvider: RadioTtsProvider;
   ttsVoice: string;
@@ -154,7 +155,9 @@ const STREAM_URL = "/api/radio?stream=1";
 const RADIO_STATION_TITLE = "Stable Audio 3 Lab Radio";
 const RADIO_QUEUE_TARGET = 3;
 const DEFAULT_RADIO_SONG_LENGTH_MINUTES = 2;
+const DEFAULT_UNLIKED_TRACK_EXPIRATION_HOURS = 24;
 export const radioSongLengthMinuteOptions = [1, 2, 3, 4, 5, 6] as const;
+export const radioUnlikedTrackExpirationHourOptions = [1, 6, 12, 24, 48, 72, 168] as const;
 
 const radioTtsVoicesByProvider: Record<RadioTtsProvider, RadioTtsVoiceOption[]> = {
   openai: [
@@ -254,6 +257,7 @@ export function defaultRadioState(now = new Date().toISOString()): RadioState {
     selectedStyleId: "synthwave",
     announceEnabled: true,
     songLengthMinutes: DEFAULT_RADIO_SONG_LENGTH_MINUTES,
+    unlikedTrackExpirationHours: DEFAULT_UNLIKED_TRACK_EXPIRATION_HOURS,
     promptModel: DEFAULT_PROMPT_MODEL,
     ttsProvider: DEFAULT_TTS_PROVIDER,
     ttsVoice: DEFAULT_TTS_VOICE,
@@ -287,6 +291,7 @@ export function normalizeRadioState(input: Partial<RadioState> | undefined): Rad
     ...parsed,
     selectedStyleId,
     songLengthMinutes: normalizeRadioSongLengthMinutes(parsed.songLengthMinutes),
+    unlikedTrackExpirationHours: normalizeRadioUnlikedTrackExpirationHours(parsed.unlikedTrackExpirationHours),
     promptModel: normalizeOllamaPromptModel(parsed.promptModel),
     ...normalizeRadioTtsConfig(parsed as Record<string, unknown>),
     preferences: parsed.preferences ?? {},
@@ -311,6 +316,13 @@ export function normalizeRadioSongLengthMinutes(value: unknown): number {
   return radioSongLengthMinuteOptions.includes(minutes as (typeof radioSongLengthMinuteOptions)[number])
     ? minutes
     : DEFAULT_RADIO_SONG_LENGTH_MINUTES;
+}
+
+export function normalizeRadioUnlikedTrackExpirationHours(value: unknown): number {
+  const hours = typeof value === "number" ? value : Number(value);
+  return radioUnlikedTrackExpirationHourOptions.includes(hours as (typeof radioUnlikedTrackExpirationHourOptions)[number])
+    ? hours
+    : DEFAULT_UNLIKED_TRACK_EXPIRATION_HOURS;
 }
 
 export function normalizeRadioTtsProvider(value: unknown): RadioTtsProvider {
@@ -748,10 +760,10 @@ export function shouldGenerateRadioQueueTrack(state: RadioState, targetAhead = 3
   return getRadioQueueAheadCount(state) < targetAhead;
 }
 
-export function findRadioTracksForCleanup(state: RadioState, nowInput = new Date().toISOString(), maxAgeHours = 48) {
+export function findRadioTracksForCleanup(state: RadioState, nowInput = new Date().toISOString(), maxAgeHours = state.unlikedTrackExpirationHours) {
   const now = Date.parse(nowInput);
   if (!Number.isFinite(now)) return [];
-  const maxAgeMs = maxAgeHours * 60 * 60 * 1000;
+  const maxAgeMs = normalizeRadioUnlikedTrackExpirationHours(maxAgeHours) * 60 * 60 * 1000;
   return state.history.filter((track) => {
     if (track.rating === "up") return false;
     if (!track.filename.toLowerCase().endsWith(".mp3")) return false;

@@ -800,6 +800,26 @@ printf '%s' '{"likedTraits":["wide neon pads"],"dislikedTraits":["thin supersaw 
     expect(json.state?.songLengthMinutes).toBe(5);
     expect(saved.songLengthMinutes).toBe(5);
   });
+
+  it("persists configured unliked song expiration hours", async () => {
+    tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
+    process.chdir(tempCwd);
+    const stateFile = path.join(tempCwd, ".stable-audio-radio", "state.json");
+    await mkdir(path.dirname(stateFile), { recursive: true });
+    await writeFile(stateFile, JSON.stringify(defaultRadioState(), null, 2));
+
+    const response = await POST(new NextRequest("http://localhost:3007/api/radio", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "configure", unlikedTrackExpirationHours: 72 }),
+    }));
+    const json = await response.json() as { ok: boolean; state?: { unlikedTrackExpirationHours?: number } };
+    const saved = JSON.parse(await readFile(stateFile, "utf8")) as { unlikedTrackExpirationHours?: number };
+
+    expect(json.ok).toBe(true);
+    expect(json.state?.unlikedTrackExpirationHours).toBe(72);
+    expect(saved.unlikedTrackExpirationHours).toBe(72);
+  });
 });
 
 function decodeIcyMetadata(chunk: Uint8Array | undefined) {

@@ -45,6 +45,13 @@ describe("radio station styles", () => {
     expect((normalizeRadioState({ songLengthMinutes: 0 } as Parameters<typeof normalizeRadioState>[0]) as { songLengthMinutes?: number }).songLengthMinutes).toBe(2);
   });
 
+  it("defaults unliked radio song expiration to 24 hours and clamps configured hour values", () => {
+    expect((defaultRadioState() as { unlikedTrackExpirationHours?: number }).unlikedTrackExpirationHours).toBe(24);
+    expect((normalizeRadioState({ unlikedTrackExpirationHours: 72 } as Parameters<typeof normalizeRadioState>[0]) as { unlikedTrackExpirationHours?: number }).unlikedTrackExpirationHours).toBe(72);
+    expect((normalizeRadioState({ unlikedTrackExpirationHours: 0 } as Parameters<typeof normalizeRadioState>[0]) as { unlikedTrackExpirationHours?: number }).unlikedTrackExpirationHours).toBe(24);
+    expect((normalizeRadioState({ unlikedTrackExpirationHours: 999 } as Parameters<typeof normalizeRadioState>[0]) as { unlikedTrackExpirationHours?: number }).unlikedTrackExpirationHours).toBe(24);
+  });
+
   it("falls back to synthwave for unknown style ids", () => {
     expect(normalizeRadioStyleId("ambient")).toBe("ambient");
     expect(normalizeRadioStyleId("missing")).toBe("synthwave");
@@ -640,12 +647,21 @@ describe("radio stream state", () => {
 
   it("finds old generated songs without thumbs up for cleanup", () => {
     const now = "2026-05-26T12:00:00.000Z";
-    const oldUnliked = { ...createRadioTrackRecord({ filename: "old_unliked.mp3", title: "Old", prompt: "old", styleId: "synthwave", announce: false }), createdAt: "2026-05-24T11:59:00.000Z" };
+    const oldUnliked = { ...createRadioTrackRecord({ filename: "old_unliked.mp3", title: "Old", prompt: "old", styleId: "synthwave", announce: false }), createdAt: "2026-05-25T11:59:00.000Z" };
     const oldLiked = { ...createRadioTrackRecord({ filename: "old_liked.mp3", title: "Liked", prompt: "liked", styleId: "synthwave", announce: false }), createdAt: "2026-05-24T11:00:00.000Z", rating: "up" as const };
     const newUnliked = { ...createRadioTrackRecord({ filename: "new_unliked.mp3", title: "New", prompt: "new", styleId: "synthwave", announce: false }), createdAt: "2026-05-25T12:01:00.000Z" };
     const state = { ...defaultRadioState(), currentTrack: oldUnliked, history: [oldUnliked, oldLiked, newUnliked] };
 
     expect(findRadioTracksForCleanup(state, now).map((track) => track.filename)).toEqual(["old_unliked.mp3"]);
+  });
+
+  it("uses configured unliked song expiration hours for cleanup", () => {
+    const now = "2026-05-26T12:00:00.000Z";
+    const oldUnliked = { ...createRadioTrackRecord({ filename: "old_unliked.mp3", title: "Old", prompt: "old", styleId: "synthwave", announce: false }), createdAt: "2026-05-25T11:59:00.000Z" };
+    const dayOldUnliked = { ...createRadioTrackRecord({ filename: "day_old_unliked.mp3", title: "Day Old", prompt: "day old", styleId: "synthwave", announce: false }), createdAt: "2026-05-25T11:00:00.000Z" };
+    const state = { ...defaultRadioState(), unlikedTrackExpirationHours: 48, history: [oldUnliked, dayOldUnliked] };
+
+    expect(findRadioTracksForCleanup(state, now).map((track) => track.filename)).toEqual([]);
   });
 
   it("finds duplicate unliked queued titles for cleanup while keeping the current song", () => {
