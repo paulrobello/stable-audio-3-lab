@@ -24,6 +24,12 @@ final class RadioAppModelTests: XCTestCase {
         XCTAssertEqual(payload?["action"], .string("skipTrack"))
     }
 
+    func testEndpointModeDefaultsToAuto() {
+        let model = RadioAppModel()
+
+        XCTAssertEqual(model.endpointMode, .auto)
+    }
+
     func testAutoEndpointUsesLANWhenDeviceIsOnSamePrivateNetwork() {
         let model = RadioAppModel(localIPv4Addresses: { ["192.168.1.80"] })
         model.state = Self.stateWithLANURL
@@ -66,6 +72,66 @@ final class RadioAppModelTests: XCTestCase {
         model.applyEndpointMode()
 
         XCTAssertEqual(model.serverOrigin, "http://10.0.0.12:3007")
+    }
+
+    func testAutoRefreshFallsBackToLocalWhenPublicReturnsNonJSON() async {
+        let transport = FallbackRadioTransport()
+        let model = RadioAppModel(
+            serverOrigin: "https://radio.pardev.net",
+            endpointMode: .auto,
+            transport: transport,
+            localIPv4Addresses: { [] }
+        )
+
+        await model.refresh()
+
+        let requestedURLs = await transport.requestedURLs
+        XCTAssertEqual(requestedURLs, [
+            "https://radio.pardev.net/api/radio",
+            "http://localhost:3007/api/radio",
+        ])
+        XCTAssertEqual(model.state?.currentTrack?.title, "Local Track")
+        XCTAssertEqual(model.serverOrigin, "http://localhost:3007")
+        XCTAssertNil(model.statusMessage)
+    }
+
+    func testPublicEndpointHTMLSuggestsCloudflareVPN() async {
+        let transport = FallbackRadioTransport()
+        let model = RadioAppModel(
+            serverOrigin: "https://radio.pardev.net",
+            endpointMode: .publicInternet,
+            transport: transport
+        )
+
+        await model.refresh()
+
+        XCTAssertNil(model.state)
+        XCTAssertEqual(model.statusMessage, RadioAppModel.cloudflareVPNMessage)
+    }
+
+    func testCloudflareOneShortcutUsesDocumentedURLScheme() {
+        XCTAssertEqual(CloudflareOneApp.url.scheme, "cf1app")
+        XCTAssertEqual(CloudflareOneApp.url.host, "oneapp.cloudflare.com")
+        XCTAssertEqual(CloudflareOneApp.appStoreURL.host, "apps.apple.com")
+    }
+
+    func testNetworkChangeRefreshesAutoEndpointDetection() async {
+        let transport = FallbackRadioTransport()
+        let model = RadioAppModel(
+            serverOrigin: "https://radio.pardev.net",
+            endpointMode: .auto,
+            transport: transport,
+            localIPv4Addresses: { [] }
+        )
+
+        await model.networkPathDidChange()
+
+        let requestedURLs = await transport.requestedURLs
+        XCTAssertEqual(requestedURLs, [
+            "https://radio.pardev.net/api/radio",
+            "http://localhost:3007/api/radio",
+        ])
+        XCTAssertEqual(model.state?.currentTrack?.title, "Local Track")
     }
 
     private static var stateWithLANURL: RadioStreamState {
@@ -114,4 +180,54 @@ private actor FakeRadioActionClient: RadioActionClient {
             skippedTrack: nil
         )
     }
+}
+
+private actor FallbackRadioTransport: RadioTransport {
+    var requestedURLs: [String] = []
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        let url = try XCTUnwrap(request.url)
+        requestedURLs.append(url.absoluteString)
+
+        let response = try XCTUnwrap(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil))
+        if url.host == "localhost" {
+            return (Data(Self.localEnvelope.utf8), response)
+        }
+
+        return (Data("<html>Cloudflare Access</html>".utf8), response)
+    }
+
+    private static let localEnvelope = """
+    {
+      "ok": true,
+      "state": {
+        "selectedStyleId": "synthwave",
+        "announceEnabled": true,
+        "promptModel": "llama3.1:8b",
+        "ttsProvider": "openai",
+        "ttsVoice": "nova",
+        "announcementPrefix": "Now playing: ",
+        "announcementSuffix": "",
+        "preferences": {},
+        "currentTrackByStyle": {},
+        "currentTrack": {
+          "id": "track-local",
+          "filename": "local.mp3",
+          "title": "Local Track",
+          "prompt": "instrumental synthwave",
+          "styleId": "synthwave",
+          "announce": true,
+          "createdAt": "2026-05-27T16:00:00.000Z"
+        },
+        "history": [],
+        "updatedAt": "2026-05-27T16:00:00.000Z",
+        "streamReady": true,
+        "queueAheadCount": 0,
+        "queueTarget": 3,
+        "needsQueueFill": false,
+        "streamUrl": "http://localhost:3007/api/radio?stream=1",
+        "lanStreamUrl": "http://192.168.1.50:3007/api/radio?stream=1"
+      }
+    }
+    """
 }

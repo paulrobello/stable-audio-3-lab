@@ -70,8 +70,19 @@ struct RadioAPIClient: RadioActionClient {
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw RadioAPIError.transport
         }
+        if Self.isHTMLResponse(data: data, response: http) {
+            throw RadioAPIError.webLoginPage
+        }
 
         return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    private static func isHTMLResponse(data: Data, response: HTTPURLResponse) -> Bool {
+        if response.value(forHTTPHeaderField: "content-type")?.localizedCaseInsensitiveContains("text/html") == true {
+            return true
+        }
+
+        return data.first(where: { !$0.isASCIIWhitespace }) == Character("<").asciiValue
     }
 }
 
@@ -93,6 +104,7 @@ struct RadioActionResponse: Decodable {
 enum RadioAPIError: Error, Equatable, LocalizedError {
     case server(String)
     case transport
+    case webLoginPage
 
     var errorDescription: String? {
         switch self {
@@ -100,6 +112,14 @@ enum RadioAPIError: Error, Equatable, LocalizedError {
             message
         case .transport:
             "Radio server request failed."
+        case .webLoginPage:
+            "Radio endpoint returned a web page instead of radio state."
         }
+    }
+}
+
+private extension UInt8 {
+    var isASCIIWhitespace: Bool {
+        self == 9 || self == 10 || self == 13 || self == 32
     }
 }

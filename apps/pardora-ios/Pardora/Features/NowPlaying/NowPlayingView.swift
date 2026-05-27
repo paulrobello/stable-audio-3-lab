@@ -29,6 +29,11 @@ struct NowPlayingView: View {
                     Text(status)
                         .font(.callout)
                         .foregroundStyle(PardoraTheme.warning)
+
+                    if status == RadioAppModel.cloudflareVPNMessage {
+                        CloudflareOneButton()
+                            .buttonStyle(.bordered)
+                    }
                 }
             }
             .padding()
@@ -46,39 +51,47 @@ struct NowPlayingView: View {
     }
 
     private var playbackControls: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 14) {
             Button {
                 player.togglePlayback()
             } label: {
                 Label(player.isPlaying ? "Pause" : "Play", systemImage: player.isPlaying ? "pause.fill" : "play.fill")
+                    .frame(width: 66, height: 58)
             }
+            .font(.title2.weight(.semibold))
             .buttonStyle(.borderedProminent)
 
             Button {
                 Task { await model.likeCurrentTrack() }
             } label: {
                 Label("Like", systemImage: "hand.thumbsup.fill")
+                    .frame(width: 58, height: 54)
             }
+            .font(.title3.weight(.semibold))
             .buttonStyle(.bordered)
 
             Button {
                 Task { await model.skipCurrentTrack() }
             } label: {
                 Label("Skip", systemImage: "forward.fill")
+                    .frame(width: 58, height: 54)
             }
+            .font(.title3.weight(.semibold))
             .buttonStyle(.bordered)
 
             Button(role: .destructive) {
                 Task { await model.dislikeCurrentTrack() }
             } label: {
                 Label("Dislike", systemImage: "hand.thumbsdown.fill")
+                    .frame(width: 58, height: 54)
             }
+            .font(.title3.weight(.semibold))
             .buttonStyle(.bordered)
         }
         .labelStyle(.iconOnly)
         .frame(maxWidth: .infinity)
         .padding(.horizontal)
-        .padding(.vertical, 8)
+        .padding(.vertical, 10)
         .background(.bar)
     }
 }

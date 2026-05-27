@@ -35,6 +35,8 @@ struct SettingsView: View {
                 Button("Test Connection") {
                     Task { await model.refresh() }
                 }
+
+                CloudflareOneButton()
             }
 
             Section("Station") {

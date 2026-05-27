@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import Observation
 
 @MainActor
@@ -10,19 +11,27 @@ final class RadioAppModel {
     var isRefreshing = false
     var statusMessage: String?
 
+    static let cloudflareVPNMessage = "Public radio endpoint returned a web login page. If you are remote, enable Cloudflare VPN/WARP, then try again."
+
     private var client: RadioAPIClient
     private var actionClient: RadioActionClient?
+    private let transport: RadioTransport
     private let localIPv4Addresses: @Sendable () -> [String]
+    private var networkMonitor: NWPathMonitor?
+    private let networkQueue = DispatchQueue(label: "net.pardev.pardora.network-monitor")
+    private var lastNetworkSignature: String?
 
     init(
         serverOrigin: String = RadioEndpointResolver.defaultPublicOrigin,
         endpointMode: RadioEndpointMode = .auto,
+        transport: RadioTransport = URLSession.shared,
         actionClient: RadioActionClient? = nil,
         localIPv4Addresses: @escaping @Sendable () -> [String] = RadioEndpointResolver.localIPv4Addresses
     ) {
         self.serverOrigin = serverOrigin
         self.endpointMode = endpointMode
-        client = RadioAPIClient(baseURL: URL(string: serverOrigin)!)
+        self.transport = transport
+        client = RadioAPIClient(baseURL: URL(string: serverOrigin)!, transport: transport)
         self.actionClient = actionClient
         self.localIPv4Addresses = localIPv4Addresses
     }
@@ -84,23 +93,69 @@ final class RadioAppModel {
         updateClient()
     }
 
-    func refresh() async {
-        guard let baseURL = URL(string: serverOrigin) else {
-            statusMessage = "Enter a valid radio server URL."
+    func startNetworkMonitoring() {
+        guard networkMonitor == nil else {
             return
         }
 
-        client = RadioAPIClient(baseURL: baseURL)
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            Task { @MainActor [weak self] in
+                await self?.networkPathDidChange(path)
+            }
+        }
+        networkMonitor = monitor
+        monitor.start(queue: networkQueue)
+    }
+
+    func stopNetworkMonitoring() {
+        networkMonitor?.cancel()
+        networkMonitor = nil
+        lastNetworkSignature = nil
+    }
+
+    func networkPathDidChange(_ path: NWPath? = nil) async {
+        if let path {
+            let signature = networkSignature(for: path)
+            guard signature != lastNetworkSignature else {
+                return
+            }
+            lastNetworkSignature = signature
+        }
+
+        guard endpointMode == .auto else {
+            return
+        }
+
+        applyEndpointMode()
+        await refresh()
+    }
+
+    func refresh() async {
         isRefreshing = true
         defer { isRefreshing = false }
 
-        do {
-            state = try await client.fetchState()
-            applyEndpointMode()
-            statusMessage = nil
-        } catch {
-            statusMessage = error.localizedDescription
+        var lastError: Error?
+        for origin in refreshCandidateOrigins {
+            guard let baseURL = URL(string: origin) else {
+                lastError = RadioAPIError.server("Enter a valid radio server URL.")
+                continue
+            }
+
+            client = RadioAPIClient(baseURL: baseURL, transport: transport)
+
+            do {
+                state = try await client.fetchState()
+                serverOrigin = origin
+                applyEndpointMode()
+                statusMessage = nil
+                return
+            } catch {
+                lastError = error
+            }
         }
+
+        statusMessage = statusMessage(for: lastError)
     }
 
     func post(_ payload: RadioActionPayload) async {
@@ -166,11 +221,50 @@ final class RadioAppModel {
         RadioEndpointResolver.streamURL(from: state?.lanStreamUrl, relativeTo: serverOrigin)
     }
 
+    private var refreshCandidateOrigins: [String] {
+        let origins: [String]
+        switch endpointMode {
+        case .auto:
+            origins = [serverOrigin, RadioEndpointResolver.defaultLocalOrigin]
+        case .publicInternet:
+            origins = [publicServerOrigin]
+        case .local:
+            origins = [localServerOrigin, RadioEndpointResolver.defaultLocalOrigin].compactMap(\.self)
+        case .custom:
+            origins = [serverOrigin]
+        }
+
+        return origins.reduce(into: []) { uniqueOrigins, origin in
+            if !uniqueOrigins.contains(origin) {
+                uniqueOrigins.append(origin)
+            }
+        }
+    }
+
     private func updateClient() {
         guard let baseURL = URL(string: serverOrigin) else {
             return
         }
 
-        client = RadioAPIClient(baseURL: baseURL)
+        client = RadioAPIClient(baseURL: baseURL, transport: transport)
+    }
+
+    private func networkSignature(for path: NWPath) -> String {
+        [
+            String(describing: path.status),
+            path.usesInterfaceType(.wifi) ? "wifi" : "no-wifi",
+            path.usesInterfaceType(.wiredEthernet) ? "wired" : "no-wired",
+            path.usesInterfaceType(.cellular) ? "cellular" : "no-cellular",
+            path.isExpensive ? "expensive" : "not-expensive",
+            path.isConstrained ? "constrained" : "not-constrained",
+        ].joined(separator: "|")
+    }
+
+    private func statusMessage(for error: Error?) -> String {
+        if endpointMode == .publicInternet, error as? RadioAPIError == .webLoginPage {
+            return Self.cloudflareVPNMessage
+        }
+
+        return error?.localizedDescription ?? "Radio state unavailable."
     }
 }

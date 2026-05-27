@@ -54,6 +54,7 @@ struct AppRootView: View {
         }
         .tint(PardoraTheme.accent)
         .task {
+            model.startNetworkMonitoring()
             await model.refresh()
         }
     }
