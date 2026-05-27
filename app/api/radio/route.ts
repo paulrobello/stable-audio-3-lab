@@ -8,6 +8,7 @@ import {
   advanceRadioCurrentTrack,
   buildRadioPlaylistUrls,
   buildRadioPromptGeneratorMessages,
+  buildRadioTasteDistillationPrompt,
   buildRadioLanStreamUrl,
   buildRadioPublicStreamUrl,
   buildRadioStreamState,
@@ -23,6 +24,7 @@ import {
   normalizeOllamaPromptModel,
   normalizeRadioTtsConfig,
   normalizeRadioStyleId,
+  normalizeRadioStyleUrlParam,
   parseRadioPromptDraft,
   recordRadioRating,
   removeRadioTracksFromLineup,
@@ -35,6 +37,8 @@ import {
   selectRadioStyle,
   selectRadioTrack,
   getRadioTtsVoiceOptions,
+  updateRadioTasteProfile,
+  type RadioTasteProfileInput,
   type RadioTtsVoiceOption,
   type RadioPlaylistFormat,
   type RadioPromptProvider,
@@ -76,6 +80,7 @@ export async function GET(request: NextRequest) {
         icyMetadataEnabled: forceIcyMetadata || request.headers.get("icy-metadata") === "1",
         metadataOnly: forceIcyMetadata || request.nextUrl.searchParams.get("metadataOnly") === "1",
         skipAnnouncement: request.nextUrl.searchParams.get("skipAnnouncement") === "1",
+        styleId: radioStyleQueryParam(request),
       });
     }
     const promptModels = await listOllamaPromptModels();
@@ -185,7 +190,7 @@ export async function POST(request: NextRequest) {
       const ratedState = recordRadioRating(state, styleId, phrase, body.rating);
       const rejectResult = body.rating === "down" ? rejectCurrentRadioTrack(ratedState) : { state: ratedState, rejectedTrack: undefined };
       if (rejectResult.rejectedTrack) await removeRejectedTrackAudio(rejectResult.rejectedTrack);
-      const nextState = rejectResult.state;
+      const nextState = await distillRadioTasteIfPossible(rejectResult.state, styleId);
       await writeRadioState(nextState);
       return NextResponse.json({ ok: true, rejectedTrack: rejectResult.rejectedTrack, state: buildRadioResponseState(nextState, request) });
     }
@@ -304,10 +309,10 @@ function ollamaTagsUrl() {
   return new URL("/api/tags", baseUrl).toString();
 }
 
-async function streamCurrentTrack(state: RadioState, options: { icyMetadataEnabled?: boolean; metadataOnly?: boolean; skipAnnouncement?: boolean } = {}) {
+async function streamCurrentTrack(state: RadioState, options: { icyMetadataEnabled?: boolean; metadataOnly?: boolean; skipAnnouncement?: boolean; styleId?: ReturnType<typeof normalizeRadioStyleUrlParam> } = {}) {
   const icyMetadataEnabled = options.icyMetadataEnabled ?? false;
   const skipAnnouncementAudio = options.skipAnnouncement || options.metadataOnly;
-  let streamState = state;
+  let streamState = resolveStreamStyleState(state, options.styleId);
   let pendingFilenames: string[] = [];
   let pendingTrack: RadioTrackRecord | undefined;
   let activeAudio: Uint8Array | undefined;
@@ -322,7 +327,7 @@ async function streamCurrentTrack(state: RadioState, options: { icyMetadataEnabl
       while (true) {
         if (activeAudio && activeFilename) {
           if (pendingTrack) {
-            const latestState = await readRadioState();
+            const latestState = resolveStreamStyleState(await readRadioState(), options.styleId);
             if (latestState.currentTrack?.filename !== pendingTrack.filename) {
               streamState = latestState;
               pendingFilenames = [];
@@ -349,7 +354,7 @@ async function streamCurrentTrack(state: RadioState, options: { icyMetadataEnabl
             activeFileStarted = false;
           }
           if (finishedFilename && pendingTrack && finishedFilename === pendingTrack.filename && pendingFilenames.length === 0) {
-            streamState = await advanceStreamStateAfterTrack(pendingTrack);
+            streamState = await advanceStreamStateAfterTrack(pendingTrack, options.styleId);
             completedTrackFilename = streamState.currentTrack?.filename === pendingTrack.filename ? pendingTrack.filename : undefined;
             pendingTrack = undefined;
           }
@@ -367,12 +372,12 @@ async function streamCurrentTrack(state: RadioState, options: { icyMetadataEnabl
 
         if (!pendingFilenames.length) {
           if (pendingTrack) {
-            streamState = await advanceStreamStateAfterTrack(pendingTrack);
+            streamState = await advanceStreamStateAfterTrack(pendingTrack, options.styleId);
             completedTrackFilename = streamState.currentTrack?.filename === pendingTrack.filename ? pendingTrack.filename : undefined;
             pendingTrack = undefined;
           }
 
-          streamState = await readRadioState();
+          streamState = resolveStreamStyleState(await readRadioState(), options.styleId);
           if (completedTrackFilename && streamState.currentTrack?.filename === completedTrackFilename) {
             const advanced = advanceRadioCurrentTrack(streamState);
             if (advanced.currentTrack?.filename !== streamState.currentTrack?.filename) {
@@ -438,7 +443,7 @@ async function streamCurrentTrack(state: RadioState, options: { icyMetadataEnabl
     "connection": "keep-alive",
     "x-accel-buffering": "no",
     "icy-name": "Stable Audio 3 Lab Radio",
-    "icy-description": state.currentTrack?.title ?? "AI-generated local radio",
+    "icy-description": streamState.currentTrack?.title ?? "AI-generated local radio",
   };
   if (icyMetadataEnabled) headers["icy-metaint"] = String(RADIO_STREAM_ICY_META_INTERVAL);
 
@@ -492,12 +497,124 @@ async function readRadioStreamSegment(filePaths: string[]) {
   }
 }
 
-async function advanceStreamStateAfterTrack(track: RadioTrackRecord) {
-  const latestState = await readRadioState();
+async function advanceStreamStateAfterTrack(track: RadioTrackRecord, styleId: ReturnType<typeof normalizeRadioStyleUrlParam>) {
+  const latestState = resolveStreamStyleState(await readRadioState(), styleId);
   if (latestState.currentTrack?.filename !== track.filename) return latestState;
   const advanced = advanceRadioCurrentTrack(latestState);
   if (advanced.currentTrack?.filename !== latestState.currentTrack?.filename) await writeRadioState(advanced);
   return advanced;
+}
+
+function radioStyleQueryParam(request: NextRequest) {
+  return normalizeRadioStyleUrlParam(request.nextUrl.searchParams.get("style") ?? request.nextUrl.searchParams.get("styleId"));
+}
+
+function resolveStreamStyleState(state: RadioState, styleId: ReturnType<typeof normalizeRadioStyleUrlParam>) {
+  return styleId ? normalizeRadioState({ ...state, selectedStyleId: styleId }) : state;
+}
+
+async function distillRadioTasteIfPossible(state: RadioState, styleId: ReturnType<typeof normalizeRadioStyleId>) {
+  const preference = state.preferences[styleId];
+  if (!preference || preference.likes.length + preference.dislikes.length === 0) return state;
+  try {
+    const model = normalizeCodexTasteModel(process.env.RADIO_CODEX_TASTE_MODEL);
+    const profile = await runCodexTasteDistillation(state, styleId, model);
+    return profile ? updateRadioTasteProfile(state, styleId, profile, model) : state;
+  } catch {
+    return state;
+  }
+}
+
+async function runCodexTasteDistillation(state: RadioState, styleId: ReturnType<typeof normalizeRadioStyleId>, model: string): Promise<RadioTasteProfileInput | undefined> {
+  const stateDir = path.dirname(statePath());
+  await mkdir(stateDir, { recursive: true });
+  const outputPath = path.join(stateDir, `codex-taste-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`);
+  const prompt = buildRadioTasteDistillationPrompt(state, styleId);
+  try {
+    await runCodexCli(prompt, outputPath, model);
+    return parseCodexTasteProfile(await readFile(outputPath, "utf8"));
+  } finally {
+    await unlink(outputPath).catch((error: unknown) => {
+      if (!isNotFoundError(error)) throw error;
+    });
+  }
+}
+
+function runCodexCli(prompt: string, outputPath: string, model: string) {
+  const codexBin = process.env.RADIO_CODEX_BIN || "codex";
+  const timeoutMs = Number(process.env.RADIO_CODEX_TASTE_TIMEOUT_MS || 120000);
+  const args = [
+    "exec",
+    "-m",
+    model,
+    "--cd",
+    process.cwd(),
+    "--sandbox",
+    "read-only",
+    "--ask-for-approval",
+    "never",
+    "--ephemeral",
+    "--ignore-rules",
+    "-o",
+    outputPath,
+    "-",
+  ];
+
+  return new Promise<void>((resolve, reject) => {
+    const child = spawn(codexBin, args, { cwd: process.cwd(), stdio: ["pipe", "ignore", "pipe"] });
+    const stderr: Buffer[] = [];
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+    }, Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 120000);
+
+    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+    child.on("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      if (timedOut) {
+        reject(new Error("Codex taste distillation timed out"));
+        return;
+      }
+      if (code === 0) resolve();
+      else reject(new Error(`Codex taste distillation failed: ${Buffer.concat(stderr).toString("utf8").trim()}`));
+    });
+    child.stdin.end(prompt);
+  });
+}
+
+function parseCodexTasteProfile(value: string): RadioTasteProfileInput | undefined {
+  const parsed = JSON.parse(extractJsonObject(value)) as Record<string, unknown>;
+  const profile = {
+    likedTraits: readTasteArray(parsed, "likedTraits"),
+    dislikedTraits: readTasteArray(parsed, "dislikedTraits"),
+    promptDirectives: readTasteArray(parsed, "promptDirectives"),
+    negativePromptDirectives: readTasteArray(parsed, "negativePromptDirectives"),
+    explorationNotes: readTasteArray(parsed, "explorationNotes"),
+  };
+  return Object.values(profile).some((values) => values.length > 0) ? profile : undefined;
+}
+
+function readTasteArray(record: Record<string, unknown>, key: string) {
+  const value = record[key];
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function normalizeCodexTasteModel(value: unknown) {
+  if (typeof value !== "string") return "gpt-5.5";
+  const model = value.trim();
+  return model && model.length <= 80 && !/[\s"'<>]/.test(model) ? model : "gpt-5.5";
+}
+
+function extractJsonObject(value: string) {
+  const start = value.indexOf("{");
+  const end = value.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) return value;
+  return value.slice(start, end + 1);
 }
 
 async function prepareTrackForStreamPlayback(track: RadioTrackRecord, state: RadioState) {

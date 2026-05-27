@@ -3,11 +3,13 @@ import {
   buildRadioPlaylistContent,
   buildRadioPublicStreamUrl,
   buildRadioTuneInStreamUrl,
+  normalizeRadioStyleUrlParam,
   type RadioPlaylistFormat,
 } from "@/lib/radio";
 
 export function buildRadioPlaylistRouteResponse(format: RadioPlaylistFormat, request: NextRequest) {
-  const streamUrl = buildRadioPublicStreamUrl(resolvePublicRadioOrigin(request));
+  const styleId = normalizeRadioStyleUrlParam(request.nextUrl.searchParams.get("style") ?? request.nextUrl.searchParams.get("styleId"));
+  const streamUrl = buildRadioPublicStreamUrl(resolvePublicRadioOrigin(request), styleId);
   if (!streamUrl) {
     return NextResponse.json({ ok: false, error: "Radio playlist origin is unavailable" }, { status: 400 });
   }

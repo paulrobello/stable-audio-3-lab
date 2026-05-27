@@ -14,6 +14,8 @@ const originalDeepgramShortApiKey = process.env.DG_API_KEY;
 const originalParTtsConfigPath = process.env.PAR_TTS_CONFIG_PATH;
 const originalRadioTtsModulePath = process.env.RADIO_TTS_MODULE_PATH;
 const originalFfmpegPath = process.env.FFMPEG_PATH;
+const originalPathEnv = process.env.PATH;
+const originalRadioCodexTasteModel = process.env.RADIO_CODEX_TASTE_MODEL;
 let tempCwd: string | undefined;
 const icyMetaInterval = 24_000;
 
@@ -34,6 +36,10 @@ describe("radio stream route", () => {
     else process.env.RADIO_TTS_MODULE_PATH = originalRadioTtsModulePath;
     if (originalFfmpegPath === undefined) delete process.env.FFMPEG_PATH;
     else process.env.FFMPEG_PATH = originalFfmpegPath;
+    if (originalPathEnv === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPathEnv;
+    if (originalRadioCodexTasteModel === undefined) delete process.env.RADIO_CODEX_TASTE_MODEL;
+    else process.env.RADIO_CODEX_TASTE_MODEL = originalRadioCodexTasteModel;
     if (tempCwd) {
       await rm(tempCwd, { recursive: true, force: true });
       tempCwd = undefined;
@@ -121,6 +127,38 @@ describe("radio stream route", () => {
     await reader!.cancel();
   }, 5000);
 
+  it("streams the current track for the requested style query", async () => {
+    tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
+    process.chdir(tempCwd);
+    const outputDir = path.join(tempCwd, "public", "outputs");
+    const stateFile = path.join(tempCwd, ".stable-audio-radio", "state.json");
+    await mkdir(outputDir, { recursive: true });
+    await mkdir(path.dirname(stateFile), { recursive: true });
+    await writeFile(path.join(outputDir, "synth_current.mp3"), Buffer.from("synth-audio"));
+    await writeFile(path.join(outputDir, "ambient_current.mp3"), Buffer.from("ambient-audio"));
+    const synthCurrent = createRadioTrackRecord({ filename: "synth_current.mp3", title: "Synth Current", prompt: "synth", styleId: "synthwave", announce: false });
+    const ambientCurrent = createRadioTrackRecord({ filename: "ambient_current.mp3", title: "Ambient Current", prompt: "ambient", styleId: "ambient", announce: false });
+    await writeFile(stateFile, JSON.stringify({
+      ...defaultRadioState(),
+      announceEnabled: false,
+      selectedStyleId: "synthwave",
+      currentTrack: synthCurrent,
+      currentTrackByStyle: {
+        synthwave: synthCurrent.filename,
+        ambient: ambientCurrent.filename,
+      },
+      history: [synthCurrent, ambientCurrent],
+    }, null, 2));
+
+    const response = await GET(new NextRequest("http://localhost:3007/api/radio?stream=1&style=ambient"));
+    const reader = response.body?.getReader();
+    expect(reader).toBeTruthy();
+    const first = await reader!.read();
+
+    expect(Buffer.from(first.value ?? []).toString()).toBe("ambient-audio");
+    await reader!.cancel();
+  }, 5000);
+
   it("serves TuneIn-friendly m3u and pls playlist files without changing the stream URL", async () => {
     const m3uResponse = await GET(new NextRequest("https://radio.pardev.net/api/radio?playlist=m3u", {
       headers: { host: "radio.pardev.net", "x-forwarded-proto": "https" },
@@ -133,6 +171,71 @@ describe("radio stream route", () => {
     expect(await m3uResponse.text()).toContain("https://radio.pardev.net/api/radio?stream=1&icy=1");
     expect(plsResponse.headers.get("content-type")).toBe("audio/x-scpls; charset=utf-8");
     expect(await plsResponse.text()).toContain("File1=http://192.168.1.50:3007/api/radio?stream=1&icy=1");
+  });
+
+  it("distills thumbs into the rated style taste profile with Codex CLI gpt-5.5", async () => {
+    tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
+    process.chdir(tempCwd);
+    const stateFile = path.join(tempCwd, ".stable-audio-radio", "state.json");
+    const codexPath = path.join(tempCwd, "codex");
+    await mkdir(path.dirname(stateFile), { recursive: true });
+    await writeFile(codexPath, `#!/bin/sh
+printf '%s\\n' "$@" > codex-args.txt
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    shift
+    out="$1"
+  fi
+  shift || true
+done
+cat > codex-stdin.txt
+printf '%s' '{"likedTraits":["wide neon pads"],"dislikedTraits":["thin supersaw leads"],"promptDirectives":["write a stronger B section"],"negativePromptDirectives":["avoid brittle fizz"],"explorationNotes":["try outrun bass movement"]}' > "$out"
+`);
+    await chmod(codexPath, 0o755);
+    process.env.PATH = `${tempCwd}:${originalPathEnv ?? ""}`;
+    const current = createRadioTrackRecord({
+      filename: "liked.mp3",
+      title: "Liked",
+      prompt: "warm bass with wide neon pads",
+      styleId: "synthwave",
+      announce: false,
+    });
+    await writeFile(stateFile, JSON.stringify({
+      ...defaultRadioState(),
+      currentTrack: current,
+      history: [current],
+      preferences: {
+        ambient: { likes: ["granular cloud drift"], dislikes: [] },
+      },
+    }, null, 2));
+
+    const response = await POST(new NextRequest("http://localhost:3007/api/radio", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "rating", rating: "up", styleId: "synthwave", phrase: current.prompt }),
+    }));
+    const json = await response.json() as { ok: boolean };
+    const saved = JSON.parse(await readFile(stateFile, "utf8")) as {
+      preferences?: {
+        synthwave?: { tasteProfile?: { likedTraits?: string[]; model?: string; provider?: string } };
+        ambient?: { likes?: string[]; tasteProfile?: unknown };
+      };
+    };
+    const args = await readFile(path.join(tempCwd, "codex-args.txt"), "utf8");
+    const stdin = await readFile(path.join(tempCwd, "codex-stdin.txt"), "utf8");
+
+    expect(json.ok).toBe(true);
+    expect(args).toContain("-m\ngpt-5.5");
+    expect(stdin).toContain("Style: Synthwave Night Drive");
+    expect(stdin).toContain("warm bass with wide neon pads");
+    expect(stdin).not.toContain("granular cloud drift");
+    expect(saved.preferences?.synthwave?.tasteProfile).toMatchObject({
+      likedTraits: ["wide neon pads"],
+      model: "gpt-5.5",
+      provider: "codex-cli",
+    });
+    expect(saved.preferences?.ambient).toEqual({ likes: ["granular cloud drift"], dislikes: [] });
   });
 
   it("switches an open stream to the selected current track after a skip", async () => {

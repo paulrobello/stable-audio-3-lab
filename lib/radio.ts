@@ -20,9 +20,27 @@ export type RadioTtsVoiceOption = {
 export type RadioPreference = {
   likes: string[];
   dislikes: string[];
+  tasteProfile?: RadioTasteProfile;
 };
 
 export type RadioQueuePositions = Partial<Record<RadioStyleId, string>>;
+
+export type RadioTasteProfile = {
+  likedTraits: string[];
+  dislikedTraits: string[];
+  promptDirectives: string[];
+  negativePromptDirectives: string[];
+  explorationNotes: string[];
+  updatedAt: string;
+  sourceEventCount: number;
+  provider: "codex-cli";
+  model: string;
+};
+
+export type RadioTasteProfileInput = Partial<Pick<
+  RadioTasteProfile,
+  "likedTraits" | "dislikedTraits" | "promptDirectives" | "negativePromptDirectives" | "explorationNotes"
+>>;
 
 export type RadioPromptDraft = {
   id: string;
@@ -248,6 +266,10 @@ export function normalizeRadioStyleId(value: unknown): RadioStyleId {
   return radioStyles.some((style) => style.id === value) ? value as RadioStyleId : "synthwave";
 }
 
+export function normalizeRadioStyleUrlParam(value: unknown): RadioStyleId | undefined {
+  return radioStyles.some((style) => style.id === value) ? value as RadioStyleId : undefined;
+}
+
 export function normalizeRadioState(input: Partial<RadioState> | undefined): RadioState {
   const parsed = input ?? {};
   const history = Array.isArray(parsed.history) ? parsed.history : [];
@@ -373,6 +395,7 @@ export function recordRadioRating(state: RadioState, styleIdInput: unknown, phra
       ? (removesExistingLike ? previous.likes.filter((item) => item !== phrase) : pushUniqueLimited(previous.likes, phrase, 20))
       : previous.likes.filter((item) => item !== phrase),
     dislikes: rating === "down" ? pushUniqueLimited(previous.dislikes, phrase, 20) : previous.dislikes.filter((item) => item !== phrase),
+    ...(previous.tasteProfile ? { tasteProfile: previous.tasteProfile } : {}),
   };
   const applyRating = (track: RadioTrackRecord) => {
     if (track.filename !== state.currentTrack?.filename) return track;
@@ -398,6 +421,7 @@ export function buildRadioPromptSeed(state: RadioState, styleIdInput: unknown): 
   const preference = state.preferences[styleId];
   const likes = preference?.likes?.length ? `Lean into: ${preference.likes.slice(-6).join("; ")}` : "Lean into: fresh variations within the style.";
   const dislikes = preference?.dislikes?.length ? `Avoid repeating: ${preference.dislikes.slice(-6).join("; ")}` : "Avoid repeating: generic stock music, vocals, and brittle mixes.";
+  const tasteProfile = buildRadioTasteProfileSeed(preference?.tasteProfile);
   const recentTitles = state.history.slice(-8).map((track) => track.title).filter(Boolean);
   const recentPrompts = state.history.slice(-3).map((track) => track.prompt).filter(Boolean);
   const uniqueness = recentTitles.length
@@ -412,10 +436,60 @@ export function buildRadioPromptSeed(state: RadioState, styleIdInput: unknown): 
     `Base direction: ${style.seedPrompt}`,
     likes,
     dislikes,
+    tasteProfile,
     uniqueness,
     recentDirections,
     `Default negative prompt: ${style.negativePrompt}`,
+  ].filter(Boolean).join("\n");
+}
+
+export function buildRadioTasteDistillationPrompt(state: RadioState, styleIdInput: unknown): string {
+  const styleId = normalizeRadioStyleId(styleIdInput);
+  const style = getRadioStyle(styleId);
+  const preference = state.preferences[styleId] ?? { likes: [], dislikes: [] };
+  return [
+    "Distill listener thumbs feedback into a compact Stable Audio 3 music taste profile.",
+    "Use only the selected style feedback below. Do not infer from other station styles.",
+    "Keep each array to at most 6 short, reusable phrases. Avoid copying whole prompts unless a whole phrase is genuinely reusable.",
+    "Return JSON only with these string-array fields: likedTraits, dislikedTraits, promptDirectives, negativePromptDirectives, explorationNotes.",
+    "",
+    `Style: ${style.label}`,
+    `Base direction: ${style.seedPrompt}`,
+    `Default negative prompt: ${style.negativePrompt}`,
+    "",
+    "Thumbs up prompts:",
+    formatThumbsList(preference.likes),
+    "",
+    "Thumbs down prompts:",
+    formatThumbsList(preference.dislikes),
+    "",
+    "Return JSON only.",
   ].join("\n");
+}
+
+export function updateRadioTasteProfile(state: RadioState, styleIdInput: unknown, input: RadioTasteProfileInput, modelInput: unknown, now = new Date().toISOString()): RadioState {
+  const styleId = normalizeRadioStyleId(styleIdInput);
+  const previous = state.preferences[styleId] ?? { likes: [], dislikes: [] };
+  const sourceEventCount = previous.likes.length + previous.dislikes.length;
+  const tasteProfile: RadioTasteProfile = {
+    likedTraits: normalizeTasteProfileList(input.likedTraits),
+    dislikedTraits: normalizeTasteProfileList(input.dislikedTraits),
+    promptDirectives: normalizeTasteProfileList(input.promptDirectives),
+    negativePromptDirectives: normalizeTasteProfileList(input.negativePromptDirectives),
+    explorationNotes: normalizeTasteProfileList(input.explorationNotes),
+    updatedAt: now,
+    sourceEventCount,
+    provider: "codex-cli",
+    model: normalizeCodexTasteModel(modelInput),
+  };
+  return {
+    ...state,
+    preferences: {
+      ...state.preferences,
+      [styleId]: { ...previous, tasteProfile },
+    },
+    updatedAt: nextTimestamp(state.updatedAt),
+  };
 }
 
 export function buildRadioPromptGeneratorMessages(state: RadioState, styleIdInput: unknown, modelInput: unknown) {
@@ -720,14 +794,14 @@ export function buildRadioStreamState(state: RadioState): RadioStreamState {
   };
 }
 
-export function buildRadioLanStreamUrl(lanIp: string | undefined, port: string | number | undefined) {
+export function buildRadioLanStreamUrl(lanIp: string | undefined, port: string | number | undefined, styleIdInput?: unknown) {
   const host = typeof lanIp === "string" ? lanIp.trim() : "";
   if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return undefined;
   const safePort = String(port ?? "3007").replace(/\D/g, "") || "3007";
-  return `http://${host}:${safePort}/api/radio?stream=1`;
+  return appendRadioStyleParam(new URL(`http://${host}:${safePort}/api/radio?stream=1`), styleIdInput);
 }
 
-export function buildRadioPublicStreamUrl(origin: string | undefined) {
+export function buildRadioPublicStreamUrl(origin: string | undefined, styleIdInput?: unknown) {
   const trimmed = typeof origin === "string" ? origin.trim() : "";
   if (!trimmed) return undefined;
   try {
@@ -736,15 +810,15 @@ export function buildRadioPublicStreamUrl(origin: string | undefined) {
     url.pathname = "/api/radio";
     url.search = "stream=1";
     url.hash = "";
-    return url.toString();
+    return appendRadioStyleParam(url, styleIdInput);
   } catch {
     return undefined;
   }
 }
 
-export function buildRadioPlaylistUrls(origin: string | undefined): RadioPlaylistUrls | undefined {
-  const m3u = buildRadioRootUrl(origin, "/radio.m3u");
-  const pls = buildRadioRootUrl(origin, "/radio.pls");
+export function buildRadioPlaylistUrls(origin: string | undefined, styleIdInput?: unknown): RadioPlaylistUrls | undefined {
+  const m3u = buildRadioRootUrl(origin, "/radio.m3u", styleIdInput);
+  const pls = buildRadioRootUrl(origin, "/radio.pls", styleIdInput);
   return m3u && pls ? { m3u, pls } : undefined;
 }
 
@@ -774,7 +848,7 @@ export function buildRadioPlaylistContent(format: RadioPlaylistFormat, streamUrl
   ].join("\n");
 }
 
-function buildRadioRootUrl(origin: string | undefined, pathname: string) {
+function buildRadioRootUrl(origin: string | undefined, pathname: string, styleIdInput?: unknown) {
   const trimmed = typeof origin === "string" ? origin.trim() : "";
   if (!trimmed) return undefined;
   try {
@@ -783,10 +857,16 @@ function buildRadioRootUrl(origin: string | undefined, pathname: string) {
     url.pathname = pathname;
     url.search = "";
     url.hash = "";
-    return url.toString();
+    return appendRadioStyleParam(url, styleIdInput);
   } catch {
     return undefined;
   }
+}
+
+function appendRadioStyleParam(url: URL, styleIdInput: unknown) {
+  const styleId = normalizeRadioStyleUrlParam(styleIdInput);
+  if (styleId) url.searchParams.set("style", styleId);
+  return url.toString();
 }
 
 export function readRadioEnvFileValue(contents: string, key: string) {
@@ -878,6 +958,40 @@ function isRadioMp3Track(track: RadioTrackRecord) {
 
 function pushUniqueLimited(values: string[], value: string, limit: number) {
   return [...values.filter((item) => item !== value), value].slice(-limit);
+}
+
+function buildRadioTasteProfileSeed(profile: RadioTasteProfile | undefined) {
+  if (!profile) return "";
+  const lines = [
+    formatTasteProfileLine("Liked traits", profile.likedTraits),
+    formatTasteProfileLine("Disliked traits", profile.dislikedTraits),
+    formatTasteProfileLine("Prompt directives", profile.promptDirectives),
+    formatTasteProfileLine("Negative prompt directives", profile.negativePromptDirectives),
+    formatTasteProfileLine("Exploration notes", profile.explorationNotes),
+  ].filter(Boolean);
+  return lines.length ? ["Distilled listener taste:", ...lines].join("\n") : "";
+}
+
+function formatTasteProfileLine(label: string, values: string[]) {
+  return values.length ? `${label}: ${values.join("; ")}` : "";
+}
+
+function formatThumbsList(values: string[]) {
+  return values.length ? values.slice(-12).map((value) => `- ${value}`).join("\n") : "- none";
+}
+
+function normalizeTasteProfileList(values: unknown) {
+  if (!Array.isArray(values)) return [];
+  return values
+    .map((value) => typeof value === "string" ? cleanShortText(value, "", 120) : "")
+    .filter(Boolean)
+    .slice(0, 6);
+}
+
+function normalizeCodexTasteModel(value: unknown) {
+  if (typeof value !== "string") return "gpt-5.5";
+  const model = value.trim();
+  return model && model.length <= 80 && !/["'<>]/.test(model) ? model : "gpt-5.5";
 }
 
 function nextTimestamp(previous: string) {

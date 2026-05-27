@@ -7,6 +7,7 @@ import {
   buildRadioPublicStreamUrl,
   buildRadioPromptGeneratorMessages,
   buildRadioPromptSeed,
+  buildRadioTasteDistillationPrompt,
   buildRadioLanStreamUrl,
   buildRadioStreamState,
   buildRadioTrackPlaybackFilenames,
@@ -32,6 +33,7 @@ import {
   recordRadioRating,
   selectRadioTrack,
   shouldGenerateRadioQueueTrack,
+  updateRadioTasteProfile,
 } from "./radio";
 
 describe("radio station styles", () => {
@@ -53,6 +55,93 @@ describe("radio station styles", () => {
     expect(seed).toContain("Style: Synthwave Night Drive");
     expect(seed).toContain("Lean into: warm analog bass");
     expect(seed).toContain("Avoid repeating: harsh compressed drums");
+  });
+
+  it("uses only the selected style distilled taste profile in prompt seeds", () => {
+    const state = {
+      ...defaultRadioState(),
+      preferences: {
+        synthwave: {
+          likes: ["warm analog bass"],
+          dislikes: ["harsh cymbals"],
+          tasteProfile: {
+            likedTraits: ["wide neon pads", "clean gated snares"],
+            dislikedTraits: ["thin supersaw leads"],
+            promptDirectives: ["write a night-drive hook with a stronger B section"],
+            negativePromptDirectives: ["avoid brittle top-end fizz"],
+            explorationNotes: ["try adjacent outrun bass movement"],
+            updatedAt: "2026-05-26T12:00:00.000Z",
+            sourceEventCount: 2,
+            provider: "codex-cli",
+            model: "gpt-5.5",
+          },
+        },
+        ambient: {
+          likes: ["soft tape drift"],
+          dislikes: [],
+          tasteProfile: {
+            likedTraits: ["granular clouds"],
+            dislikedTraits: [],
+            promptDirectives: ["make it beatless"],
+            negativePromptDirectives: [],
+            explorationNotes: [],
+            updatedAt: "2026-05-26T12:00:00.000Z",
+            sourceEventCount: 1,
+            provider: "codex-cli",
+            model: "gpt-5.5",
+          },
+        },
+      },
+    } satisfies ReturnType<typeof defaultRadioState>;
+
+    const seed = buildRadioPromptSeed(state, "synthwave");
+
+    expect(seed).toContain("Distilled listener taste:");
+    expect(seed).toContain("Liked traits: wide neon pads; clean gated snares");
+    expect(seed).toContain("Prompt directives: write a night-drive hook with a stronger B section");
+    expect(seed).toContain("Negative prompt directives: avoid brittle top-end fizz");
+    expect(seed).not.toContain("granular clouds");
+  });
+
+  it("builds a Codex CLI prompt from style-only thumbs feedback", () => {
+    const state = recordRadioRating(
+      recordRadioRating(defaultRadioState(), "lofi", "dusty rhodes chords and soft tape wobble", "up"),
+      "lofi",
+      "thin hi hats and harsh clipping",
+      "down",
+    );
+
+    const prompt = buildRadioTasteDistillationPrompt(state, "lofi");
+
+    expect(prompt).toContain("Style: Lofi Study Loop");
+    expect(prompt).toContain("Thumbs up prompts:");
+    expect(prompt).toContain("dusty rhodes chords and soft tape wobble");
+    expect(prompt).toContain("Thumbs down prompts:");
+    expect(prompt).toContain("thin hi hats and harsh clipping");
+    expect(prompt).toContain("Return JSON only");
+  });
+
+  it("updates a single style taste profile without changing other style memories", () => {
+    const state = recordRadioRating(defaultRadioState(), "ambient", "slow soft pads", "up");
+    const updated = updateRadioTasteProfile(state, "synthwave", {
+      likedTraits: ["analog bass"],
+      dislikedTraits: ["muddy kick"],
+      promptDirectives: ["add a clearer chorus"],
+      negativePromptDirectives: ["avoid over-compression"],
+      explorationNotes: ["try brighter arps"],
+    }, "gpt-5.5", "2026-05-26T12:00:00.000Z");
+
+    expect(updated.preferences.ambient?.likes).toEqual(["slow soft pads"]);
+    expect(updated.preferences.synthwave?.tasteProfile).toMatchObject({
+      likedTraits: ["analog bass"],
+      dislikedTraits: ["muddy kick"],
+      promptDirectives: ["add a clearer chorus"],
+      negativePromptDirectives: ["avoid over-compression"],
+      explorationNotes: ["try brighter arps"],
+      provider: "codex-cli",
+      model: "gpt-5.5",
+      sourceEventCount: 0,
+    });
   });
 
   it("keeps prompt generation scoped to local Ollama 8B-30B model experiments", () => {
@@ -295,6 +384,7 @@ describe("radio stream state", () => {
   it("builds a public stream URL for Cloudflare tunnel clients", () => {
     expect(buildRadioPublicStreamUrl("https://radio.pardev.net")).toBe("https://radio.pardev.net/api/radio?stream=1");
     expect(buildRadioPublicStreamUrl("https://radio.pardev.net/radio")).toBe("https://radio.pardev.net/api/radio?stream=1");
+    expect(buildRadioPublicStreamUrl("https://radio.pardev.net", "ambient")).toBe("https://radio.pardev.net/api/radio?stream=1&style=ambient");
     expect(buildRadioPublicStreamUrl("ftp://radio.pardev.net")).toBeUndefined();
   });
 
@@ -306,6 +396,10 @@ describe("radio stream state", () => {
     expect(buildRadioPlaylistUrls("http://192.168.1.50:3007/radio")).toEqual({
       m3u: "http://192.168.1.50:3007/radio.m3u",
       pls: "http://192.168.1.50:3007/radio.pls",
+    });
+    expect(buildRadioPlaylistUrls("https://radio.pardev.net", "ambient")).toEqual({
+      m3u: "https://radio.pardev.net/radio.m3u?style=ambient",
+      pls: "https://radio.pardev.net/radio.pls?style=ambient",
     });
     expect(buildRadioPlaylistUrls("ftp://radio.pardev.net")).toBeUndefined();
     expect(buildRadioPublicStreamUrl("https://radio.pardev.net")).toBe("https://radio.pardev.net/api/radio?stream=1");
