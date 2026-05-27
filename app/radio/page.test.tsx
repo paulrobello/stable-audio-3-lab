@@ -306,10 +306,10 @@ describe("radio page loading", () => {
     });
 
     expect(fetchMock.mock.calls.filter(([_url, init]) => !init?.method).length).toBeGreaterThanOrEqual(2);
-    expect(fetchMock.mock.calls.some(([_url, init]) => typeof init?.body === "string" && init.body.includes('"action":"cleanup"'))).toBe(true);
+    expect(fetchMock.mock.calls.some(([_url, init]) => typeof init?.body === "string" && init.body.includes('"action":"cleanup"'))).toBe(false);
   });
 
-  it("falls back to a starred library track when queue refill generation fails", async () => {
+  it("leaves queue refill generation to the server", async () => {
     const depletedQueueState = {
       ...radioState,
       currentTrack,
@@ -320,57 +320,17 @@ describe("radio page loading", () => {
       needsQueueFill: true,
       updatedAt: "2026-05-26T12:00:02.000Z",
     };
-    const fallbackTrack = {
-      ...currentTrack,
-      id: "track-library-fallback",
-      filename: "starred_keeper.mp3",
-      title: "Starred Keeper",
-      source: "library-fallback" as const,
-      fallbackReason: "queue_refill_timeout",
-    };
-    const fallbackState = {
-      ...depletedQueueState,
-      history: [currentTrack, fallbackTrack],
-      queueAheadCount: 3,
-      needsQueueFill: false,
-      updatedAt: "2026-05-26T12:00:03.000Z",
-    };
-    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      const body = typeof init?.body === "string" ? JSON.parse(init.body) as { action?: string } : {};
-      if (url === "/api/generate") {
-        return { json: async () => ({ ok: false, error: "generation timed out" }) };
-      }
-      if (body.action === "draft") {
-        return {
-          json: async () => ({
-            ok: true,
-            draft: {
-              id: "draft-timeout",
-              title: "Timed Out Render",
-              prompt: "slow prompt",
-              negativePrompt: "noise",
-              styleId: "synthwave",
-              createdAt: "2026-05-26T12:00:02.000Z",
-              promptProvider: "fallback",
-              promptModel: "llama3.1:8b",
-            },
-            state: depletedQueueState,
-          }),
-        };
-      }
-      if (body.action === "fallbackTrack") {
-        return { json: async () => ({ ok: true, fallbackTrack, state: fallbackState }) };
-      }
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => {
       return { json: async () => ({ ok: true, state: depletedQueueState, promptModels: ["qwen3:14b"], cleanedTracks: [] }) };
     });
     vi.stubGlobal("fetch", fetchMock);
 
     render(<RadioStationClient initialState={depletedQueueState} initialPromptModels={["qwen3:14b"]} />);
 
-    await waitFor(() => expect(fetchMock.mock.calls.some(([_url, init]) => typeof init?.body === "string" && init.body.includes('"action":"fallbackTrack"'))).toBe(true));
-    expect(fetchMock.mock.calls.some(([_url, init]) => typeof init?.body === "string" && init.body.includes('"reason":"queue_refill_timeout"'))).toBe(true);
-    await waitFor(() => expect(screen.getByText(/Using starred library fallback/)).toBeTruthy());
-    expect(screen.getAllByText(/Library fallback/).length).toBeGreaterThan(0);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    expect(fetchMock.mock.calls.some((call) => call[0] === "/api/generate")).toBe(false);
+    expect(fetchMock.mock.calls.some(([_url, init]) => typeof init?.body === "string" && init.body.includes('"action":"fallbackTrack"'))).toBe(false);
   });
 
   it("shows song duration and progress for the current track", () => {
@@ -792,6 +752,36 @@ describe("radio page loading", () => {
 
     expect(screen.getByText("Liked Queue Song")).toBeTruthy();
     expect(screen.getAllByText("Thumbs up").length).toBeGreaterThan(0);
+  });
+
+  it("shows created time, age, and file size for radio queue items", () => {
+    vi.useFakeTimers({ now: new Date("2026-05-26T14:05:00.000Z") });
+    const queuedTrack = {
+      ...currentTrack,
+      id: "track-queue-metadata",
+      filename: "queue_metadata_song.mp3",
+      title: "Queue Metadata Song",
+      createdAt: "2026-05-26T12:00:00.000Z",
+      fileSizeBytes: 1_234_567,
+    };
+    const stateWithMetadata = {
+      ...radioState,
+      currentTrack,
+      selectedStyleId: "synthwave" as const,
+      history: [currentTrack, queuedTrack],
+      streamReady: true,
+      streamUrl: "/api/radio?stream=1",
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      json: async () => ({ ok: true, state: stateWithMetadata, promptModels: ["qwen3:14b"], cleanedTracks: [] }),
+    }));
+
+    const { container } = render(<RadioStationClient initialState={stateWithMetadata} initialPromptModels={["qwen3:14b"]} />);
+
+    expect(screen.getByText("Queue Metadata Song")).toBeTruthy();
+    expect(container.querySelector('time[dateTime="2026-05-26T12:00:00.000Z"]')).toBeTruthy();
+    expect(screen.getAllByText(/2 hours old/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/1.2 MB/).length).toBeGreaterThan(0);
   });
 
   it("indicates when the current song is already liked", () => {

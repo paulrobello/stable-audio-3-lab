@@ -68,6 +68,7 @@ export type RadioTrackRecord = {
   fallbackReason?: string;
   announcementFilename?: string;
   durationSeconds?: number;
+  fileSizeBytes?: number;
   rating?: RadioRating;
   ratedAt?: string;
 };
@@ -667,6 +668,7 @@ export function createRadioTrackRecord({
   fallbackReason,
   announcementFilename,
   durationSeconds,
+  fileSizeBytes,
 }: {
   filename: string;
   title: string;
@@ -679,6 +681,7 @@ export function createRadioTrackRecord({
   fallbackReason?: string;
   announcementFilename?: string;
   durationSeconds?: number;
+  fileSizeBytes?: number;
 }): RadioTrackRecord {
   const createdAt = new Date().toISOString();
   return {
@@ -695,6 +698,7 @@ export function createRadioTrackRecord({
     ...(fallbackReason ? { fallbackReason: cleanShortText(fallbackReason, "fallback", 120) } : {}),
     ...(announcementFilename ? { announcementFilename } : {}),
     ...(durationSeconds && Number.isFinite(durationSeconds) ? { durationSeconds: Math.max(1, Math.min(Math.round(durationSeconds), 3600)) } : {}),
+    ...(fileSizeBytes && Number.isFinite(fileSizeBytes) ? { fileSizeBytes: Math.max(1, Math.round(fileSizeBytes)) } : {}),
   };
 }
 

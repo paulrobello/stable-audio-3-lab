@@ -1,0 +1,724 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0E30C689B0F63A12AE922629 /* RadioPlayerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB500BF222D3876F0A672183 /* RadioPlayerTests.swift */; };
+		1245B5D51B29B44E9A2B67E7 /* RadioEndpointResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CC3EFBB608E4ADC4B9F6EE1 /* RadioEndpointResolver.swift */; };
+		1254C67E846F54FAE28AD356 /* ActivityKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 12FA69A23ACF3AB892200908 /* ActivityKit.framework */; };
+		19997BA3FA652DC304E61A90 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 18E62E6B7064E4E822433F6E /* Assets.xcassets */; };
+		26A4053F2055BBFFC8B76BE6 /* CloudflareOneApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB4A92B39E4FB984D3698E01 /* CloudflareOneApp.swift */; };
+		307DF81E9B2A6CFFB32EAC6F /* RadioAPIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B5E1918683A7065423DB90B /* RadioAPIClientTests.swift */; };
+		372E7419B9AAF560BC99E656 /* PardoraSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E450DA60541D6E4BC3DA859 /* PardoraSettings.swift */; };
+		379D754617397768AB7BB2A5 /* PardoraApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08372637BE5403229D4E0EF6 /* PardoraApp.swift */; };
+		430F7B35AE418180545A7037 /* PardoraLiveActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFC009390CAA7F24CCF8AA64 /* PardoraLiveActivityWidget.swift */; };
+		47B5AFCB2A7C38288B4B591A /* AppRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23BD467777D391EB06DF855E /* AppRootView.swift */; };
+		4986FF208E3E8933EAAB9361 /* RadioAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F9FFA84DD252960323EA8D /* RadioAppModel.swift */; };
+		4CAF4D72A14DACD2A168ED12 /* RadioPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E4F9A7ABC4DB8DB6CCB028C /* RadioPlayer.swift */; };
+		5495061E41D686AF3D885E27 /* RadioModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A1D662F0C2BBA84572B9C4C /* RadioModels.swift */; };
+		5CCCB9F64DB087F8F9D9626E /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D64136BBA73EB7D1753A8F07 /* WidgetKit.framework */; };
+		5EDFFBCBE3E866A5292595D6 /* MemoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83BBE6D955A979784C28F72E /* MemoryView.swift */; };
+		647F72C22A24E8D1C93E0F1B /* PardoraActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 334FC8DBEACABE845F084D81 /* PardoraActivityAttributes.swift */; };
+		6A97435FACB40B638FAA62D8 /* PardoraActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 334FC8DBEACABE845F084D81 /* PardoraActivityAttributes.swift */; };
+		7DA669897911A68CF9C1000B /* PardoraLiveActivityController.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACD53D2DF7897C7027C23F76 /* PardoraLiveActivityController.swift */; };
+		8C0FD5E9AF8FDA46891AD166 /* NowPlayingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6D4FDA64E77E467D2980C9E /* NowPlayingView.swift */; };
+		904F22FD8477C1451A6EA553 /* RadioAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761670DD56C97F39DE70353F /* RadioAPIClient.swift */; };
+		942AD844711B208DFE8E68BA /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32D4A2488E0485950AC9CD79 /* SettingsView.swift */; };
+		B2B32DC8D049012575791396 /* PardoraLiveActivityExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 7E5813739692E69C2EC047EA /* PardoraLiveActivityExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		BAE2F32085F983044470542C /* RadioAppModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB8B977B5C0D7C55362C7DE9 /* RadioAppModelTests.swift */; };
+		D0F82EE21A6A3A2874D1728D /* PardoraTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10A9066296E26D967D523B2D /* PardoraTheme.swift */; };
+		D570AE90FF8C3C9372D8FA56 /* RadioModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4AC7390FC2C0078F36FF56A /* RadioModelsTests.swift */; };
+		D8EDCA4DD638AB42721EFEEA /* QueueView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6EDA14FBD4B994CBE875BFD /* QueueView.swift */; };
+		FF90AAAC1DAA96CBB29E9578 /* ActivityKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 12FA69A23ACF3AB892200908 /* ActivityKit.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		5989E66074A9CA2E0269B6FC /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C273EEB3DD4A5620A8B590ED /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 54DA2882E75AEC97F34A5052;
+			remoteInfo = PardoraLiveActivityExtension;
+		};
+		E185EE90AE1A3E0E8244AED5 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C273EEB3DD4A5620A8B590ED /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 937F220EB69D3169E0A3D67B;
+			remoteInfo = Pardora;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		2FC37FD78AEFFDAE9A6FAEC1 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				B2B32DC8D049012575791396 /* PardoraLiveActivityExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		08372637BE5403229D4E0EF6 /* PardoraApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PardoraApp.swift; sourceTree = "<group>"; };
+		10A9066296E26D967D523B2D /* PardoraTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PardoraTheme.swift; sourceTree = "<group>"; };
+		12FA69A23ACF3AB892200908 /* ActivityKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ActivityKit.framework; path = System/Library/Frameworks/ActivityKit.framework; sourceTree = SDKROOT; };
+		18E62E6B7064E4E822433F6E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		23BD467777D391EB06DF855E /* AppRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRootView.swift; sourceTree = "<group>"; };
+		2CC3EFBB608E4ADC4B9F6EE1 /* RadioEndpointResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadioEndpointResolver.swift; sourceTree = "<group>"; };
+		2E4F9A7ABC4DB8DB6CCB028C /* RadioPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadioPlayer.swift; sourceTree = "<group>"; };
+		32D4A2488E0485950AC9CD79 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		334FC8DBEACABE845F084D81 /* PardoraActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PardoraActivityAttributes.swift; sourceTree = "<group>"; };
+		4B5E1918683A7065423DB90B /* RadioAPIClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadioAPIClientTests.swift; sourceTree = "<group>"; };
+		4E450DA60541D6E4BC3DA859 /* PardoraSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PardoraSettings.swift; sourceTree = "<group>"; };
+		761670DD56C97F39DE70353F /* RadioAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadioAPIClient.swift; sourceTree = "<group>"; };
+		7E5813739692E69C2EC047EA /* PardoraLiveActivityExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = PardoraLiveActivityExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		83BBE6D955A979784C28F72E /* MemoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryView.swift; sourceTree = "<group>"; };
+		8A1D662F0C2BBA84572B9C4C /* RadioModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadioModels.swift; sourceTree = "<group>"; };
+		8BC69BD71066C090C23B7A11 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		AB4A92B39E4FB984D3698E01 /* CloudflareOneApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudflareOneApp.swift; sourceTree = "<group>"; };
+		ACD53D2DF7897C7027C23F76 /* PardoraLiveActivityController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PardoraLiveActivityController.swift; sourceTree = "<group>"; };
+		C6D7D6F3683D5AEE9501ADE4 /* PardoraTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = PardoraTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		D4AC7390FC2C0078F36FF56A /* RadioModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadioModelsTests.swift; sourceTree = "<group>"; };
+		D64136BBA73EB7D1753A8F07 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		D6EDA14FBD4B994CBE875BFD /* QueueView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueueView.swift; sourceTree = "<group>"; };
+		E28AB0E994B58696348C0B61 /* Pardora.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Pardora.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E5F9FFA84DD252960323EA8D /* RadioAppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadioAppModel.swift; sourceTree = "<group>"; };
+		EB8B977B5C0D7C55362C7DE9 /* RadioAppModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadioAppModelTests.swift; sourceTree = "<group>"; };
+		F2F5C2BFF5B46765B4872567 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		F6D4FDA64E77E467D2980C9E /* NowPlayingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingView.swift; sourceTree = "<group>"; };
+		FB500BF222D3876F0A672183 /* RadioPlayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadioPlayerTests.swift; sourceTree = "<group>"; };
+		FFC009390CAA7F24CCF8AA64 /* PardoraLiveActivityWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PardoraLiveActivityWidget.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		1C92C99D4428FDB0D0995404 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5CCCB9F64DB087F8F9D9626E /* WidgetKit.framework in Frameworks */,
+				FF90AAAC1DAA96CBB29E9578 /* ActivityKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		83A8424DA5BCD5587EBC9D1A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1254C67E846F54FAE28AD356 /* ActivityKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		01764A1295B2E8A91D37BB4C /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				8A1D662F0C2BBA84572B9C4C /* RadioModels.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		23C0655F7E23AD39ECA7FC6E /* Memory */ = {
+			isa = PBXGroup;
+			children = (
+				83BBE6D955A979784C28F72E /* MemoryView.swift */,
+			);
+			path = Memory;
+			sourceTree = "<group>";
+		};
+		2CB0627ED54C37952EAA2114 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				8BC69BD71066C090C23B7A11 /* Info.plist */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		4D6154D6B5C0E0335B6E0157 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				ACD53D2DF7897C7027C23F76 /* PardoraLiveActivityController.swift */,
+				761670DD56C97F39DE70353F /* RadioAPIClient.swift */,
+				E5F9FFA84DD252960323EA8D /* RadioAppModel.swift */,
+				2CC3EFBB608E4ADC4B9F6EE1 /* RadioEndpointResolver.swift */,
+				2E4F9A7ABC4DB8DB6CCB028C /* RadioPlayer.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		61D594EB4DFA14B38B05058C /* Pardora */ = {
+			isa = PBXGroup;
+			children = (
+				23BD467777D391EB06DF855E /* AppRootView.swift */,
+				18E62E6B7064E4E822433F6E /* Assets.xcassets */,
+				08372637BE5403229D4E0EF6 /* PardoraApp.swift */,
+				7DD818E4E8045DA992511D72 /* Features */,
+				01764A1295B2E8A91D37BB4C /* Models */,
+				2CB0627ED54C37952EAA2114 /* Resources */,
+				4D6154D6B5C0E0335B6E0157 /* Services */,
+				7736E908CE912E297054F15A /* Support */,
+			);
+			path = Pardora;
+			sourceTree = "<group>";
+		};
+		7736E908CE912E297054F15A /* Support */ = {
+			isa = PBXGroup;
+			children = (
+				AB4A92B39E4FB984D3698E01 /* CloudflareOneApp.swift */,
+				334FC8DBEACABE845F084D81 /* PardoraActivityAttributes.swift */,
+				4E450DA60541D6E4BC3DA859 /* PardoraSettings.swift */,
+				10A9066296E26D967D523B2D /* PardoraTheme.swift */,
+			);
+			path = Support;
+			sourceTree = "<group>";
+		};
+		7DD818E4E8045DA992511D72 /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				23C0655F7E23AD39ECA7FC6E /* Memory */,
+				9D84DE66888D1FBC808AA77E /* NowPlaying */,
+				F6ADDB8D81AF73B257437766 /* Queue */,
+				86DCDC9E30101EB5B45E518C /* Settings */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+		86DCDC9E30101EB5B45E518C /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				32D4A2488E0485950AC9CD79 /* SettingsView.swift */,
+			);
+			path = Settings;
+			sourceTree = "<group>";
+		};
+		9D84DE66888D1FBC808AA77E /* NowPlaying */ = {
+			isa = PBXGroup;
+			children = (
+				F6D4FDA64E77E467D2980C9E /* NowPlayingView.swift */,
+			);
+			path = NowPlaying;
+			sourceTree = "<group>";
+		};
+		BD52DF1A0DFD6D13243BB1A1 /* PardoraTests */ = {
+			isa = PBXGroup;
+			children = (
+				4B5E1918683A7065423DB90B /* RadioAPIClientTests.swift */,
+				EB8B977B5C0D7C55362C7DE9 /* RadioAppModelTests.swift */,
+				D4AC7390FC2C0078F36FF56A /* RadioModelsTests.swift */,
+				FB500BF222D3876F0A672183 /* RadioPlayerTests.swift */,
+			);
+			path = PardoraTests;
+			sourceTree = "<group>";
+		};
+		C447ABB8623BEB97E2191F62 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				E28AB0E994B58696348C0B61 /* Pardora.app */,
+				7E5813739692E69C2EC047EA /* PardoraLiveActivityExtension.appex */,
+				C6D7D6F3683D5AEE9501ADE4 /* PardoraTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		EA9995441B7913D59254805B = {
+			isa = PBXGroup;
+			children = (
+				61D594EB4DFA14B38B05058C /* Pardora */,
+				EC65D7B751D3408C481B66FF /* PardoraLiveActivityExtension */,
+				BD52DF1A0DFD6D13243BB1A1 /* PardoraTests */,
+				FBE59764A6807DCFA130AF61 /* Frameworks */,
+				C447ABB8623BEB97E2191F62 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		EC65D7B751D3408C481B66FF /* PardoraLiveActivityExtension */ = {
+			isa = PBXGroup;
+			children = (
+				F2F5C2BFF5B46765B4872567 /* Info.plist */,
+				FFC009390CAA7F24CCF8AA64 /* PardoraLiveActivityWidget.swift */,
+			);
+			path = PardoraLiveActivityExtension;
+			sourceTree = "<group>";
+		};
+		F6ADDB8D81AF73B257437766 /* Queue */ = {
+			isa = PBXGroup;
+			children = (
+				D6EDA14FBD4B994CBE875BFD /* QueueView.swift */,
+			);
+			path = Queue;
+			sourceTree = "<group>";
+		};
+		FBE59764A6807DCFA130AF61 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				12FA69A23ACF3AB892200908 /* ActivityKit.framework */,
+				D64136BBA73EB7D1753A8F07 /* WidgetKit.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		54DA2882E75AEC97F34A5052 /* PardoraLiveActivityExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4F5F0A03252590EA03ED4DF4 /* Build configuration list for PBXNativeTarget "PardoraLiveActivityExtension" */;
+			buildPhases = (
+				8DD2C5727771BC6BC5E9BFEC /* Sources */,
+				1C92C99D4428FDB0D0995404 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = PardoraLiveActivityExtension;
+			packageProductDependencies = (
+			);
+			productName = PardoraLiveActivityExtension;
+			productReference = 7E5813739692E69C2EC047EA /* PardoraLiveActivityExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		937F220EB69D3169E0A3D67B /* Pardora */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 66E83506AB05A7B350B586A0 /* Build configuration list for PBXNativeTarget "Pardora" */;
+			buildPhases = (
+				A94BFFB6B9A2F99A8FECBEBF /* Sources */,
+				290B833334EC946720A2EF09 /* Resources */,
+				83A8424DA5BCD5587EBC9D1A /* Frameworks */,
+				2FC37FD78AEFFDAE9A6FAEC1 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				2B84EFA68075CEDFE319D50B /* PBXTargetDependency */,
+			);
+			name = Pardora;
+			packageProductDependencies = (
+			);
+			productName = Pardora;
+			productReference = E28AB0E994B58696348C0B61 /* Pardora.app */;
+			productType = "com.apple.product-type.application";
+		};
+		F6687AE67DC8EA90094C4F08 /* PardoraTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D26C34E8918AC4FD683D6A97 /* Build configuration list for PBXNativeTarget "PardoraTests" */;
+			buildPhases = (
+				F17CAAE3A3A10B54CA8C1AFC /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				C8721BFAB28227438A6E3C04 /* PBXTargetDependency */,
+			);
+			name = PardoraTests;
+			packageProductDependencies = (
+			);
+			productName = PardoraTests;
+			productReference = C6D7D6F3683D5AEE9501ADE4 /* PardoraTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		C273EEB3DD4A5620A8B590ED /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					54DA2882E75AEC97F34A5052 = {
+						DevelopmentTeam = QMLVG482FY;
+						ProvisioningStyle = Automatic;
+					};
+					937F220EB69D3169E0A3D67B = {
+						DevelopmentTeam = QMLVG482FY;
+						ProvisioningStyle = Automatic;
+					};
+					F6687AE67DC8EA90094C4F08 = {
+						DevelopmentTeam = QMLVG482FY;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 7054AC68B4C74587DEB786FF /* Build configuration list for PBXProject "Pardora" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = EA9995441B7913D59254805B;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = C447ABB8623BEB97E2191F62 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				937F220EB69D3169E0A3D67B /* Pardora */,
+				54DA2882E75AEC97F34A5052 /* PardoraLiveActivityExtension */,
+				F6687AE67DC8EA90094C4F08 /* PardoraTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		290B833334EC946720A2EF09 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				19997BA3FA652DC304E61A90 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		8DD2C5727771BC6BC5E9BFEC /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6A97435FACB40B638FAA62D8 /* PardoraActivityAttributes.swift in Sources */,
+				430F7B35AE418180545A7037 /* PardoraLiveActivityWidget.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A94BFFB6B9A2F99A8FECBEBF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				47B5AFCB2A7C38288B4B591A /* AppRootView.swift in Sources */,
+				26A4053F2055BBFFC8B76BE6 /* CloudflareOneApp.swift in Sources */,
+				5EDFFBCBE3E866A5292595D6 /* MemoryView.swift in Sources */,
+				8C0FD5E9AF8FDA46891AD166 /* NowPlayingView.swift in Sources */,
+				647F72C22A24E8D1C93E0F1B /* PardoraActivityAttributes.swift in Sources */,
+				379D754617397768AB7BB2A5 /* PardoraApp.swift in Sources */,
+				7DA669897911A68CF9C1000B /* PardoraLiveActivityController.swift in Sources */,
+				372E7419B9AAF560BC99E656 /* PardoraSettings.swift in Sources */,
+				D0F82EE21A6A3A2874D1728D /* PardoraTheme.swift in Sources */,
+				D8EDCA4DD638AB42721EFEEA /* QueueView.swift in Sources */,
+				904F22FD8477C1451A6EA553 /* RadioAPIClient.swift in Sources */,
+				4986FF208E3E8933EAAB9361 /* RadioAppModel.swift in Sources */,
+				1245B5D51B29B44E9A2B67E7 /* RadioEndpointResolver.swift in Sources */,
+				5495061E41D686AF3D885E27 /* RadioModels.swift in Sources */,
+				4CAF4D72A14DACD2A168ED12 /* RadioPlayer.swift in Sources */,
+				942AD844711B208DFE8E68BA /* SettingsView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F17CAAE3A3A10B54CA8C1AFC /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				307DF81E9B2A6CFFB32EAC6F /* RadioAPIClientTests.swift in Sources */,
+				BAE2F32085F983044470542C /* RadioAppModelTests.swift in Sources */,
+				D570AE90FF8C3C9372D8FA56 /* RadioModelsTests.swift in Sources */,
+				0E30C689B0F63A12AE922629 /* RadioPlayerTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		2B84EFA68075CEDFE319D50B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 54DA2882E75AEC97F34A5052 /* PardoraLiveActivityExtension */;
+			targetProxy = 5989E66074A9CA2E0269B6FC /* PBXContainerItemProxy */;
+		};
+		C8721BFAB28227438A6E3C04 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 937F220EB69D3169E0A3D67B /* Pardora */;
+			targetProxy = E185EE90AE1A3E0E8244AED5 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		4A6424566FECE0B21AEFE944 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Pardora/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = net.pardev.pardora;
+				SDKROOT = iphoneos;
+				SUPPORTS_LIVE_ACTIVITIES = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		6FEDE546B3C781FA58304158 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = net.pardev.PardoraTests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Pardora.app/Pardora";
+			};
+			name = Release;
+		};
+		8FDBEAE81B89336398BCC569 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = QMLVG482FY;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		E3304A95B76FCDD57221347A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PardoraLiveActivityExtension/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = net.pardev.pardora.liveactivity;
+				SDKROOT = iphoneos;
+				SUPPORTS_LIVE_ACTIVITIES = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		E58B77D2147DEEEBF13438AC /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PardoraLiveActivityExtension/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = net.pardev.pardora.liveactivity;
+				SDKROOT = iphoneos;
+				SUPPORTS_LIVE_ACTIVITIES = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		EF07249D4DCBF0EC0B97939F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = QMLVG482FY;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		F0BF37F10533253D0C24F890 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Pardora/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = net.pardev.pardora;
+				SDKROOT = iphoneos;
+				SUPPORTS_LIVE_ACTIVITIES = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		FF9BC947F68C08593E146036 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = net.pardev.PardoraTests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Pardora.app/Pardora";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		4F5F0A03252590EA03ED4DF4 /* Build configuration list for PBXNativeTarget "PardoraLiveActivityExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E3304A95B76FCDD57221347A /* Debug */,
+				E58B77D2147DEEEBF13438AC /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		66E83506AB05A7B350B586A0 /* Build configuration list for PBXNativeTarget "Pardora" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4A6424566FECE0B21AEFE944 /* Debug */,
+				F0BF37F10533253D0C24F890 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		7054AC68B4C74587DEB786FF /* Build configuration list for PBXProject "Pardora" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EF07249D4DCBF0EC0B97939F /* Debug */,
+				8FDBEAE81B89336398BCC569 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		D26C34E8918AC4FD683D6A97 /* Build configuration list for PBXNativeTarget "PardoraTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FF9BC947F68C08593E146036 /* Debug */,
+				6FEDE546B3C781FA58304158 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = C273EEB3DD4A5620A8B590ED /* Project object */;
+}

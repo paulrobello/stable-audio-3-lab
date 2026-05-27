@@ -20,6 +20,7 @@
   * [Configure real inference](#configure-real-inference)
 * [Environment Variables](#environment-variables)
 * [Running Stable Audio 3 Lab](#running-stable-audio-3-lab)
+* [Pardora iOS App](#pardora-ios-app)
 * [Quick start music workflow](#quick-start-music-workflow)
 * [Quick start SFX workflow](#quick-start-sfx-workflow)
 * [Reproducible seeds](#reproducible-seeds)
@@ -259,6 +260,20 @@ Then open:
 
 ```text
 http://localhost:3007
+```
+
+## Pardora iOS App
+
+Pardora is the native iOS companion app for the radio stream. It lives in `apps/pardora-ios/` and uses the existing `/api/radio` JSON contract plus the MP3 stream URL. The app target includes a generated launch screen so it runs full screen on modern iPhones, and `make pardora-run` switches the booted Simulator to dark appearance before launch.
+
+Useful commands:
+
+```bash
+make pardora-generate
+make pardora-build
+make pardora-test
+make pardora-checkall
+make pardora-run
 ```
 
 ## Quick start music workflow

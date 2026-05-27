@@ -1,0 +1,72 @@
+name: Pardora
+options:
+  bundleIdPrefix: net.pardev
+  deploymentTarget:
+    iOS: "17.0"
+settings:
+  base:
+    DEVELOPMENT_TEAM: QMLVG482FY
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "6.0"
+targets:
+  Pardora:
+    type: application
+    platform: iOS
+    sources:
+      - Pardora
+    dependencies:
+      - target: PardoraLiveActivityExtension
+        embed: true
+      - sdk: ActivityKit.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.pardev.pardora
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Pardora/Resources/Info.plist
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "1"
+        SUPPORTS_LIVE_ACTIVITIES: YES
+  PardoraLiveActivityExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: PardoraLiveActivityExtension
+      - path: Pardora/Support/PardoraActivityAttributes.swift
+    dependencies:
+      - sdk: WidgetKit.framework
+      - sdk: ActivityKit.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.pardev.pardora.liveactivity
+        GENERATE_INFOPLIST_FILE: YES
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "1"
+        SUPPORTS_LIVE_ACTIVITIES: YES
+        SWIFT_VERSION: "6.0"
+    info:
+      path: PardoraLiveActivityExtension/Info.plist
+      properties:
+        CFBundleDisplayName: Pardora Activity
+        CFBundleShortVersionString: "0.1"
+        CFBundleVersion: "1"
+        NSSupportsLiveActivities: true
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+  PardoraTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - PardoraTests
+    dependencies:
+      - target: Pardora
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  Pardora:
+    build:
+      targets:
+        Pardora: all
+    test:
+      targets:
+        - PardoraTests

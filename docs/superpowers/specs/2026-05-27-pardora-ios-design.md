@@ -11,6 +11,7 @@ Pardora will live in this repo under `apps/pardora-ios/` so the Swift app, radio
 ## Goals
 
 - Build a real SwiftUI app layout rather than a repackaged mobile web page.
+- Run full screen on modern iPhones without compatibility letterboxing.
 - Keep the Now Playing surface focused on listening and feedback.
 - Move configuration controls out of the player into a Settings page.
 - Reuse the current Stable Audio radio server as the source of truth.
@@ -200,7 +201,7 @@ Implementation must verify incrementally:
 - Playback controller unit coverage where practical, with manual simulator/device smoke for real stream playback.
 - Existing repo gate: `make checkall`.
 - iOS build gate once the app target exists, for example `xcodebuild` against the Pardora scheme.
-- Simulator smoke for tab navigation and settings layout.
+- Simulator smoke for tab navigation, settings layout, dark appearance, and full-screen rendering without letterboxing.
 
 If `make checkall` is unrelated to the iOS project but fails, do not claim the slice is complete; separate the failure and fix or report it.
 

@@ -2,7 +2,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { NextRequest } from "next/server";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { GET, POST } from "./route";
 import { createRadioTrackRecord, defaultRadioState } from "@/lib/radio";
 
@@ -17,10 +17,19 @@ const originalFfmpegPath = process.env.FFMPEG_PATH;
 const originalPathEnv = process.env.PATH;
 const originalRadioCodexTasteModel = process.env.RADIO_CODEX_TASTE_MODEL;
 const originalRadioOllamaModelsTimeoutMs = process.env.RADIO_OLLAMA_MODELS_TIMEOUT_MS;
+const originalStableAudioPython = process.env.STABLE_AUDIO_PYTHON;
+const originalStableAudioMock = process.env.STABLE_AUDIO_MOCK;
+const originalStableAudioTimeoutMs = process.env.STABLE_AUDIO_TIMEOUT_MS;
+const originalRadioOllamaTimeoutMs = process.env.RADIO_OLLAMA_TIMEOUT_MS;
+const originalRadioQueueAutoFill = process.env.RADIO_QUEUE_AUTO_FILL;
 let tempCwd: string | undefined;
 const icyMetaInterval = 24_000;
 
 describe("radio stream route", () => {
+  beforeEach(() => {
+    process.env.RADIO_QUEUE_AUTO_FILL = "false";
+  });
+
   afterEach(async () => {
     process.chdir(originalCwd);
     if (originalOpenAiApiKey === undefined) delete process.env.OPENAI_API_KEY;
@@ -43,6 +52,16 @@ describe("radio stream route", () => {
     else process.env.RADIO_CODEX_TASTE_MODEL = originalRadioCodexTasteModel;
     if (originalRadioOllamaModelsTimeoutMs === undefined) delete process.env.RADIO_OLLAMA_MODELS_TIMEOUT_MS;
     else process.env.RADIO_OLLAMA_MODELS_TIMEOUT_MS = originalRadioOllamaModelsTimeoutMs;
+    if (originalStableAudioPython === undefined) delete process.env.STABLE_AUDIO_PYTHON;
+    else process.env.STABLE_AUDIO_PYTHON = originalStableAudioPython;
+    if (originalStableAudioMock === undefined) delete process.env.STABLE_AUDIO_MOCK;
+    else process.env.STABLE_AUDIO_MOCK = originalStableAudioMock;
+    if (originalStableAudioTimeoutMs === undefined) delete process.env.STABLE_AUDIO_TIMEOUT_MS;
+    else process.env.STABLE_AUDIO_TIMEOUT_MS = originalStableAudioTimeoutMs;
+    if (originalRadioOllamaTimeoutMs === undefined) delete process.env.RADIO_OLLAMA_TIMEOUT_MS;
+    else process.env.RADIO_OLLAMA_TIMEOUT_MS = originalRadioOllamaTimeoutMs;
+    if (originalRadioQueueAutoFill === undefined) delete process.env.RADIO_QUEUE_AUTO_FILL;
+    else process.env.RADIO_QUEUE_AUTO_FILL = originalRadioQueueAutoFill;
     if (tempCwd) {
       await rm(tempCwd, { recursive: true, force: true });
       tempCwd = undefined;
@@ -161,6 +180,38 @@ describe("radio stream route", () => {
     expect(json.state?.history?.map((track) => track.filename)).toEqual(["current.mp3", "keeper.mp3"]);
     expect(saved.history?.at(-1)).toMatchObject({ filename: "keeper.mp3", source: "library-fallback", fallbackReason: "queue_refill_timeout" });
     expect(metadata.radio).toMatchObject({ source: "library-fallback", fallbackReason: "queue_refill_timeout" });
+  });
+
+  it("fills the radio queue from the server when the state endpoint is polled", async () => {
+    tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
+    process.chdir(tempCwd);
+    const outputDir = path.join(tempCwd, "public", "outputs");
+    const scriptsDir = path.join(tempCwd, "scripts");
+    const stateFile = path.join(tempCwd, ".stable-audio-radio", "state.json");
+    await mkdir(outputDir, { recursive: true });
+    await mkdir(scriptsDir, { recursive: true });
+    await mkdir(path.dirname(stateFile), { recursive: true });
+    await writeFile(path.join(scriptsDir, "generate_audio.py"), `
+const fs = require("node:fs");
+const outIndex = process.argv.indexOf("--out");
+fs.writeFileSync(process.argv[outIndex + 1], Buffer.from("ID3 server queue audio"));
+`);
+    const current = createRadioTrackRecord({ filename: "current.mp3", title: "Current", prompt: "current", styleId: "synthwave", announce: false });
+    await writeFile(path.join(outputDir, "current.mp3"), Buffer.from("current"));
+    await writeFile(stateFile, JSON.stringify({ ...defaultRadioState(), announceEnabled: false, currentTrack: current, history: [current] }, null, 2));
+    process.env.STABLE_AUDIO_PYTHON = process.execPath;
+    process.env.RADIO_OLLAMA_TIMEOUT_MS = "1";
+    process.env.RADIO_QUEUE_AUTO_FILL = "true";
+
+    const response = await GET(new NextRequest("http://localhost:3007/api/radio"));
+    const json = await response.json() as { ok: boolean; state?: { queueAheadCount?: number } };
+    const saved = await waitForRadioState(stateFile, (state) => state.queueAheadCount === 3);
+
+    expect(json.ok).toBe(true);
+    expect(json.state?.queueAheadCount).toBe(0);
+    expect(saved.history.map((track) => track.filename)).toHaveLength(4);
+    expect(saved.history.slice(1).every((track) => track.styleId === "synthwave")).toBe(true);
+    expect(saved.history.slice(1).every((track) => track.promptProvider === "fallback")).toBe(true);
   });
 
   it("streams a starred library fallback when the lineup has no current mp3", async () => {
@@ -939,6 +990,23 @@ printf '%s' '{"likedTraits":["wide neon pads"],"dislikedTraits":["thin supersaw 
     expect(saved.unlikedTrackExpirationHours).toBe(72);
   });
 });
+
+type RadioStateTestSnapshot = { queueAheadCount?: number; history: Array<{ filename: string; styleId?: string; promptProvider?: string }> };
+
+async function waitForRadioState(stateFile: string, predicate: (state: RadioStateTestSnapshot) => boolean): Promise<RadioStateTestSnapshot> {
+  const deadline = Date.now() + 2_000;
+  let lastState: RadioStateTestSnapshot = JSON.parse(await readFile(stateFile, "utf8"));
+  while (Date.now() < deadline) {
+    try {
+      lastState = JSON.parse(await readFile(stateFile, "utf8"));
+      if (predicate(lastState)) return lastState;
+    } catch {
+      // The route writes state.json directly; retry if the poll lands mid-write.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Radio state did not match before timeout: ${JSON.stringify(lastState)}`);
+}
 
 function decodeIcyMetadata(chunk: Uint8Array | undefined) {
   if (!chunk) return "";

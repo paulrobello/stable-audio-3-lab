@@ -484,6 +484,19 @@ describe("radio stream state", () => {
     expect(state.currentTrack?.promptModel).toBe("llama3.1:8b");
   });
 
+  it("preserves radio track file size metadata", () => {
+    const track = createRadioTrackRecord({
+      filename: "midnight_arcade.mp3",
+      title: "Midnight Arcade",
+      prompt: radioStyles[0].seedPrompt,
+      styleId: "synthwave",
+      announce: false,
+      fileSizeBytes: 1_234_567,
+    });
+
+    expect(track.fileSizeBytes).toBe(1_234_567);
+  });
+
   it("does not mark wav tracks as TuneIn-ready mp3 streams", () => {
     const track = createRadioTrackRecord({
       filename: "wide_pad.wav",
