@@ -16,6 +16,7 @@ const originalRadioTtsModulePath = process.env.RADIO_TTS_MODULE_PATH;
 const originalFfmpegPath = process.env.FFMPEG_PATH;
 const originalPathEnv = process.env.PATH;
 const originalRadioCodexTasteModel = process.env.RADIO_CODEX_TASTE_MODEL;
+const originalRadioOllamaModelsTimeoutMs = process.env.RADIO_OLLAMA_MODELS_TIMEOUT_MS;
 let tempCwd: string | undefined;
 const icyMetaInterval = 24_000;
 
@@ -40,6 +41,8 @@ describe("radio stream route", () => {
     else process.env.PATH = originalPathEnv;
     if (originalRadioCodexTasteModel === undefined) delete process.env.RADIO_CODEX_TASTE_MODEL;
     else process.env.RADIO_CODEX_TASTE_MODEL = originalRadioCodexTasteModel;
+    if (originalRadioOllamaModelsTimeoutMs === undefined) delete process.env.RADIO_OLLAMA_MODELS_TIMEOUT_MS;
+    else process.env.RADIO_OLLAMA_MODELS_TIMEOUT_MS = originalRadioOllamaModelsTimeoutMs;
     if (tempCwd) {
       await rm(tempCwd, { recursive: true, force: true });
       tempCwd = undefined;
@@ -56,6 +59,65 @@ describe("radio stream route", () => {
     expect(response.headers.get("content-type")).toBe("audio/mpeg");
     expect(response.headers.get("cache-control")).toBe("no-store");
     await response.body?.cancel();
+  });
+
+  it("includes station stats and referenced audio disk usage in radio state responses", async () => {
+    tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
+    process.chdir(tempCwd);
+    process.env.RADIO_OLLAMA_MODELS_TIMEOUT_MS = "1";
+    const outputDir = path.join(tempCwd, "public", "outputs");
+    const stateFile = path.join(tempCwd, ".stable-audio-radio", "state.json");
+    await mkdir(outputDir, { recursive: true });
+    await mkdir(path.dirname(stateFile), { recursive: true });
+    await writeFile(path.join(outputDir, "current.mp3"), Buffer.alloc(1000));
+    await writeFile(path.join(outputDir, "radio_announce_current.mp3"), Buffer.alloc(24));
+    await writeFile(path.join(outputDir, "keeper.mp3"), Buffer.alloc(2000));
+    const current = createRadioTrackRecord({
+      filename: "current.mp3",
+      title: "Current",
+      prompt: "current",
+      styleId: "synthwave",
+      announce: true,
+      announcementFilename: "radio_announce_current.mp3",
+    });
+    const fallback = createRadioTrackRecord({
+      filename: "keeper.mp3",
+      title: "Keeper",
+      prompt: "keeper",
+      styleId: "synthwave",
+      announce: false,
+      source: "library-fallback",
+    });
+    await writeFile(stateFile, JSON.stringify({
+      ...defaultRadioState(),
+      currentTrack: current,
+      history: [current, fallback],
+      preferences: {
+        synthwave: { likes: ["current", "bright hook"], dislikes: ["thin bass"] },
+        ambient: { likes: [], dislikes: ["harsh texture"] },
+      },
+    }, null, 2));
+
+    const response = await GET(new NextRequest("http://localhost:3007/api/radio"));
+    const json = await response.json() as {
+      ok: boolean;
+      state?: {
+        stats?: {
+          generatedSongCount?: number;
+          thumbsUpCount?: number;
+          thumbsDownCount?: number;
+          audioDiskBytes?: number;
+        };
+      };
+    };
+
+    expect(json.ok).toBe(true);
+    expect(json.state?.stats).toEqual({
+      generatedSongCount: 1,
+      thumbsUpCount: 2,
+      thumbsDownCount: 2,
+      audioDiskBytes: 3024,
+    });
   });
 
   it("registers a starred library mp3 as a marked fallback track", async () => {
@@ -221,6 +283,33 @@ describe("radio stream route", () => {
     expect(json.state?.history?.map((track) => track.filename)).toEqual(["current.mp3"]);
     await expect(readFile(path.join(outputDir, "shared_feedback.mp3"))).rejects.toMatchObject({ code: "ENOENT" });
     expect(metadata.radio).toMatchObject({ removalReason: "manual_delete", removedAudioFilename: "shared_feedback.mp3" });
+  });
+
+  it("keeps duplicate-titled queued songs while the queue is still under target", async () => {
+    tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
+    process.chdir(tempCwd);
+    const outputDir = path.join(tempCwd, "public", "outputs");
+    const stateFile = path.join(tempCwd, ".stable-audio-radio", "state.json");
+    await mkdir(outputDir, { recursive: true });
+    await mkdir(path.dirname(stateFile), { recursive: true });
+    await writeFile(path.join(outputDir, "current.mp3"), Buffer.from("current"));
+    await writeFile(path.join(outputDir, "duplicate_next.mp3"), Buffer.from("next"));
+    const current = createRadioTrackRecord({ filename: "current.mp3", title: "Repeated Title", prompt: "current", styleId: "synthwave", announce: false });
+    const duplicateNext = createRadioTrackRecord({ filename: "duplicate_next.mp3", title: "Repeated Title", prompt: "next", styleId: "synthwave", announce: false });
+    await writeFile(stateFile, JSON.stringify({ ...defaultRadioState(), currentTrack: current, history: [current, duplicateNext] }, null, 2));
+
+    const response = await POST(new NextRequest("http://localhost:3007/api/radio", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "cleanup" }),
+    }));
+    const json = await response.json() as { ok: boolean; cleanedTracks?: Array<{ filename?: string }>; state?: { history?: Array<{ filename?: string }>; queueAheadCount?: number } };
+
+    expect(json.ok).toBe(true);
+    expect(json.cleanedTracks).toEqual([]);
+    expect(json.state?.queueAheadCount).toBe(1);
+    expect(json.state?.history?.map((track) => track.filename)).toEqual(["current.mp3", "duplicate_next.mp3"]);
+    await expect(readFile(path.join(outputDir, "duplicate_next.mp3"))).resolves.toBeTruthy();
   });
 
   it("streams the current track for the requested style query", async () => {
@@ -416,6 +505,35 @@ printf '%s' '{"likedTraits":["wide neon pads"],"dislikedTraits":["thin supersaw 
 
     expect(Buffer.from(first.value ?? []).toString()).toBe("song");
     expect(savedState.currentTrack?.filename).toBe("next.mp3");
+    await reader!.cancel();
+  }, 5000);
+
+  it("skips existing announcement audio when announcements are disabled", async () => {
+    tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
+    process.chdir(tempCwd);
+    const outputDir = path.join(tempCwd, "public", "outputs");
+    const stateFile = path.join(tempCwd, ".stable-audio-radio", "state.json");
+    await mkdir(outputDir, { recursive: true });
+    await mkdir(path.dirname(stateFile), { recursive: true });
+    await writeFile(path.join(outputDir, "radio_announce_current.mp3"), Buffer.from("announcement"));
+    await writeFile(path.join(outputDir, "current.mp3"), Buffer.from("song"));
+    const current = createRadioTrackRecord({
+      filename: "current.mp3",
+      title: "Current",
+      prompt: "current",
+      styleId: "synthwave",
+      announce: true,
+      announcementFilename: "radio_announce_current.mp3",
+    });
+    const state = { ...defaultRadioState(), announceEnabled: false, currentTrack: current, history: [current] };
+    await writeFile(stateFile, JSON.stringify(state, null, 2));
+
+    const response = await GET(new NextRequest("http://localhost:3007/api/radio?stream=1"));
+    const reader = response.body?.getReader();
+    expect(reader).toBeTruthy();
+    const first = await reader!.read();
+
+    expect(Buffer.from(first.value ?? []).toString()).toBe("song");
     await reader!.cancel();
   }, 5000);
 

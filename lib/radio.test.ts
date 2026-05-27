@@ -17,6 +17,7 @@ import {
   findDuplicateRadioTitleTracks,
   findRadioTracksForCleanup,
   getRadioQueueAheadCount,
+  makeUniqueRadioTrackTitle,
   normalizeRadioTtsConfig,
   normalizeRadioState,
   getRadioTtsVoiceOptions,
@@ -194,6 +195,31 @@ describe("radio station styles", () => {
     expect(second.title).not.toBe(first.title);
     expect(second.prompt).not.toBe(first.prompt);
     expect(second.prompt).toContain("variation seed");
+  });
+
+  it("increments the highest numbered matching title when a generated title collides", () => {
+    const history = [47, 49, 51].map((number) => createRadioTrackRecord({
+      filename: `ambient_signal_drift_signal_${number}_keeper.mp3`,
+      title: `Ambient Signal Drift Signal ${number} Keeper`,
+      prompt: "ambient",
+      styleId: "ambient",
+      announce: false,
+    }));
+
+    expect(makeUniqueRadioTrackTitle("Ambient Signal Drift Signal 49 Keeper", history)).toBe("Ambient Signal Drift Signal 52");
+  });
+
+  it("removes the lab quality Keeper suffix from radio titles", () => {
+    expect(makeUniqueRadioTrackTitle("Ambient Signal Drift Keeper", [])).toBe("Ambient Signal Drift");
+  });
+
+  it("adds a numeric suffix to duplicate titles without an existing number", () => {
+    const history = [
+      createRadioTrackRecord({ filename: "night_arc.mp3", title: "Night Arc", prompt: "night", styleId: "synthwave", announce: false }),
+      createRadioTrackRecord({ filename: "night_arc_2.mp3", title: "Night Arc 2", prompt: "night", styleId: "synthwave", announce: false }),
+    ];
+
+    expect(makeUniqueRadioTrackTitle("Night Arc", history)).toBe("Night Arc 3");
   });
 });
 
@@ -609,6 +635,37 @@ describe("radio stream state", () => {
     expect(shouldGenerateRadioQueueTrack(state, 3)).toBe(true);
   });
 
+  it("keeps newly generated queue tracks when history is at the cap", () => {
+    const earlierTracks = Array.from({ length: 49 }, (_, index) => createRadioTrackRecord({
+      filename: `older_${index}.mp3`,
+      title: `Older ${index}`,
+      prompt: `older ${index}`,
+      styleId: "synthwave",
+      announce: false,
+    }));
+    const current = createRadioTrackRecord({
+      filename: "current.mp3",
+      title: "Current",
+      prompt: "warm bass",
+      styleId: "synthwave",
+      announce: false,
+    });
+    const next = createRadioTrackRecord({
+      filename: "next.mp3",
+      title: "Next",
+      prompt: "wide pads",
+      styleId: "synthwave",
+      announce: false,
+    });
+
+    const state = registerRadioTrack({ ...defaultRadioState(), currentTrack: current, history: [...earlierTracks, current] }, next);
+
+    expect(state.history).toHaveLength(50);
+    expect(state.currentTrack?.filename).toBe("current.mp3");
+    expect(state.history.map((track) => track.filename)).toContain("next.mp3");
+    expect(getRadioQueueAheadCount(state)).toBe(1);
+  });
+
   it("queues generated tracks after a persisted current song when changing music styles", () => {
     const synthCurrent = createRadioTrackRecord({
       filename: "synth_current.mp3",
@@ -716,12 +773,22 @@ describe("radio stream state", () => {
   });
 
   it("finds duplicate unliked queued titles for cleanup while keeping the current song", () => {
-    const current = createRadioTrackRecord({ filename: "current.mp3", title: "Repeated Title", prompt: "current", styleId: "synthwave", announce: false });
-    const duplicate = createRadioTrackRecord({ filename: "duplicate.mp3", title: "Repeated Title", prompt: "same", styleId: "synthwave", announce: false });
-    const likedDuplicate = { ...createRadioTrackRecord({ filename: "liked.mp3", title: "Repeated Title", prompt: "liked", styleId: "synthwave", announce: false }), rating: "up" as const };
+    const now = "2026-05-26T12:00:00.000Z";
+    const current = { ...createRadioTrackRecord({ filename: "current.mp3", title: "Repeated Title", prompt: "current", styleId: "synthwave", announce: false }), createdAt: "2026-05-26T11:00:00.000Z" };
+    const duplicate = { ...createRadioTrackRecord({ filename: "duplicate.mp3", title: "Repeated Title", prompt: "same", styleId: "synthwave", announce: false }), createdAt: "2026-05-26T11:30:00.000Z" };
+    const likedDuplicate = { ...createRadioTrackRecord({ filename: "liked.mp3", title: "Repeated Title", prompt: "liked", styleId: "synthwave", announce: false }), createdAt: "2026-05-26T11:30:00.000Z", rating: "up" as const };
     const state = { ...defaultRadioState(), currentTrack: current, history: [current, duplicate, likedDuplicate] };
 
-    expect(findDuplicateRadioTitleTracks(state).map((track) => track.filename)).toEqual(["duplicate.mp3"]);
+    expect(findDuplicateRadioTitleTracks(state, now).map((track) => track.filename)).toEqual(["duplicate.mp3"]);
+  });
+
+  it("does not clean freshly created duplicate queue titles", () => {
+    const now = "2026-05-26T12:00:00.000Z";
+    const current = { ...createRadioTrackRecord({ filename: "current.mp3", title: "Repeated Title", prompt: "current", styleId: "synthwave", announce: false }), createdAt: "2026-05-26T11:00:00.000Z" };
+    const freshDuplicate = { ...createRadioTrackRecord({ filename: "fresh_duplicate.mp3", title: "Repeated Title", prompt: "fresh", styleId: "synthwave", announce: false }), createdAt: "2026-05-26T11:59:00.000Z" };
+    const state = { ...defaultRadioState(), currentTrack: current, history: [current, freshDuplicate] };
+
+    expect(findDuplicateRadioTitleTracks(state, now).map((track) => track.filename)).toEqual([]);
   });
 
   it("removes cleaned tracks from the lineup and advances current when needed", () => {

@@ -11,6 +11,7 @@ import {
   buildRadioTasteDistillationPrompt,
   buildRadioLanStreamUrl,
   buildRadioPublicStreamUrl,
+  buildRadioStats,
   buildRadioStreamState,
   buildAnnouncementText,
   buildRadioAnnouncementFilename,
@@ -86,7 +87,7 @@ export async function GET(request: NextRequest) {
       });
     }
     const promptModels = await listOllamaPromptModels();
-    return NextResponse.json({ ok: true, state: buildRadioResponseState(state, request), promptModels });
+    return NextResponse.json({ ok: true, state: await buildRadioResponseState(state, request), promptModels });
   } catch (error) {
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Unknown radio error" }, { status: 500 });
   }
@@ -115,7 +116,7 @@ export async function POST(request: NextRequest) {
         updatedAt: new Date().toISOString(),
       }, body.styleId ?? state.selectedStyleId);
       await writeRadioState(nextState);
-      return NextResponse.json({ ok: true, state: buildRadioResponseState(nextState, request) });
+      return NextResponse.json({ ok: true, state: await buildRadioResponseState(nextState, request) });
     }
 
     if (action === "testVoice") {
@@ -146,7 +147,7 @@ export async function POST(request: NextRequest) {
       const draft = await draftWithOllama(state, styleId, promptModel);
       const nextState = { ...state, selectedStyleId: styleId, promptModel, currentDraft: draft, updatedAt: new Date().toISOString() };
       await writeRadioState(nextState);
-      return NextResponse.json({ ok: true, draft, state: buildRadioResponseState(nextState, request) });
+      return NextResponse.json({ ok: true, draft, state: await buildRadioResponseState(nextState, request) });
     }
 
     if (action === "track") {
@@ -170,20 +171,20 @@ export async function POST(request: NextRequest) {
       await writeTrackRadioMetadata(finalTrack, state);
       const nextState = registerRadioTrack({ ...state, currentDraft: undefined }, finalTrack);
       await writeRadioState(nextState);
-      return NextResponse.json({ ok: true, track: finalTrack, state: buildRadioResponseState(nextState, request) });
+      return NextResponse.json({ ok: true, track: finalTrack, state: await buildRadioResponseState(nextState, request) });
     }
 
     if (action === "fallbackTrack") {
       const fallback = await registerStarredLibraryFallbackTrack(state, normalizeFallbackReason(body.reason));
       if (!fallback) return NextResponse.json({ ok: false, error: "No starred library MP3 fallback is available" }, { status: 404 });
-      return NextResponse.json({ ok: true, fallbackTrack: fallback.track, state: buildRadioResponseState(fallback.state, request) });
+      return NextResponse.json({ ok: true, fallbackTrack: fallback.track, state: await buildRadioResponseState(fallback.state, request) });
     }
 
     if (action === "selectTrack") {
       const result = selectRadioTrack(state, body.filename);
       if (!result.selectedTrack) return NextResponse.json({ ok: false, error: "Track is not in the radio lineup" }, { status: 404 });
       await writeRadioState(result.state);
-      return NextResponse.json({ ok: true, track: result.selectedTrack, state: buildRadioResponseState(result.state, request) });
+      return NextResponse.json({ ok: true, track: result.selectedTrack, state: await buildRadioResponseState(result.state, request) });
     }
 
     if (action === "skipTrack") {
@@ -191,7 +192,7 @@ export async function POST(request: NextRequest) {
       const nextState = advanceRadioCurrentTrack(state);
       const skippedTrack = previousTrack && nextState.currentTrack?.filename !== previousTrack.filename ? previousTrack : undefined;
       if (skippedTrack) await writeRadioState(nextState);
-      return NextResponse.json({ ok: true, skippedTrack, state: buildRadioResponseState(nextState, request) });
+      return NextResponse.json({ ok: true, skippedTrack, state: await buildRadioResponseState(nextState, request) });
     }
 
     if (action === "deleteTrack") {
@@ -202,7 +203,7 @@ export async function POST(request: NextRequest) {
       const nextState = removeRadioTracksFromLineup(state, [deletedTrack]);
       await removeDeletedTrackAudio(deletedTrack, state);
       await writeRadioState(nextState);
-      return NextResponse.json({ ok: true, deletedTrack, state: buildRadioResponseState(nextState, request) });
+      return NextResponse.json({ ok: true, deletedTrack, state: await buildRadioResponseState(nextState, request) });
     }
 
     if (action === "rating") {
@@ -215,12 +216,16 @@ export async function POST(request: NextRequest) {
       if (rejectResult.rejectedTrack) await removeRejectedTrackAudio(rejectResult.rejectedTrack);
       const nextState = await distillRadioTasteIfPossible(rejectResult.state, styleId);
       await writeRadioState(nextState);
-      return NextResponse.json({ ok: true, rejectedTrack: rejectResult.rejectedTrack, state: buildRadioResponseState(nextState, request) });
+      return NextResponse.json({ ok: true, rejectedTrack: rejectResult.rejectedTrack, state: await buildRadioResponseState(nextState, request) });
     }
 
     if (action === "cleanup") {
       const expiredTracks = findRadioTracksForCleanup(state);
-      const duplicateTracks = findDuplicateRadioTitleTracks(removeRadioTracksFromLineup(state, expiredTracks));
+      const cleanupBaseState = removeRadioTracksFromLineup(state, expiredTracks);
+      const cleanupBaseStreamState = buildRadioStreamState(cleanupBaseState);
+      const duplicateTracks = cleanupBaseStreamState.queueAheadCount >= cleanupBaseStreamState.queueTarget
+        ? findDuplicateRadioTitleTracks(cleanupBaseState)
+        : [];
       const cleanedTracks = [...expiredTracks, ...duplicateTracks];
       for (const track of expiredTracks) {
         await removeExpiredTrackAudio(track);
@@ -228,9 +233,9 @@ export async function POST(request: NextRequest) {
       for (const track of duplicateTracks) {
         await removeDuplicateTrackAudio(track);
       }
-      const nextState = removeRadioTracksFromLineup(state, cleanedTracks);
+      const nextState = duplicateTracks.length ? removeRadioTracksFromLineup(cleanupBaseState, duplicateTracks) : cleanupBaseState;
       if (cleanedTracks.length) await writeRadioState(nextState);
-      return NextResponse.json({ ok: true, cleanedTracks, state: buildRadioResponseState(nextState, request) });
+      return NextResponse.json({ ok: true, cleanedTracks, state: await buildRadioResponseState(nextState, request) });
     }
 
     return NextResponse.json({ ok: false, error: "Unknown radio action" }, { status: 400 });
@@ -239,7 +244,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-function buildRadioResponseState(state: RadioState, request: NextRequest) {
+async function buildRadioResponseState(state: RadioState, request: NextRequest) {
   const port = request.nextUrl.port || process.env.PORT || "3007";
   const publicOrigin = resolvePublicRadioOrigin(request);
   const publicStreamUrl = buildRadioPublicStreamUrl(publicOrigin);
@@ -248,11 +253,33 @@ function buildRadioResponseState(state: RadioState, request: NextRequest) {
   const lanPlaylistUrls = buildRadioPlaylistUrls(lanStreamUrl);
   return {
     ...buildRadioStreamState(state),
+    stats: buildRadioStats(state, await getRadioAudioDiskBytes(state)),
     ...(publicStreamUrl ? { streamUrl: publicStreamUrl } : {}),
     ...(lanStreamUrl ? { lanStreamUrl } : {}),
     ...(publicPlaylistUrls ? { publicPlaylistUrls } : {}),
     ...(lanPlaylistUrls ? { lanPlaylistUrls } : {}),
   };
+}
+
+async function getRadioAudioDiskBytes(state: RadioState) {
+  const filenames = new Set<string>();
+  for (const track of state.history) {
+    if (isSafeAudioFilename(track.filename) && track.filename.toLowerCase().endsWith(".mp3")) filenames.add(track.filename);
+    if (track.announcementFilename && isSafeAudioFilename(track.announcementFilename) && track.announcementFilename.toLowerCase().endsWith(".mp3")) {
+      filenames.add(track.announcementFilename);
+    }
+  }
+
+  let bytes = 0;
+  for (const filename of filenames) {
+    try {
+      const info = await stat(outputPathForAudio(outputDir(), filename));
+      if (info.isFile()) bytes += info.size;
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+    }
+  }
+  return bytes;
 }
 
 function normalizePlaylistFormat(value: string | null): RadioPlaylistFormat | undefined {
@@ -334,7 +361,7 @@ function ollamaTagsUrl() {
 
 async function streamCurrentTrack(state: RadioState, options: { icyMetadataEnabled?: boolean; metadataOnly?: boolean; skipAnnouncement?: boolean; styleId?: ReturnType<typeof normalizeRadioStyleUrlParam> } = {}) {
   const icyMetadataEnabled = options.icyMetadataEnabled ?? false;
-  const skipAnnouncementAudio = options.skipAnnouncement || options.metadataOnly;
+  const clientSkipsAnnouncementAudio = options.skipAnnouncement || options.metadataOnly;
   let streamState = resolveStreamStyleState(state, options.styleId);
   let pendingFilenames: string[] = [];
   let pendingTrack: RadioTrackRecord | undefined;
@@ -422,6 +449,7 @@ async function streamCurrentTrack(state: RadioState, options: { icyMetadataEnabl
             continue;
           }
 
+          const skipAnnouncementAudio = clientSkipsAnnouncementAudio || !streamState.announceEnabled;
           const playableTrack = skipAnnouncementAudio ? track : await prepareTrackForStreamPlayback(track, streamState);
           if (playableTrack !== track) {
             streamState = replaceRadioTrackInLineup(streamState, playableTrack);

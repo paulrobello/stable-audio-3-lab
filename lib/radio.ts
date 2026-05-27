@@ -72,6 +72,13 @@ export type RadioTrackRecord = {
   ratedAt?: string;
 };
 
+export type RadioStats = {
+  generatedSongCount: number;
+  thumbsUpCount: number;
+  thumbsDownCount: number;
+  audioDiskBytes: number;
+};
+
 export type RadioState = {
   selectedStyleId: RadioStyleId;
   announceEnabled: boolean;
@@ -99,6 +106,7 @@ export type RadioStreamState = RadioState & {
   lanStreamUrl?: string;
   publicPlaylistUrls?: RadioPlaylistUrls;
   lanPlaylistUrls?: RadioPlaylistUrls;
+  stats?: RadioStats;
 };
 
 export type RadioPlaylistFormat = "m3u" | "pls";
@@ -154,6 +162,7 @@ const DEFAULT_ANNOUNCEMENT_SUFFIX = "";
 const STREAM_URL = "/api/radio?stream=1";
 const RADIO_STATION_TITLE = "Stable Audio 3 Lab Radio";
 const RADIO_QUEUE_TARGET = 3;
+const RADIO_HISTORY_LIMIT = 50;
 const DEFAULT_RADIO_SONG_LENGTH_MINUTES = 2;
 const DEFAULT_UNLIKED_TRACK_EXPIRATION_HOURS = 24;
 export const radioSongLengthMinuteOptions = [1, 2, 3, 4, 5, 6] as const;
@@ -587,8 +596,9 @@ export function createFallbackRadioPromptDraft(state: RadioState, styleIdInput: 
   const variationSeed = `${compactTimestamp(nowInput)}-${state.history.length + 1}`;
   const usedTitles = new Set(state.history.map((track) => track.title));
   const variant = variants.find((name) => !usedTitles.has(`${style.label} ${name}`) && !usedTitles.has(`${style.label} ${name} Keeper`)) ?? `Signal ${state.history.length + 1}`;
+  const title = makeUniqueRadioTrackTitle(`${style.label} ${likedTexture ? `${variant} Keeper` : variant}`, state.history);
   return createRadioPromptDraft({
-    title: `${style.label} ${likedTexture ? `${variant} Keeper` : variant}`,
+    title,
     prompt: [style.seedPrompt, likedTexture ? `emphasize ${likedTexture}` : `add a fresh ${variant.toLowerCase()} melodic motif`, `variation seed ${variationSeed}`, "polished full-song intro and outro"].join(", "),
     negativePrompt: [style.negativePrompt, dislikedTexture ? `avoid ${dislikedTexture}` : ""].filter(Boolean).join(", "),
     styleId,
@@ -601,8 +611,9 @@ export function parseRadioPromptDraft(rawResponse: string, state: RadioState, st
   const styleId = normalizeRadioStyleId(styleIdInput);
   try {
     const parsed = JSON.parse(extractJsonObject(rawResponse)) as Partial<Record<"title" | "prompt" | "negativePrompt", unknown>>;
+    const title = makeUniqueRadioTrackTitle(typeof parsed.title === "string" ? parsed.title : getRadioStyle(styleId).label, state.history);
     return createRadioPromptDraft({
-      title: typeof parsed.title === "string" ? parsed.title : getRadioStyle(styleId).label,
+      title,
       prompt: typeof parsed.prompt === "string" ? parsed.prompt : getRadioStyle(styleId).seedPrompt,
       negativePrompt: typeof parsed.negativePrompt === "string" ? parsed.negativePrompt : getRadioStyle(styleId).negativePrompt,
       styleId,
@@ -613,6 +624,35 @@ export function parseRadioPromptDraft(rawResponse: string, state: RadioState, st
   } catch {
     return { ...createFallbackRadioPromptDraft(state, styleId, modelInput), rawResponse: rawResponse.slice(0, 4000) };
   }
+}
+
+export function makeUniqueRadioTrackTitle(titleInput: string, history: Pick<RadioTrackRecord, "title">[]): string {
+  const title = cleanShortText(stripRadioKeeperSuffix(titleInput), "Untitled Signal", 80);
+  const existingTitles = history.map((track) => cleanShortText(stripRadioKeeperSuffix(track.title), "", 120)).filter(Boolean);
+  const titleKey = normalizeTitleKey(title);
+  if (!existingTitles.some((existingTitle) => normalizeTitleKey(existingTitle) === titleKey)) return title;
+
+  const numeric = splitLastTitleNumber(title);
+  if (!numeric) {
+    const escapedTitle = escapeRegExp(title);
+    const familyPattern = new RegExp(`^${escapedTitle}(?:\\s+(\\d+))?$`, "i");
+    const highest = existingTitles.reduce((currentHighest, existingTitle) => {
+      const match = existingTitle.match(familyPattern);
+      if (!match) return currentHighest;
+      return Math.max(currentHighest, match[1] ? Number(match[1]) : 1);
+    }, 1);
+    return cleanShortText(`${title} ${highest + 1}`, title, 80);
+  }
+
+  const prefix = title.slice(0, numeric.start);
+  const suffix = title.slice(numeric.end);
+  const familyPattern = new RegExp(`^${escapeRegExp(prefix)}(\\d+)${escapeRegExp(suffix)}$`, "i");
+  const highest = existingTitles.reduce((currentHighest, existingTitle) => {
+    const match = existingTitle.match(familyPattern);
+    return match ? Math.max(currentHighest, Number(match[1])) : currentHighest;
+  }, numeric.value);
+  const nextNumber = String(highest + 1).padStart(numeric.width, "0");
+  return cleanShortText(`${prefix}${nextNumber}${suffix}`, title, 80);
 }
 
 export function createRadioTrackRecord({
@@ -671,6 +711,7 @@ export function registerRadioTrack(state: RadioState, track: RadioTrackRecord): 
     ? [...existing.slice(0, insertIndex), track, ...existing.slice(insertIndex)]
     : [track];
   const currentTrack = findCurrentTrackForStyle({ ...state, history }, track.styleId) ?? track;
+  const cappedHistory = capRadioHistory(history, currentTrack);
   return {
     ...state,
     selectedStyleId: track.styleId,
@@ -679,7 +720,7 @@ export function registerRadioTrack(state: RadioState, track: RadioTrackRecord): 
       ...state.currentTrackByStyle,
       [track.styleId]: currentTrack.filename,
     },
-    history: history.slice(0, 50),
+    history: cappedHistory,
     updatedAt: nextTimestamp(state.updatedAt),
   };
 }
@@ -789,7 +830,10 @@ export function findRadioTracksForCleanup(state: RadioState, nowInput = new Date
   });
 }
 
-export function findDuplicateRadioTitleTracks(state: RadioState) {
+export function findDuplicateRadioTitleTracks(state: RadioState, nowInput = new Date().toISOString(), minAgeMinutes = 10) {
+  const now = Date.parse(nowInput);
+  if (!Number.isFinite(now)) return [];
+  const minAgeMs = Math.max(0, minAgeMinutes) * 60 * 1000;
   const seen = new Set<string>();
   return state.history.filter((track) => {
     const titleKey = track.title.trim().toLowerCase();
@@ -798,6 +842,8 @@ export function findDuplicateRadioTitleTracks(state: RadioState) {
       seen.add(titleKey);
       return false;
     }
+    const createdAt = Date.parse(track.createdAt);
+    if (!Number.isFinite(createdAt) || now - createdAt < minAgeMs) return false;
     return track.filename !== state.currentTrack?.filename && track.rating !== "up" && track.filename.toLowerCase().endsWith(".mp3");
   });
 }
@@ -833,6 +879,20 @@ export function buildRadioStreamState(state: RadioState): RadioStreamState {
     needsQueueFill: queueAheadCount < RADIO_QUEUE_TARGET,
     ...(streamReady ? { streamUrl: STREAM_URL } : {}),
   };
+}
+
+export function buildRadioStats(state: RadioState, audioDiskBytes = 0): RadioStats {
+  const preferences = Object.values(state.preferences);
+  return {
+    generatedSongCount: state.history.filter((track) => isRadioGeneratedSong(track)).length,
+    thumbsUpCount: preferences.reduce((sum, preference) => sum + (preference?.likes.length ?? 0), 0),
+    thumbsDownCount: preferences.reduce((sum, preference) => sum + (preference?.dislikes.length ?? 0), 0),
+    audioDiskBytes: Math.max(0, Math.round(Number.isFinite(audioDiskBytes) ? audioDiskBytes : 0)),
+  };
+}
+
+function isRadioGeneratedSong(track: RadioTrackRecord) {
+  return track.source !== "library-fallback" && track.filename.toLowerCase().endsWith(".mp3");
 }
 
 export function buildRadioLanStreamUrl(lanIp: string | undefined, port: string | number | undefined, styleIdInput?: unknown) {
@@ -967,6 +1027,17 @@ function rebuildRadioQueuePositions(positions: RadioQueuePositions, history: Rad
   return rebuilt;
 }
 
+function capRadioHistory(history: RadioTrackRecord[], currentTrack: RadioTrackRecord | undefined) {
+  if (history.length <= RADIO_HISTORY_LIMIT) return history;
+  if (!currentTrack) return history.slice(0, RADIO_HISTORY_LIMIT);
+  const currentIndex = history.findIndex((track) => track.filename === currentTrack.filename);
+  if (currentIndex < 0) return history.slice(-RADIO_HISTORY_LIMIT);
+  const currentAndQueued = history.slice(currentIndex);
+  if (currentAndQueued.length >= RADIO_HISTORY_LIMIT) return currentAndQueued.slice(0, RADIO_HISTORY_LIMIT);
+  const previous = history.slice(0, currentIndex).slice(-(RADIO_HISTORY_LIMIT - currentAndQueued.length));
+  return [...previous, ...currentAndQueued];
+}
+
 function alignRadioStateToSelectedStyle(state: RadioState): RadioState {
   const currentTrack = findCurrentTrackForStyle(state, state.selectedStyleId);
   const currentTrackByStyle = { ...state.currentTrackByStyle };
@@ -1052,6 +1123,30 @@ function randomSuffix() {
 function cleanShortText(value: string, fallback: string, maxLength: number) {
   const cleaned = value.replace(/\s+/g, " ").trim();
   return (cleaned || fallback).slice(0, maxLength);
+}
+
+function normalizeTitleKey(value: string) {
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function stripRadioKeeperSuffix(value: string) {
+  return value.replace(/\s+Keeper\s*$/i, "").trim() || value;
+}
+
+function splitLastTitleNumber(value: string) {
+  const matches = [...value.matchAll(/\d+/g)];
+  const lastMatch = matches.at(-1);
+  if (!lastMatch || lastMatch.index === undefined) return undefined;
+  return {
+    start: lastMatch.index,
+    end: lastMatch.index + lastMatch[0].length,
+    value: Number(lastMatch[0]),
+    width: lastMatch[0].length,
+  };
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function slugForFilename(value: string, maxLength: number) {
