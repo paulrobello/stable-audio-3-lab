@@ -629,6 +629,65 @@ describe("radio page loading", () => {
     }));
   });
 
+  it("bulk removes selected radio queue rows after confirmation", async () => {
+    const previousTrack = {
+      ...currentTrack,
+      id: "track-previous",
+      filename: "previous_song.mp3",
+      title: "Previous Song",
+      prompt: "previous prompt",
+    };
+    const secondPreviousTrack = {
+      ...currentTrack,
+      id: "track-second-previous",
+      filename: "second_previous_song.mp3",
+      title: "Second Previous Song",
+      prompt: "second previous prompt",
+    };
+    const stateWithLineup = {
+      ...radioState,
+      currentTrack,
+      history: [previousTrack, secondPreviousTrack, currentTrack],
+      streamReady: true,
+      streamUrl: "/api/radio?stream=1",
+      queueAheadCount: 3,
+      needsQueueFill: false,
+    };
+    let latestState: RadioStreamState = stateWithLineup;
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as { action?: string; filename?: string } : {};
+      let deletedTrack: RadioTrackRecord | undefined;
+      if (body.action === "deleteTrack" && body.filename) {
+        deletedTrack = latestState.history.find((track) => track.filename === body.filename);
+        latestState = {
+          ...latestState,
+          history: latestState.history.filter((track) => track.filename !== body.filename),
+          updatedAt: "2026-05-26T12:00:01.000Z",
+        };
+      }
+      return {
+        json: async () => ({ ok: true, deletedTrack, state: latestState, promptModels: ["qwen3:14b"], cleanedTracks: [] }),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(<RadioStationClient initialState={stateWithLineup} initialPromptModels={["qwen3:14b"]} />);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select Previous Song" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select Second Previous Song" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove selected (2)" }));
+
+    await waitFor(() => expect(screen.queryByText("Previous Song")).toBeNull());
+    expect(screen.queryByText("Second Previous Song")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith("/api/radio", expect.objectContaining({
+      body: expect.stringContaining('"filename":"previous_song.mp3"'),
+    }));
+    expect(fetchMock).toHaveBeenCalledWith("/api/radio", expect.objectContaining({
+      body: expect.stringContaining('"filename":"second_previous_song.mp3"'),
+    }));
+  });
+
   it("shows only the selected music style queue in the lineup", async () => {
     const ambientTrack = {
       ...currentTrack,

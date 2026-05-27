@@ -33,6 +33,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
   const [browserStreamUrl, setBrowserStreamUrl] = useState(initialState?.streamUrl ?? initialState?.lanStreamUrl ?? "");
   const [busy, setBusy] = useState<"draft" | "generate" | "rating" | "config" | "maintenance" | "select" | "delete" | "voice" | null>(null);
   const [optimisticLike, setOptimisticLike] = useState<{ trackKey: string; liked: boolean } | null>(null);
+  const [selectedQueueTrackIds, setSelectedQueueTrackIds] = useState<Set<string>>(() => new Set());
   const [streamReloadKey, setStreamReloadKey] = useState(0);
   const [trackElapsedSeconds, setTrackElapsedSeconds] = useState(0);
   const [playbackPhase, setPlaybackPhase] = useState<RadioPlaybackPhase>(() => initialState?.currentTrack?.announcementFilename ? "announcement" : "song");
@@ -56,6 +57,12 @@ export default function RadioStationClient({ initialState = null, initialPromptM
     () => radioState?.history.filter((track) => track.styleId === selectedStyleId) ?? [],
     [radioState?.history, selectedStyleId],
   );
+  const selectedQueueTracks = useMemo(
+    () => selectedStyleQueue.filter((track) => selectedQueueTrackIds.has(track.id)),
+    [selectedQueueTrackIds, selectedStyleQueue],
+  );
+  const selectedQueueCount = selectedQueueTracks.length;
+  const allQueueTracksSelected = selectedStyleQueue.length > 0 && selectedQueueCount === selectedStyleQueue.length;
   const activeDraft = draft ?? radioState?.currentDraft ?? null;
   const browserOriginStreamUrl = useBrowserOriginStreamUrl(radioState?.streamUrl ?? radioState?.lanStreamUrl ?? browserStreamUrl);
   const visibleStreamUrl = browserOriginStreamUrl;
@@ -97,6 +104,14 @@ export default function RadioStationClient({ initialState = null, initialPromptM
     setPlaybackPhase(currentTrack?.announcementFilename ? "announcement" : "song");
     streamElapsedAtTrackStartRef.current = readAudioCurrentTime(audioRef.current);
   }, [currentTrackKey, currentTrack?.announcementFilename]);
+
+  useEffect(() => {
+    const visibleIds = new Set(selectedStyleQueue.map((track) => track.id));
+    setSelectedQueueTrackIds((previous) => {
+      const next = new Set([...previous].filter((trackId) => visibleIds.has(trackId)));
+      return next.size === previous.size ? previous : next;
+    });
+  }, [selectedStyleQueue]);
 
   useEffect(() => {
     if (!resumeAfterStreamReloadRef.current || !audioRef.current) return;
@@ -431,6 +446,56 @@ export default function RadioStationClient({ initialState = null, initialPromptM
     } catch (error) {
       resumeAfterStreamReloadRef.current = false;
       setStatus(error instanceof Error ? error.message : "Could not delete radio queue item.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function toggleQueueTrackSelection(trackId: string, selected: boolean) {
+    setSelectedQueueTrackIds((previous) => {
+      const next = new Set(previous);
+      if (selected) next.add(trackId);
+      else next.delete(trackId);
+      return next;
+    });
+  }
+
+  function toggleAllQueueTrackSelection(selected: boolean) {
+    setSelectedQueueTrackIds(selected ? new Set(selectedStyleQueue.map((track) => track.id)) : new Set());
+  }
+
+  async function deleteSelectedLineupTracks() {
+    const tracks = selectedQueueTracks;
+    if (!tracks.length) return;
+    const countText = tracks.length === 1 ? `"${tracks[0].title}"` : `${tracks.length} selected songs`;
+    const confirmed = window.confirm(`Delete ${countText} from the radio queue and remove their audio files? Feedback metadata will be kept for liked/disliked tracks.`);
+    if (!confirmed) return;
+
+    setBusy("delete");
+    setStatus(`Deleting ${tracks.length} selected ${tracks.length === 1 ? "song" : "songs"}...`);
+    try {
+      const deletedTrackIds = new Set(tracks.map((track) => track.id));
+      const deletedCurrentTrack = tracks.some((track) => track.filename === currentTrack?.filename);
+      let latestJson: RadioApiResponse | null = null;
+      for (const track of tracks) {
+        latestJson = await postRadio({ action: "deleteTrack", filename: track.filename });
+      }
+      if (deletedCurrentTrack) {
+        resumeAfterStreamReloadRef.current = true;
+        setStreamReloadKey((key) => key + 1);
+        setTrackElapsedSeconds(0);
+      }
+      setSelectedQueueTrackIds((previous) => {
+        const next = new Set(previous);
+        for (const trackId of deletedTrackIds) next.delete(trackId);
+        return next;
+      });
+      maintenancePausedRef.current = false;
+      setStatus(`Deleted ${tracks.length} selected ${tracks.length === 1 ? "song" : "songs"} from the radio queue.`);
+      if (latestJson?.state) await maintainQueue(latestJson.state);
+    } catch (error) {
+      resumeAfterStreamReloadRef.current = false;
+      setStatus(error instanceof Error ? error.message : "Could not delete selected radio queue items.");
     } finally {
       setBusy(null);
     }
@@ -804,22 +869,54 @@ export default function RadioStationClient({ initialState = null, initialPromptM
             <Panel title={`${selectedStyle.label} queue`} className="mt-4">
               {selectedStyleQueue.length ? (
                 <div className="grid gap-2">
+                  <div className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-black/18 p-3 sm:flex-row sm:items-center sm:justify-between">
+                    <label className="flex items-center gap-3 text-xs font-bold uppercase tracking-[0.14em] text-white/58">
+                      <input
+                        type="checkbox"
+                        checked={allQueueTracksSelected}
+                        onChange={(event) => toggleAllQueueTrackSelection(event.currentTarget.checked)}
+                        aria-label={`Select all ${selectedStyle.label} queue songs`}
+                        disabled={busy === "delete"}
+                        className="h-4 w-4 accent-rose-300"
+                      />
+                      <span>{selectedQueueCount ? `${selectedQueueCount} selected` : "Select queue songs"}</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => void deleteSelectedLineupTracks()}
+                      disabled={selectedQueueCount === 0 || busy === "delete"}
+                      className="touch-manipulation rounded-full border border-rose-200/25 bg-rose-400/10 px-4 py-2 text-xs font-bold uppercase tracking-[0.12em] text-rose-100/85 transition hover:border-rose-200/45 hover:bg-rose-400/18 hover:text-rose-50 disabled:cursor-default disabled:opacity-45"
+                    >
+                      {busy === "delete" && selectedQueueCount ? "Removing..." : `Remove selected (${selectedQueueCount})`}
+                    </button>
+                  </div>
                   {selectedStyleQueue.map((track) => {
                     const isCurrentTrack = track.filename === currentTrack?.filename;
                     const trackLiked = isRadioTrackLiked(track, radioState);
+                    const trackSelected = selectedQueueTrackIds.has(track.id);
                     return (
                       <div
                         key={track.id}
                         aria-current={isCurrentTrack ? "true" : undefined}
                         className={clsx(
                           "min-w-0 rounded-2xl border p-3 transition",
-                          isCurrentTrack ? "border-emerald-200/35 bg-emerald-200/[0.08]" : "border-white/10 bg-white/[0.035]",
+                          trackSelected ? "border-rose-200/35 bg-rose-300/[0.08]" : isCurrentTrack ? "border-emerald-200/35 bg-emerald-200/[0.08]" : "border-white/10 bg-white/[0.035]",
                         )}
                       >
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                          <div className="min-w-0">
-                            <div className="min-w-0 truncate font-semibold text-white/82">{isCurrentTrack ? "Now playing: " : ""}{track.title}</div>
-                            <div className="mt-1 text-xs uppercase tracking-[0.14em] text-white/35">{trackProvenanceLabel(track)}</div>
+                          <div className="flex min-w-0 items-start gap-3">
+                            <input
+                              type="checkbox"
+                              checked={trackSelected}
+                              onChange={(event) => toggleQueueTrackSelection(track.id, event.currentTarget.checked)}
+                              aria-label={`Select ${track.title}`}
+                              disabled={busy === "delete"}
+                              className="mt-1 h-4 w-4 shrink-0 accent-rose-300"
+                            />
+                            <div className="min-w-0">
+                              <div className="min-w-0 truncate font-semibold text-white/82">{isCurrentTrack ? "Now playing: " : ""}{track.title}</div>
+                              <div className="mt-1 text-xs uppercase tracking-[0.14em] text-white/35">{trackProvenanceLabel(track)}</div>
+                            </div>
                           </div>
                           <div className="flex shrink-0 items-center gap-2">
                             {trackLiked && (
