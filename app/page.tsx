@@ -1030,18 +1030,25 @@ function LibraryPanel({
 
   return (
     <section className="mt-5 rounded-3xl border border-white/10 bg-black/25 p-4">
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
+      <div className="mb-4 flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+        <div className="min-w-0">
           <h2 className="text-lg font-semibold">Library</h2>
-          <p className="text-sm text-white/55">Listen to previous generations, filter keepers, compare variations, or download bundles.</p>
+          <p className="max-w-xl text-sm text-white/55">Listen to previous generations, filter keepers, compare variations, or download bundles.</p>
         </div>
-        <div className="flex min-w-0 flex-col gap-2 sm:items-end">
-          <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+        <div className="flex min-w-0 flex-col gap-2 xl:items-end">
+          <div className="flex min-w-0 flex-col flex-wrap gap-2 sm:flex-row sm:items-center">
             <input value={searchQuery} onChange={(event) => onSearchChange(event.target.value)} placeholder="Search filename, prompt, seed..." className="input min-w-0 sm:w-72" />
-            <label className="inline-flex min-h-10 items-center gap-2 rounded-full border border-white/10 bg-white/[0.05] px-4 py-2 text-sm font-semibold text-white/65">
-              <input type="checkbox" checked={favoritesOnly} onChange={(event) => onFavoritesOnlyChange(event.target.checked)} className="accent-amber-200" />
+            <button
+              type="button"
+              aria-pressed={favoritesOnly}
+              onClick={() => onFavoritesOnlyChange(!favoritesOnly)}
+              className={clsx(
+                "inline-flex min-h-10 items-center justify-center rounded-full border px-4 py-2 text-sm font-semibold leading-none transition",
+                favoritesOnly ? "border-amber-200/40 bg-amber-200/18 text-amber-50" : "border-white/10 bg-white/[0.05] text-white/65 hover:bg-white/10",
+              )}
+            >
               Favorites
-            </label>
+            </button>
             <label className="inline-flex min-h-10 items-center gap-2 rounded-full border border-emerald-200/15 bg-emerald-200/[0.07] px-4 py-2 text-sm font-semibold text-emerald-50">
               <span className="whitespace-nowrap">Radio queue</span>
               <select aria-label="Radio queue" value={radioQueueStyleId} onChange={(event) => onRadioQueueStyleChange(event.target.value as RadioStyleId)} className="max-w-48 rounded-full border border-white/10 bg-black/45 px-2 py-1 text-xs text-white outline-none">

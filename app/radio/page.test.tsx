@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import RadioStationClient from "./RadioStationClient";
 import type { RadioStreamState, RadioTrackRecord } from "@/lib/radio";
@@ -738,6 +738,35 @@ describe("radio page loading", () => {
     expect(screen.queryByText("Ambient Queue Song")).toBeNull();
   });
 
+  it("shows created time and age on radio queue rows", () => {
+    vi.setSystemTime(new Date("2026-05-27T12:00:00.000Z"));
+    const queuedTrack = {
+      ...currentTrack,
+      id: "track-queued-metadata",
+      filename: "queued_metadata_song.mp3",
+      title: "Queued Metadata Song",
+      prompt: "queue metadata prompt",
+      createdAt: "2026-05-26T12:00:00.000Z",
+    };
+    const stateWithMetadata = {
+      ...radioState,
+      currentTrack,
+      history: [currentTrack, queuedTrack],
+      streamReady: true,
+      streamUrl: "/api/radio?stream=1",
+      queueAheadCount: 1,
+      needsQueueFill: true,
+    };
+
+    const { container } = render(<RadioStationClient initialState={stateWithMetadata} initialPromptModels={["qwen3:14b"]} />);
+
+    expect(screen.getByText("Queued Metadata Song")).toBeTruthy();
+    expect(screen.getAllByText("Created").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/May 26, 2026/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("1 day old").length).toBeGreaterThan(0);
+    expect(container.querySelector('time[datetime="2026-05-26T12:00:00.000Z"]')).toBeTruthy();
+  });
+
   it("shows thumbs up status for liked queue items", () => {
     const likedQueuedTrack = {
       ...currentTrack,
@@ -762,7 +791,7 @@ describe("radio page loading", () => {
     render(<RadioStationClient initialState={stateWithLikedQueuedTrack} initialPromptModels={["qwen3:14b"]} />);
 
     expect(screen.getByText("Liked Queue Song")).toBeTruthy();
-    expect(screen.getByText("Thumbs up")).toBeTruthy();
+    expect(screen.getAllByText("Thumbs up").length).toBeGreaterThan(0);
   });
 
   it("indicates when the current song is already liked", () => {
@@ -781,6 +810,37 @@ describe("radio page loading", () => {
     render(<RadioStationClient initialState={stateWithLikedTrack} initialPromptModels={["qwen3:14b"]} />);
 
     expect(screen.getByRole("button", { name: "Liked" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("shows radio station stats from the stream state", () => {
+    const stateWithStats = {
+      ...radioState,
+      currentTrack,
+      history: [currentTrack],
+      streamReady: true,
+      streamUrl: "/api/radio?stream=1",
+      stats: {
+        generatedSongCount: 12,
+        thumbsUpCount: 3,
+        thumbsDownCount: 2,
+        audioDiskBytes: 5 * 1024 * 1024,
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      json: async () => ({ ok: true, state: stateWithStats, promptModels: ["qwen3:14b"] }),
+    }));
+
+    render(<RadioStationClient initialState={stateWithStats} initialPromptModels={["qwen3:14b"]} />);
+
+    const stats = within(screen.getByLabelText("Station stats"));
+    expect(stats.getByText("Songs generated")).toBeTruthy();
+    expect(stats.getByText("12")).toBeTruthy();
+    expect(stats.getByText("Thumbs up")).toBeTruthy();
+    expect(stats.getByText("3")).toBeTruthy();
+    expect(stats.getByText("Thumbs down")).toBeTruthy();
+    expect(stats.getByText("2")).toBeTruthy();
+    expect(stats.getByText("Audio on disk")).toBeTruthy();
+    expect(stats.getByText("5.0 MB")).toBeTruthy();
   });
 
   it("indicates when the current song prompt is in saved likes", () => {

@@ -179,6 +179,48 @@ describe("main page radio lineup action", () => {
     expect(await screen.findByText("radio_announce_keeper_now_playing.mp3")).toBeTruthy();
   });
 
+  it("uses the Favorites pill itself as the library filter toggle", async () => {
+    window.localStorage.clear();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (input === "/api/library") {
+        return {
+          json: async () => ({
+            ok: true,
+            items: [
+              { filename: "favorite_song.mp3", audioUrl: "/outputs/favorite_song.mp3", downloadUrl: "/outputs/favorite_song.mp3", format: "mp3", bytes: 4096, createdAt: "2026-05-21T12:00:00.000Z", favorite: true },
+              { filename: "plain_song.mp3", audioUrl: "/outputs/plain_song.mp3", downloadUrl: "/outputs/plain_song.mp3", format: "mp3", bytes: 4096, createdAt: "2026-05-21T12:01:00.000Z", favorite: false },
+            ],
+          }),
+        } as Response;
+      }
+      return { arrayBuffer: async () => new ArrayBuffer(0) } as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      beginPath: vi.fn(),
+      clearRect: vi.fn(),
+      createLinearGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
+      fillRect: vi.fn(),
+      lineTo: vi.fn(),
+      moveTo: vi.fn(),
+      stroke: vi.fn(),
+    } as unknown as CanvasRenderingContext2D);
+
+    render(<Home />);
+
+    const favoritesToggle = await screen.findByRole("button", { name: "Favorites" });
+    expect(screen.queryByRole("checkbox", { name: "Favorites" })).toBeNull();
+    expect(favoritesToggle.getAttribute("aria-pressed")).toBe("false");
+    expect(await screen.findByText(/favorite_song\.mp3/)).toBeTruthy();
+    expect(await screen.findByText("plain_song.mp3")).toBeTruthy();
+
+    fireEvent.click(favoritesToggle);
+
+    expect(favoritesToggle.getAttribute("aria-pressed")).toBe("true");
+    expect(await screen.findByText(/favorite_song\.mp3/)).toBeTruthy();
+    expect(screen.queryByText("plain_song.mp3")).toBeNull();
+  });
+
   it("adds an mp3 library song to the radio lineup with its saved prompt metadata", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (input === "/api/library") {

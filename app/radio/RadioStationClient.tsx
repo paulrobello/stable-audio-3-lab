@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import { ForwardIcon, HandThumbDownIcon, HandThumbUpIcon, TrashIcon } from "@heroicons/react/24/solid";
-import { defaultRadioTtsVoice, getRadioTtsVoiceOptions, normalizeRadioSongLengthMinutes, normalizeRadioUnlikedTrackExpirationHours, radioOllamaModels, radioSongLengthMinuteOptions, radioStyles, radioUnlikedTrackExpirationHourOptions, type RadioPlaylistUrls, type RadioPromptDraft, type RadioStreamState, type RadioStyleId, type RadioTrackRecord, type RadioTtsProvider, type RadioTtsVoiceOption } from "@/lib/radio";
+import { buildRadioStats, defaultRadioTtsVoice, getRadioTtsVoiceOptions, normalizeRadioSongLengthMinutes, normalizeRadioUnlikedTrackExpirationHours, radioOllamaModels, radioSongLengthMinuteOptions, radioStyles, radioUnlikedTrackExpirationHourOptions, type RadioPlaylistUrls, type RadioPromptDraft, type RadioStats, type RadioStreamState, type RadioStyleId, type RadioTrackRecord, type RadioTtsProvider, type RadioTtsVoiceOption } from "@/lib/radio";
 
 type RadioApiResponse = { ok: boolean; state?: RadioStreamState; draft?: RadioPromptDraft; fallbackTrack?: RadioTrackRecord; rejectedTrack?: RadioTrackRecord; skippedTrack?: RadioTrackRecord; deletedTrack?: RadioTrackRecord; cleanedTracks?: RadioTrackRecord[]; promptModels?: string[]; voices?: RadioTtsVoiceOption[]; error?: string };
 type RadioTestVoiceResponse = { ok: boolean; audioUrl?: string; error?: string };
@@ -79,6 +79,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
   const playerStreamUrl = playbackPhase === "announcement" && announcementUrl ? announcementUrl : reloadedSongStreamUrl;
   const currentTrackKey = trackFeedbackKey(currentTrack);
   const currentTrackLiked = optimisticLike?.trackKey === currentTrackKey ? optimisticLike.liked : isRadioTrackLiked(currentTrack, radioState);
+  const radioStats = useMemo<RadioStats | null>(() => radioState ? radioState.stats ?? buildRadioStats(radioState) : null, [radioState]);
   const songDurationSeconds = songLengthMinutes * 60;
   const trackDurationSeconds = currentTrack?.durationSeconds ?? songDurationSeconds;
   const safeTrackElapsedSeconds = Math.min(trackElapsedSeconds, trackDurationSeconds);
@@ -727,6 +728,12 @@ export default function RadioStationClient({ initialState = null, initialPromptM
               </button>
             </div>
           </div>
+          <div aria-label="Station stats" className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            <StatTile label="Songs generated" value={radioStats ? formatStatNumber(radioStats.generatedSongCount) : "--"} />
+            <StatTile label="Thumbs up" value={radioStats ? formatStatNumber(radioStats.thumbsUpCount) : "--"} />
+            <StatTile label="Thumbs down" value={radioStats ? formatStatNumber(radioStats.thumbsDownCount) : "--"} />
+            <StatTile label="Audio on disk" value={radioStats ? formatAudioBytes(radioStats.audioDiskBytes) : "--"} />
+          </div>
         </section>
 
         <section className="mt-6 grid gap-5 xl:grid-cols-[minmax(320px,410px)_minmax(0,1fr)]">
@@ -937,6 +944,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
                             <div className="min-w-0">
                               <div className="min-w-0 truncate font-semibold text-white/82">{isCurrentTrack ? "Now playing: " : ""}{track.title}</div>
                               <div className="mt-1 text-xs uppercase tracking-[0.14em] text-white/35">{trackProvenanceLabel(track)}</div>
+                              <QueueTrackMetadata track={track} />
                             </div>
                           </div>
                           <div className="flex shrink-0 items-center gap-2">
@@ -1115,6 +1123,49 @@ function trackProvenanceLabel(track: RadioTrackRecord) {
   return [track.styleId, source, `${track.promptProvider ?? "unknown"} ${track.promptModel ?? ""}`.trim()].filter(Boolean).join(" • ");
 }
 
+function QueueTrackMetadata({ track }: { track: RadioTrackRecord }) {
+  const createdAtText = formatTrackCreatedAt(track.createdAt);
+  const ageText = formatTrackAge(track.createdAt);
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-white/38">
+      <span>
+        Created <time dateTime={track.createdAt}>{createdAtText}</time>
+      </span>
+      <span aria-hidden="true">•</span>
+      <span>{ageText}</span>
+    </div>
+  );
+}
+
+function formatTrackCreatedAt(value: string) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
+function formatTrackAge(value: string, nowMs = Date.now()) {
+  const createdMs = Date.parse(value);
+  if (!Number.isFinite(createdMs)) return "age unknown";
+  const elapsedMs = Math.max(0, nowMs - createdMs);
+  const minuteMs = 60_000;
+  const hourMs = 60 * minuteMs;
+  const dayMs = 24 * hourMs;
+  if (elapsedMs < minuteMs) return "just now";
+  if (elapsedMs < hourMs) {
+    const minutes = Math.floor(elapsedMs / minuteMs);
+    return `${minutes} minute${minutes === 1 ? "" : "s"} old`;
+  }
+  if (elapsedMs < dayMs) {
+    const hours = Math.floor(elapsedMs / hourMs);
+    return `${hours} hour${hours === 1 ? "" : "s"} old`;
+  }
+  const days = Math.floor(elapsedMs / dayMs);
+  return `${days} day${days === 1 ? "" : "s"} old`;
+}
+
 function isRadioTrackLiked(track: RadioTrackRecord | undefined, state: RadioStreamState | null) {
   if (!track) return false;
   if (track.rating === "up") return true;
@@ -1125,6 +1176,32 @@ function hasRadioTrackFeedback(track: RadioTrackRecord, state: RadioStreamState 
   if (track.rating === "up" || track.rating === "down") return true;
   const preference = state?.preferences[track.styleId];
   return !!preference && (preference.likes.includes(track.prompt) || preference.dislikes.includes(track.prompt));
+}
+
+function formatStatNumber(value: number) {
+  return Math.max(0, value).toLocaleString("en-US");
+}
+
+function formatAudioBytes(bytes: number) {
+  const safeBytes = Math.max(0, bytes);
+  if (safeBytes < 1024) return `${safeBytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = safeBytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
+}
+
+function StatTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.045] p-3">
+      <div className="text-xs font-bold uppercase tracking-[0.16em] text-white/42">{label}</div>
+      <div className="mt-1 text-2xl font-semibold tracking-[-0.025em] text-white">{value}</div>
+    </div>
+  );
 }
 
 function Panel({ title, className, children }: { title: string; className?: string; children: React.ReactNode }) {

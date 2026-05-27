@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { networkInterfaces } from "node:os";
 import path from "node:path";
 import { headers } from "next/headers";
+import type { Metadata } from "next";
 import {
   buildRadioLanStreamUrl,
   buildRadioPlaylistUrls,
@@ -15,6 +16,10 @@ import {
 import RadioStationClient from "./RadioStationClient";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Pardora Radio",
+};
 
 const statePath = () => path.join(process.cwd(), ".stable-audio-radio", "state.json");
 
