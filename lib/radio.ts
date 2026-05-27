@@ -1,7 +1,8 @@
 export type RadioStyleId = (typeof radioStyles)[number]["id"];
 export type RadioRating = "up" | "down";
 export type RadioPromptProvider = "ollama" | "fallback";
-export type RadioTtsProvider = "openai" | "elevenlabs" | "deepgram" | "gemini";
+export type RadioTrackSource = "generated" | "library-fallback";
+export type RadioTtsProvider = "openai" | "elevenlabs" | "deepgram" | "gemini" | "kokoro-onnx";
 
 export type RadioTtsConfig = {
   ttsProvider: RadioTtsProvider;
@@ -10,10 +11,18 @@ export type RadioTtsConfig = {
   announcementSuffix: string;
 };
 
+export type RadioTtsVoiceOption = {
+  id: string;
+  label: string;
+  description?: string;
+};
+
 export type RadioPreference = {
   likes: string[];
   dislikes: string[];
 };
+
+export type RadioQueuePositions = Partial<Record<RadioStyleId, string>>;
 
 export type RadioPromptDraft = {
   id: string;
@@ -37,6 +46,8 @@ export type RadioTrackRecord = {
   createdAt: string;
   promptProvider?: RadioPromptProvider;
   promptModel?: string;
+  source?: RadioTrackSource;
+  fallbackReason?: string;
   announcementFilename?: string;
   durationSeconds?: number;
   rating?: RadioRating;
@@ -52,6 +63,7 @@ export type RadioState = {
   announcementPrefix: string;
   announcementSuffix: string;
   preferences: Partial<Record<RadioStyleId, RadioPreference>>;
+  currentTrackByStyle: RadioQueuePositions;
   currentDraft?: RadioPromptDraft;
   currentTrack?: RadioTrackRecord;
   history: RadioTrackRecord[];
@@ -65,7 +77,12 @@ export type RadioStreamState = RadioState & {
   needsQueueFill: boolean;
   streamUrl?: string;
   lanStreamUrl?: string;
+  publicPlaylistUrls?: RadioPlaylistUrls;
+  lanPlaylistUrls?: RadioPlaylistUrls;
 };
+
+export type RadioPlaylistFormat = "m3u" | "pls";
+export type RadioPlaylistUrls = Record<RadioPlaylistFormat, string>;
 
 export const radioOllamaModels = [
   "llama3.1:8b",
@@ -115,7 +132,101 @@ const DEFAULT_TTS_VOICE = "nova";
 const DEFAULT_ANNOUNCEMENT_PREFIX = "Now playing: ";
 const DEFAULT_ANNOUNCEMENT_SUFFIX = "";
 const STREAM_URL = "/api/radio?stream=1";
+const RADIO_STATION_TITLE = "Stable Audio 3 Lab Radio";
 const RADIO_QUEUE_TARGET = 3;
+
+const radioTtsVoicesByProvider: Record<RadioTtsProvider, RadioTtsVoiceOption[]> = {
+  openai: [
+    { id: "nova", label: "Nova", description: "Warm and friendly" },
+    { id: "alloy", label: "Alloy", description: "Neutral and balanced" },
+    { id: "ash", label: "Ash", description: "Enthusiastic and energetic" },
+    { id: "ballad", label: "Ballad", description: "Warm and soulful" },
+    { id: "coral", label: "Coral", description: "Friendly and approachable" },
+    { id: "echo", label: "Echo", description: "Smooth and articulate" },
+    { id: "fable", label: "Fable", description: "Expressive and animated" },
+    { id: "onyx", label: "Onyx", description: "Deep and authoritative" },
+    { id: "sage", label: "Sage", description: "Calm and wise" },
+    { id: "shimmer", label: "Shimmer", description: "Soft and gentle" },
+    { id: "verse", label: "Verse", description: "Clear and melodic" },
+    { id: "marin", label: "Marin", description: "Gentle and soothing" },
+    { id: "cedar", label: "Cedar", description: "Rich and resonant" },
+  ],
+  elevenlabs: [
+    { id: "Juniper", label: "Juniper" },
+  ],
+  deepgram: [
+    { id: "aura-2-thalia-en", label: "Thalia", description: "American, feminine, clear and energetic" },
+    { id: "aura-2-andromeda-en", label: "Andromeda", description: "American, feminine, casual and expressive" },
+    { id: "aura-2-helena-en", label: "Helena", description: "American, feminine, caring and natural" },
+    { id: "aura-2-apollo-en", label: "Apollo", description: "American, masculine, confident and casual" },
+    { id: "aura-2-arcas-en", label: "Arcas", description: "American, masculine, natural and smooth" },
+    { id: "aura-2-aries-en", label: "Aries", description: "American, masculine, warm and energetic" },
+    { id: "aura-asteria-en", label: "Asteria (Aura-1)", description: "American, feminine, knowledgeable" },
+    { id: "aura-luna-en", label: "Luna (Aura-1)", description: "American, feminine, friendly" },
+  ],
+  gemini: [
+    { id: "Kore", label: "Kore", description: "Firm" },
+    { id: "Zephyr", label: "Zephyr", description: "Bright" },
+    { id: "Puck", label: "Puck", description: "Upbeat" },
+    { id: "Charon", label: "Charon", description: "Informative" },
+    { id: "Fenrir", label: "Fenrir", description: "Excitable" },
+    { id: "Leda", label: "Leda", description: "Youthful" },
+    { id: "Orus", label: "Orus", description: "Firm" },
+    { id: "Aoede", label: "Aoede", description: "Breezy" },
+    { id: "Callirrhoe", label: "Callirrhoe", description: "Easy-going" },
+    { id: "Autonoe", label: "Autonoe", description: "Bright" },
+    { id: "Enceladus", label: "Enceladus", description: "Breathy" },
+    { id: "Iapetus", label: "Iapetus", description: "Clear" },
+    { id: "Umbriel", label: "Umbriel", description: "Easy-going" },
+    { id: "Algieba", label: "Algieba", description: "Smooth" },
+    { id: "Despina", label: "Despina", description: "Smooth" },
+    { id: "Erinome", label: "Erinome", description: "Clear" },
+    { id: "Algenib", label: "Algenib", description: "Gravelly" },
+    { id: "Rasalgethi", label: "Rasalgethi", description: "Informative" },
+    { id: "Laomedeia", label: "Laomedeia", description: "Upbeat" },
+    { id: "Achernar", label: "Achernar", description: "Soft" },
+    { id: "Alnilam", label: "Alnilam", description: "Firm" },
+    { id: "Schedar", label: "Schedar", description: "Even" },
+    { id: "Gacrux", label: "Gacrux", description: "Mature" },
+    { id: "Pulcherrima", label: "Pulcherrima", description: "Forward" },
+    { id: "Achird", label: "Achird", description: "Friendly" },
+    { id: "Zubenelgenubi", label: "Zubenelgenubi", description: "Casual" },
+    { id: "Vindemiatrix", label: "Vindemiatrix", description: "Gentle" },
+    { id: "Sadachbia", label: "Sadachbia", description: "Lively" },
+    { id: "Sadaltager", label: "Sadaltager", description: "Knowledgeable" },
+    { id: "Sulafat", label: "Sulafat", description: "Warm" },
+  ],
+  "kokoro-onnx": [
+    { id: "af_sarah", label: "Sarah" },
+    { id: "af_alloy", label: "Alloy" },
+    { id: "af_aoede", label: "Aoede" },
+    { id: "af_bella", label: "Bella" },
+    { id: "af_heart", label: "Heart" },
+    { id: "af_jessica", label: "Jessica" },
+    { id: "af_kore", label: "Kore" },
+    { id: "af_nicole", label: "Nicole" },
+    { id: "af_nova", label: "Nova" },
+    { id: "af_river", label: "River" },
+    { id: "af_sky", label: "Sky" },
+    { id: "am_adam", label: "Adam" },
+    { id: "am_echo", label: "Echo" },
+    { id: "am_eric", label: "Eric" },
+    { id: "am_fenrir", label: "Fenrir" },
+    { id: "am_liam", label: "Liam" },
+    { id: "am_michael", label: "Michael" },
+    { id: "am_onyx", label: "Onyx" },
+    { id: "am_puck", label: "Puck" },
+    { id: "am_santa", label: "Santa" },
+    { id: "bf_alice", label: "Alice" },
+    { id: "bf_emma", label: "Emma" },
+    { id: "bf_isabella", label: "Isabella" },
+    { id: "bf_lily", label: "Lily" },
+    { id: "bm_daniel", label: "Daniel" },
+    { id: "bm_fable", label: "Fable" },
+    { id: "bm_george", label: "George" },
+    { id: "bm_lewis", label: "Lewis" },
+  ],
+};
 
 export function defaultRadioState(now = new Date().toISOString()): RadioState {
   return {
@@ -127,6 +238,7 @@ export function defaultRadioState(now = new Date().toISOString()): RadioState {
     announcementPrefix: DEFAULT_ANNOUNCEMENT_PREFIX,
     announcementSuffix: DEFAULT_ANNOUNCEMENT_SUFFIX,
     preferences: {},
+    currentTrackByStyle: {},
     history: [],
     updatedAt: now,
   };
@@ -134,6 +246,26 @@ export function defaultRadioState(now = new Date().toISOString()): RadioState {
 
 export function normalizeRadioStyleId(value: unknown): RadioStyleId {
   return radioStyles.some((style) => style.id === value) ? value as RadioStyleId : "synthwave";
+}
+
+export function normalizeRadioState(input: Partial<RadioState> | undefined): RadioState {
+  const parsed = input ?? {};
+  const history = Array.isArray(parsed.history) ? parsed.history : [];
+  const selectedStyleId = normalizeRadioStyleId(parsed.selectedStyleId);
+  const currentTrackByStyle = normalizeRadioQueuePositions(parsed.currentTrackByStyle, history);
+  if (parsed.currentTrack?.filename && parsed.currentTrack.styleId) {
+    currentTrackByStyle[normalizeRadioStyleId(parsed.currentTrack.styleId)] ??= parsed.currentTrack.filename;
+  }
+  return alignRadioStateToSelectedStyle({
+    ...defaultRadioState(),
+    ...parsed,
+    selectedStyleId,
+    promptModel: normalizeOllamaPromptModel(parsed.promptModel),
+    ...normalizeRadioTtsConfig(parsed as Record<string, unknown>),
+    preferences: parsed.preferences ?? {},
+    currentTrackByStyle,
+    history,
+  });
 }
 
 export function normalizeOllamaPromptModel(value: unknown): string {
@@ -148,7 +280,8 @@ export function normalizeRadioRating(value: unknown): RadioRating | null {
 }
 
 export function normalizeRadioTtsProvider(value: unknown): RadioTtsProvider {
-  return value === "elevenlabs" || value === "deepgram" || value === "gemini" || value === "openai" ? value : DEFAULT_TTS_PROVIDER;
+  if (value === "kokoro") return "kokoro-onnx";
+  return value === "elevenlabs" || value === "deepgram" || value === "gemini" || value === "openai" || value === "kokoro-onnx" ? value : DEFAULT_TTS_PROVIDER;
 }
 
 export function normalizeRadioTtsText(value: unknown, fallback: string): string {
@@ -161,6 +294,19 @@ export function normalizeRadioTtsVoice(value: unknown): string {
   const voice = value.trim();
   if (!voice || voice.length > 80 || /["'<>]/.test(voice)) return DEFAULT_TTS_VOICE;
   return voice;
+}
+
+export function getRadioTtsVoiceOptions(providerInput: unknown, currentVoiceInput?: unknown): RadioTtsVoiceOption[] {
+  const provider = normalizeRadioTtsProvider(providerInput);
+  const voices = radioTtsVoicesByProvider[provider];
+  const currentVoice = typeof currentVoiceInput === "string" ? normalizeRadioTtsVoice(currentVoiceInput) : "";
+  if (!currentVoice || voices.some((voice) => voice.id === currentVoice)) return voices;
+  return [{ id: currentVoice, label: currentVoice }, ...voices];
+}
+
+export function defaultRadioTtsVoice(providerInput: unknown): string {
+  const provider = normalizeRadioTtsProvider(providerInput);
+  return radioTtsVoicesByProvider[provider][0]?.id ?? DEFAULT_TTS_VOICE;
 }
 
 export function normalizeRadioTtsConfig(input: Partial<RadioTtsConfig> | Record<string, unknown>): RadioTtsConfig {
@@ -195,15 +341,23 @@ export function resolveRadioAnnouncementFilename(track: Pick<RadioTrackRecord, "
   return isSafeAnnouncementFilename(filename) ? filename : undefined;
 }
 
-export function buildRadioTrackPlaybackFilenames(track: RadioTrackRecord) {
+export function buildRadioTrackPlaybackFilenames(track: RadioTrackRecord, options: { skipAnnouncement?: boolean } = {}) {
   return [
-    isSafeAnnouncementFilename(track.announcementFilename) ? track.announcementFilename : undefined,
+    !options.skipAnnouncement && isSafeAnnouncementFilename(track.announcementFilename) ? track.announcementFilename : undefined,
     track.filename,
   ].filter((filename): filename is string => !!filename);
 }
 
 export function getRadioStyle(styleId: RadioStyleId) {
   return radioStyles.find((style) => style.id === styleId) ?? radioStyles[0];
+}
+
+export function selectRadioStyle(state: RadioState, styleIdInput: unknown): RadioState {
+  const selectedStyleId = normalizeRadioStyleId(styleIdInput);
+  return {
+    ...alignRadioStateToSelectedStyle({ ...state, selectedStyleId }),
+    updatedAt: nextTimestamp(state.updatedAt),
+  };
 }
 
 export function recordRadioRating(state: RadioState, styleIdInput: unknown, phraseInput: unknown, ratingInput: unknown): RadioState {
@@ -371,6 +525,8 @@ export function createRadioTrackRecord({
   announce,
   promptProvider,
   promptModel,
+  source,
+  fallbackReason,
   announcementFilename,
   durationSeconds,
 }: {
@@ -381,6 +537,8 @@ export function createRadioTrackRecord({
   announce: boolean;
   promptProvider?: RadioPromptProvider;
   promptModel?: string;
+  source?: RadioTrackSource;
+  fallbackReason?: string;
   announcementFilename?: string;
   durationSeconds?: number;
 }): RadioTrackRecord {
@@ -395,6 +553,8 @@ export function createRadioTrackRecord({
     createdAt,
     ...(promptProvider ? { promptProvider } : {}),
     ...(promptModel ? { promptModel: normalizeOllamaPromptModel(promptModel) } : {}),
+    ...(source ? { source } : {}),
+    ...(fallbackReason ? { fallbackReason: cleanShortText(fallbackReason, "fallback", 120) } : {}),
     ...(announcementFilename ? { announcementFilename } : {}),
     ...(durationSeconds && Number.isFinite(durationSeconds) ? { durationSeconds: Math.max(1, Math.min(Math.round(durationSeconds), 3600)) } : {}),
   };
@@ -403,34 +563,70 @@ export function createRadioTrackRecord({
 export function registerRadioTrack(state: RadioState, track: RadioTrackRecord): RadioState {
   const existing = state.history.filter((item) => item.filename !== track.filename);
   const history = state.currentTrack ? [...existing, track] : [track, ...existing];
+  const currentTrack = findCurrentTrackForStyle({ ...state, history }, track.styleId) ?? track;
   return {
     ...state,
     selectedStyleId: track.styleId,
-    currentTrack: state.currentTrack ?? track,
+    currentTrack,
+    currentTrackByStyle: {
+      ...state.currentTrackByStyle,
+      [track.styleId]: currentTrack.filename,
+    },
     history: history.slice(0, 50),
     updatedAt: nextTimestamp(state.updatedAt),
   };
 }
 
 export function replaceRadioTrackInLineup(state: RadioState, track: RadioTrackRecord): RadioState {
+  const currentTrackByStyle = state.currentTrackByStyle[track.styleId] === track.filename
+    ? { ...state.currentTrackByStyle, [track.styleId]: track.filename }
+    : state.currentTrackByStyle;
   return {
     ...state,
     currentTrack: state.currentTrack?.filename === track.filename ? track : state.currentTrack,
+    currentTrackByStyle,
     history: state.history.map((item) => item.filename === track.filename ? track : item),
     updatedAt: nextTimestamp(state.updatedAt),
+  };
+}
+
+export function selectRadioTrack(state: RadioState, filenameInput: unknown): { state: RadioState; selectedTrack?: RadioTrackRecord } {
+  const filename = typeof filenameInput === "string" ? filenameInput.trim() : "";
+  const selectedTrack = state.history.find((track) => track.filename === filename && track.filename.toLowerCase().endsWith(".mp3"));
+  if (!selectedTrack) return { state };
+  return {
+    selectedTrack,
+    state: {
+      ...state,
+      selectedStyleId: selectedTrack.styleId,
+      currentTrack: selectedTrack,
+      currentTrackByStyle: {
+        ...state.currentTrackByStyle,
+        [selectedTrack.styleId]: selectedTrack.filename,
+      },
+      updatedAt: nextTimestamp(state.updatedAt),
+    },
   };
 }
 
 export function rejectCurrentRadioTrack(state: RadioState): { state: RadioState; rejectedTrack?: RadioTrackRecord } {
   const rejectedTrack = state.currentTrack;
   if (!rejectedTrack) return { state };
+  const currentIndex = state.history.findIndex((track) => track.filename === rejectedTrack.filename);
   const remainingHistory = state.history.filter((track) => track.filename !== rejectedTrack.filename);
-  const nextTrack = remainingHistory.find((track) => track.filename.toLowerCase().endsWith(".mp3"));
+  const nextTrack = remainingHistory
+    .slice(Math.max(currentIndex, 0))
+    .find((track) => track.styleId === rejectedTrack.styleId && isRadioMp3Track(track))
+    ?? remainingHistory.find((track) => track.styleId === rejectedTrack.styleId && isRadioMp3Track(track));
+  const currentTrackByStyle = { ...state.currentTrackByStyle };
+  if (nextTrack) currentTrackByStyle[rejectedTrack.styleId] = nextTrack.filename;
+  else delete currentTrackByStyle[rejectedTrack.styleId];
   return {
     rejectedTrack,
     state: {
       ...state,
       currentTrack: nextTrack,
+      currentTrackByStyle,
       history: remainingHistory,
       updatedAt: nextTimestamp(state.updatedAt),
     },
@@ -440,20 +636,26 @@ export function rejectCurrentRadioTrack(state: RadioState): { state: RadioState;
 export function advanceRadioCurrentTrack(state: RadioState): RadioState {
   if (!state.currentTrack) return state;
   const currentIndex = state.history.findIndex((track) => track.filename === state.currentTrack?.filename);
-  const nextTrack = state.history.slice(Math.max(currentIndex + 1, 0)).find((track) => track.filename.toLowerCase().endsWith(".mp3"));
+  const styleId = state.currentTrack.styleId;
+  const nextTrack = state.history.slice(Math.max(currentIndex + 1, 0)).find((track) => track.styleId === styleId && isRadioMp3Track(track));
   if (!nextTrack) return state;
   return {
     ...state,
     currentTrack: nextTrack,
+    currentTrackByStyle: {
+      ...state.currentTrackByStyle,
+      [styleId]: nextTrack.filename,
+    },
     updatedAt: nextTimestamp(state.updatedAt),
   };
 }
 
 export function getRadioQueueAheadCount(state: RadioState) {
-  if (!state.currentTrack) return 0;
+  if (!state.currentTrack) return state.history.filter((track) => track.styleId === state.selectedStyleId && isRadioMp3Track(track)).length;
   const currentIndex = state.history.findIndex((track) => track.filename === state.currentTrack?.filename);
-  if (currentIndex < 0) return state.history.filter((track) => track.filename.toLowerCase().endsWith(".mp3")).length;
-  return state.history.slice(currentIndex + 1).filter((track) => track.filename.toLowerCase().endsWith(".mp3")).length;
+  const styleId = state.currentTrack.styleId;
+  if (currentIndex < 0) return state.history.filter((track) => track.styleId === styleId && isRadioMp3Track(track)).length;
+  return state.history.slice(currentIndex + 1).filter((track) => track.styleId === styleId && isRadioMp3Track(track)).length;
 }
 
 export function shouldGenerateRadioQueueTrack(state: RadioState, targetAhead = 3) {
@@ -491,9 +693,14 @@ export function removeRadioTracksFromLineup(state: RadioState, tracks: RadioTrac
   const history = state.history.filter((track) => !filenames.has(track.filename));
   const currentTrack = state.currentTrack && !filenames.has(state.currentTrack.filename)
     ? state.currentTrack
-    : history.find((track) => track.filename.toLowerCase().endsWith(".mp3"));
+    : findCurrentTrackForStyle({ ...state, history, currentTrack: undefined }, state.selectedStyleId);
   return {
-    ...state,
+    ...alignRadioStateToSelectedStyle({
+      ...state,
+      currentTrack,
+      currentTrackByStyle: rebuildRadioQueuePositions(state.currentTrackByStyle, history),
+      history,
+    }),
     currentTrack,
     history,
     updatedAt: nextTimestamp(state.updatedAt),
@@ -535,6 +742,53 @@ export function buildRadioPublicStreamUrl(origin: string | undefined) {
   }
 }
 
+export function buildRadioPlaylistUrls(origin: string | undefined): RadioPlaylistUrls | undefined {
+  const m3u = buildRadioRootUrl(origin, "/radio.m3u");
+  const pls = buildRadioRootUrl(origin, "/radio.pls");
+  return m3u && pls ? { m3u, pls } : undefined;
+}
+
+export function buildRadioTuneInStreamUrl(streamUrl: string) {
+  const url = new URL(streamUrl);
+  url.searchParams.set("icy", "1");
+  return url.toString();
+}
+
+export function buildRadioPlaylistContent(format: RadioPlaylistFormat, streamUrl: string, title = RADIO_STATION_TITLE) {
+  if (format === "m3u") {
+    return [
+      "#EXTM3U",
+      `#EXTINF:-1,${title}`,
+      streamUrl,
+      "",
+    ].join("\n");
+  }
+  return [
+    "[playlist]",
+    "NumberOfEntries=1",
+    `File1=${streamUrl}`,
+    `Title1=${title}`,
+    "Length1=-1",
+    "Version=2",
+    "",
+  ].join("\n");
+}
+
+function buildRadioRootUrl(origin: string | undefined, pathname: string) {
+  const trimmed = typeof origin === "string" ? origin.trim() : "";
+  if (!trimmed) return undefined;
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+    url.pathname = pathname;
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
 export function readRadioEnvFileValue(contents: string, key: string) {
   const keyPattern = new RegExp(`^\\s*${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*=\\s*(.*)\\s*$`);
   for (const line of contents.split(/\r?\n/)) {
@@ -543,6 +797,83 @@ export function readRadioEnvFileValue(contents: string, key: string) {
     return match[1].trim().replace(/^['"]|['"]$/g, "") || undefined;
   }
   return undefined;
+}
+
+export function readRadioConfigFileValue(contents: string, key: string) {
+  const keyPattern = new RegExp(`^\\s*${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:\\s*(.*)\\s*$`);
+  for (const line of contents.split(/\r?\n/)) {
+    const match = line.match(keyPattern);
+    if (!match) continue;
+    const rawValue = stripYamlInlineComment(match[1].trim()).trim().replace(/^['"]|['"]$/g, "");
+    return rawValue || undefined;
+  }
+  return undefined;
+}
+
+function stripYamlInlineComment(value: string) {
+  let quote: string | undefined;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if ((char === "'" || char === "\"") && value[index - 1] !== "\\") {
+      quote = quote === char ? undefined : quote ?? char;
+    }
+    if (char === "#" && !quote && /\s/.test(value[index - 1] ?? "")) {
+      return value.slice(0, index);
+    }
+  }
+  return value;
+}
+
+function normalizeRadioQueuePositions(value: unknown, history: RadioTrackRecord[]): RadioQueuePositions {
+  if (!value || typeof value !== "object") return {};
+  const positions: RadioQueuePositions = {};
+  for (const [styleIdInput, filename] of Object.entries(value)) {
+    const styleId = normalizeRadioStyleId(styleIdInput);
+    if (typeof filename !== "string") continue;
+    if (history.some((track) => track.styleId === styleId && track.filename === filename)) {
+      positions[styleId] = filename;
+    }
+  }
+  return positions;
+}
+
+function rebuildRadioQueuePositions(positions: RadioQueuePositions, history: RadioTrackRecord[]): RadioQueuePositions {
+  const rebuilt: RadioQueuePositions = {};
+  for (const style of radioStyles) {
+    const current = findCurrentTrackForStyle({ ...defaultRadioState(), currentTrackByStyle: positions, history }, style.id);
+    if (current) rebuilt[style.id] = current.filename;
+  }
+  return rebuilt;
+}
+
+function alignRadioStateToSelectedStyle(state: RadioState): RadioState {
+  const currentTrack = findCurrentTrackForStyle(state, state.selectedStyleId);
+  const currentTrackByStyle = { ...state.currentTrackByStyle };
+  if (currentTrack) currentTrackByStyle[state.selectedStyleId] = currentTrack.filename;
+  else delete currentTrackByStyle[state.selectedStyleId];
+  return {
+    ...state,
+    currentTrack,
+    currentTrackByStyle,
+  };
+}
+
+function findCurrentTrackForStyle(state: RadioState, styleIdInput: unknown): RadioTrackRecord | undefined {
+  const styleId = normalizeRadioStyleId(styleIdInput);
+  const savedFilename = state.currentTrackByStyle[styleId];
+  const savedTrack = savedFilename
+    ? state.history.find((track) => track.styleId === styleId && track.filename === savedFilename)
+    : undefined;
+  if (savedTrack) return savedTrack;
+  if (state.currentTrack?.styleId === styleId && state.history.some((track) => track.filename === state.currentTrack?.filename)) {
+    return state.currentTrack;
+  }
+  return state.history.find((track) => track.styleId === styleId && isRadioMp3Track(track))
+    ?? state.history.find((track) => track.styleId === styleId);
+}
+
+function isRadioMp3Track(track: RadioTrackRecord) {
+  return track.filename.toLowerCase().endsWith(".mp3");
 }
 
 function pushUniqueLimited(values: string[], value: string, limit: number) {

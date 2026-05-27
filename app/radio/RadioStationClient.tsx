@@ -4,13 +4,16 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import { ForwardIcon, HandThumbDownIcon, HandThumbUpIcon } from "@heroicons/react/24/solid";
-import { radioOllamaModels, radioStyles, type RadioPromptDraft, type RadioStreamState, type RadioStyleId, type RadioTrackRecord, type RadioTtsProvider } from "@/lib/radio";
+import { defaultRadioTtsVoice, getRadioTtsVoiceOptions, radioOllamaModels, radioStyles, type RadioPlaylistUrls, type RadioPromptDraft, type RadioStreamState, type RadioStyleId, type RadioTrackRecord, type RadioTtsProvider, type RadioTtsVoiceOption } from "@/lib/radio";
 
-type RadioApiResponse = { ok: boolean; state?: RadioStreamState; draft?: RadioPromptDraft; rejectedTrack?: RadioTrackRecord; cleanedTracks?: RadioTrackRecord[]; promptModels?: string[]; error?: string };
+type RadioApiResponse = { ok: boolean; state?: RadioStreamState; draft?: RadioPromptDraft; fallbackTrack?: RadioTrackRecord; rejectedTrack?: RadioTrackRecord; cleanedTracks?: RadioTrackRecord[]; promptModels?: string[]; voices?: RadioTtsVoiceOption[]; error?: string };
+type RadioTestVoiceResponse = { ok: boolean; audioUrl?: string; error?: string };
 type GenerateResponse = { ok: boolean; filename?: string; title?: string; audioUrl?: string; meta?: unknown; error?: string };
 const RADIO_STATE_RETRY_MS = 1500;
 const RADIO_STATE_POLL_MS = 5000;
+const RADIO_QUEUE_GENERATION_TIMEOUT_MS = 45_000;
 const RADIO_TRACK_DURATION_SECONDS = 60;
+type RadioPlaybackPhase = "announcement" | "song";
 
 export default function RadioStationClient({ initialState = null, initialPromptModels = [] }: { initialState?: RadioStreamState | null; initialPromptModels?: string[] }) {
   const [radioState, setRadioState] = useState<RadioStreamState | null>(initialState);
@@ -25,12 +28,16 @@ export default function RadioStationClient({ initialState = null, initialPromptM
   const [draft, setDraft] = useState<RadioPromptDraft | null>(initialState?.currentDraft ?? null);
   const [generated, setGenerated] = useState<GenerateResponse | null>(null);
   const [status, setStatus] = useState("");
+  const [testVoiceAudioUrl, setTestVoiceAudioUrl] = useState("");
+  const [remoteTtsVoiceOptions, setRemoteTtsVoiceOptions] = useState<{ provider: RadioTtsProvider; voices: RadioTtsVoiceOption[] } | null>(null);
   const [browserStreamUrl, setBrowserStreamUrl] = useState(initialState?.streamUrl ?? initialState?.lanStreamUrl ?? "");
-  const [busy, setBusy] = useState<"draft" | "generate" | "rating" | "config" | "maintenance" | null>(null);
+  const [busy, setBusy] = useState<"draft" | "generate" | "rating" | "config" | "maintenance" | "select" | "voice" | null>(null);
   const [optimisticLike, setOptimisticLike] = useState<{ trackKey: string; liked: boolean } | null>(null);
   const [streamReloadKey, setStreamReloadKey] = useState(0);
   const [trackElapsedSeconds, setTrackElapsedSeconds] = useState(0);
+  const [playbackPhase, setPlaybackPhase] = useState<RadioPlaybackPhase>(() => initialState?.currentTrack?.announcementFilename ? "announcement" : "song");
   const audioRef = useRef<HTMLAudioElement>(null);
+  const testVoiceAudioRef = useRef<HTMLAudioElement>(null);
   const maintenanceRunningRef = useRef(false);
   const maintenancePausedRef = useRef(false);
   const loadRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -39,11 +46,29 @@ export default function RadioStationClient({ initialState = null, initialPromptM
 
   const selectedStyle = useMemo(() => radioStyles.find((style) => style.id === selectedStyleId) ?? radioStyles[0], [selectedStyleId]);
   const promptModelOptions = useMemo(() => mergePromptModelOptions(promptModels, promptModel), [promptModels, promptModel]);
+  const ttsVoiceOptions = useMemo(() => {
+    const fallback = getRadioTtsVoiceOptions(ttsProvider, ttsVoice);
+    if (remoteTtsVoiceOptions?.provider !== ttsProvider || remoteTtsVoiceOptions.voices.length === 0) return fallback;
+    return mergeCurrentVoiceOption(remoteTtsVoiceOptions.voices, ttsVoice);
+  }, [remoteTtsVoiceOptions, ttsProvider, ttsVoice]);
   const currentTrack = radioState?.currentTrack;
+  const selectedStyleQueue = useMemo(
+    () => radioState?.history.filter((track) => track.styleId === selectedStyleId) ?? [],
+    [radioState?.history, selectedStyleId],
+  );
   const activeDraft = draft ?? radioState?.currentDraft ?? null;
-  const visibleStreamUrl = useBrowserOriginStreamUrl(radioState?.streamUrl ?? radioState?.lanStreamUrl ?? browserStreamUrl);
-  const stablePlayerStreamUrl = useStableRadioStreamUrl(currentTrack?.filename, visibleStreamUrl);
-  const playerStreamUrl = useMemo(() => appendStreamReloadParam(stablePlayerStreamUrl, streamReloadKey), [stablePlayerStreamUrl, streamReloadKey]);
+  const browserOriginStreamUrl = useBrowserOriginStreamUrl(radioState?.streamUrl ?? radioState?.lanStreamUrl ?? browserStreamUrl);
+  const visibleStreamUrl = browserOriginStreamUrl;
+  const publicPlaylistUrls = radioState?.publicPlaylistUrls;
+  const lanPlaylistUrls = radioState?.lanPlaylistUrls;
+  const stablePlayerStreamUrl = useStableRadioStreamUrl(currentTrack?.filename, browserOriginStreamUrl);
+  const announcementUrl = useBrowserOriginOutputUrl(currentTrack?.announcementFilename);
+  const songStreamUrl = useMemo(
+    () => currentTrack?.announcementFilename ? appendSkipAnnouncementParam(stablePlayerStreamUrl) : stablePlayerStreamUrl,
+    [currentTrack?.announcementFilename, stablePlayerStreamUrl],
+  );
+  const reloadedSongStreamUrl = useMemo(() => appendStreamReloadParam(songStreamUrl, streamReloadKey), [songStreamUrl, streamReloadKey]);
+  const playerStreamUrl = playbackPhase === "announcement" && announcementUrl ? announcementUrl : reloadedSongStreamUrl;
   const currentTrackKey = trackFeedbackKey(currentTrack);
   const currentTrackLiked = optimisticLike?.trackKey === currentTrackKey ? optimisticLike.liked : isRadioTrackLiked(currentTrack, radioState);
   const trackDurationSeconds = currentTrack?.durationSeconds ?? RADIO_TRACK_DURATION_SECONDS;
@@ -67,14 +92,31 @@ export default function RadioStationClient({ initialState = null, initialPromptM
   useEffect(() => {
     setOptimisticLike(null);
     setTrackElapsedSeconds(0);
+    setPlaybackPhase(currentTrack?.announcementFilename ? "announcement" : "song");
     streamElapsedAtTrackStartRef.current = readAudioCurrentTime(audioRef.current);
-  }, [currentTrackKey]);
+  }, [currentTrackKey, currentTrack?.announcementFilename]);
 
   useEffect(() => {
     if (!resumeAfterStreamReloadRef.current || !audioRef.current) return;
     resumeAfterStreamReloadRef.current = false;
     void audioRef.current.play().catch(() => undefined);
   }, [playerStreamUrl]);
+
+  useEffect(() => {
+    if (!testVoiceAudioUrl || !testVoiceAudioRef.current) return;
+    void playTestVoiceAudio();
+  }, [testVoiceAudioUrl]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setRemoteTtsVoiceOptions(null);
+    void loadTtsVoiceOptions().then((voices) => {
+      if (!cancelled && voices.length) setRemoteTtsVoiceOptions({ provider: ttsProvider, voices });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [ttsProvider]);
 
   async function loadState() {
     try {
@@ -189,10 +231,11 @@ export default function RadioStationClient({ initialState = null, initialPromptM
     }
   }
 
-  async function generateTrackFromDraft(trackDraft: RadioPromptDraft, { quiet, announce }: { quiet: boolean; announce: boolean }) {
+  async function generateTrackFromDraft(trackDraft: RadioPromptDraft, { quiet, announce, signal }: { quiet: boolean; announce: boolean; signal?: AbortSignal }) {
     const response = await fetch("/api/generate", {
       method: "POST",
       headers: { "content-type": "application/json" },
+      signal,
       body: JSON.stringify({
         prompt: trackDraft.prompt,
         negativePrompt: trackDraft.negativePrompt,
@@ -222,6 +265,19 @@ export default function RadioStationClient({ initialState = null, initialPromptM
       });
   }
 
+  async function generateQueueTrackFromDraft(trackDraft: RadioPromptDraft, announce: boolean) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), RADIO_QUEUE_GENERATION_TIMEOUT_MS);
+    try {
+      return await generateTrackFromDraft(trackDraft, { quiet: true, announce, signal: controller.signal });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") throw new Error("Queue track generation timed out.");
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   async function maintainQueue(startState: RadioStreamState) {
     maintenanceRunningRef.current = true;
     setBusy("maintenance");
@@ -230,24 +286,34 @@ export default function RadioStationClient({ initialState = null, initialPromptM
       const cleanupJson = await postRadio({ action: "cleanup" });
       let nextState = cleanupJson.state ?? startState;
       let generatedCount = 0;
+      let fallbackCount = 0;
       const maxGenerations = nextState.queueTarget + 1;
 
       while (nextState.queueAheadCount < nextState.queueTarget && generatedCount < maxGenerations) {
         setStatus(`Generating queue track ${generatedCount + 1} of ${maxGenerations}...`);
-        const draftJson = await postRadio({
-          action: "draft",
-          styleId: nextState.selectedStyleId,
-          promptModel: nextState.promptModel,
-          announceEnabled: nextState.announceEnabled,
-        });
-        if (!draftJson.draft) break;
-        const trackJson = await generateTrackFromDraft(draftJson.draft, { quiet: true, announce: nextState.announceEnabled });
-        if (!trackJson.state) break;
-        nextState = trackJson.state;
+        try {
+          const draftJson = await postRadio({
+            action: "draft",
+            styleId: nextState.selectedStyleId,
+            promptModel: nextState.promptModel,
+            announceEnabled: nextState.announceEnabled,
+          });
+          if (!draftJson.draft) break;
+          const trackJson = await generateQueueTrackFromDraft(draftJson.draft, nextState.announceEnabled);
+          if (!trackJson.state) break;
+          nextState = trackJson.state;
+        } catch (error) {
+          const fallbackJson = await postRadio({ action: "fallbackTrack", reason: "queue_refill_timeout" });
+          if (!fallbackJson.state) throw error;
+          nextState = fallbackJson.state;
+          fallbackCount += 1;
+        }
         generatedCount += 1;
       }
 
-      if (generatedCount > 0) {
+      if (fallbackCount > 0) {
+        setStatus(`Using starred library fallback; queue ready with ${nextState.queueAheadCount} songs ahead.`);
+      } else if (generatedCount > 0) {
         setStatus(`Queue ready with ${nextState.queueAheadCount} songs ahead.`);
       } else if (cleanupJson.cleanedTracks?.length) {
         setStatus(`Cleaned ${cleanupJson.cleanedTracks.length} expired unliked song${cleanupJson.cleanedTracks.length === 1 ? "" : "s"}.`);
@@ -287,6 +353,26 @@ export default function RadioStationClient({ initialState = null, initialPromptM
     }
   }
 
+  async function selectLineupTrack(track: RadioTrackRecord) {
+    if (track.filename === currentTrack?.filename) return;
+    setBusy("select");
+    setStatus(`Loading "${track.title}"...`);
+    try {
+      resumeAfterStreamReloadRef.current = true;
+      const json = await postRadio({ action: "selectTrack", filename: track.filename });
+      setStreamReloadKey((key) => key + 1);
+      setTrackElapsedSeconds(0);
+      maintenancePausedRef.current = false;
+      setStatus(json.state?.currentTrack ? `Now playing "${json.state.currentTrack.title}".` : "Selected lineup song.");
+      if (json.state) await maintainQueue(json.state);
+    } catch (error) {
+      resumeAfterStreamReloadRef.current = false;
+      setStatus(error instanceof Error ? error.message : "Could not load selected song.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   function changeStyle(styleId: RadioStyleId) {
     maintenancePausedRef.current = false;
     setSelectedStyleId(styleId);
@@ -299,21 +385,96 @@ export default function RadioStationClient({ initialState = null, initialPromptM
   }
 
   function changeTtsProvider(provider: RadioTtsProvider) {
+    const nextVoice = defaultRadioTtsVoice(provider);
+    setRemoteTtsVoiceOptions(null);
     setTtsProvider(provider);
-    void saveConfiguration({ nextTtsProvider: provider });
+    setTtsVoice(nextVoice);
+    void saveConfiguration({ nextTtsProvider: provider, nextTtsVoice: nextVoice });
+  }
+
+  function changeTtsVoice(voice: string) {
+    setTtsVoice(voice);
+    void saveConfiguration({ nextTtsVoice: voice });
+  }
+
+  async function testVoice() {
+    setBusy("voice");
+    setStatus("Generating test voice sample...");
+    try {
+      const response = await fetch("/api/radio", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "testVoice",
+          ttsProvider,
+          ttsVoice,
+          announcementPrefix,
+          announcementSuffix,
+        }),
+      });
+      const json = await response.json() as RadioTestVoiceResponse;
+      if (!json.ok || !json.audioUrl) throw new Error(json.error ?? "Test voice generation failed");
+      setTestVoiceAudioUrl(json.audioUrl);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not generate test voice sample.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function loadTtsVoiceOptions() {
+    try {
+      const response = await fetch("/api/radio", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "ttsVoices", ttsProvider, ttsVoice }),
+      });
+      const json = await response.json() as RadioApiResponse;
+      return json.ok ? json.voices ?? [] : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async function playTestVoiceAudio() {
+    const audio = testVoiceAudioRef.current;
+    if (!audio) return;
+    try {
+      await audio.play();
+      setStatus("Playing test voice sample.");
+    } catch {
+      setStatus("Test voice sample is ready. Press play in the audio controls.");
+    }
   }
 
   function handleAudioTimeUpdate(event: React.SyntheticEvent<HTMLAudioElement>) {
+    if (playbackPhase === "announcement") return;
     const elapsed = Math.max(0, readAudioCurrentTime(event.currentTarget) - streamElapsedAtTrackStartRef.current);
     setTrackElapsedSeconds(Math.min(elapsed, trackDurationSeconds));
   }
 
   function handleAudioEnded() {
-    resumeAfterStreamReloadRef.current = true;
-    setStreamReloadKey((key) => key + 1);
-    setTrackElapsedSeconds(0);
-    setStatus("Radio stream reached the end of the buffered song; reconnecting...");
+    if (playbackPhase === "announcement" && reloadedSongStreamUrl) {
+      resumeAfterStreamReloadRef.current = true;
+      streamElapsedAtTrackStartRef.current = 0;
+      setTrackElapsedSeconds(0);
+      setPlaybackPhase("song");
+      setStatus("Playing song audio...");
+      return;
+    }
+    setTrackElapsedSeconds(trackDurationSeconds);
+    setStatus("Waiting for more station audio from the continuous stream...");
     void loadState();
+  }
+
+  function handleAudioError() {
+    if (playbackPhase === "announcement" && reloadedSongStreamUrl) {
+      resumeAfterStreamReloadRef.current = true;
+      setPlaybackPhase("song");
+      setStatus("Announcement audio was unavailable. Playing song audio...");
+      return;
+    }
+    setStatus("Could not play the current station audio.");
   }
 
   return (
@@ -327,8 +488,13 @@ export default function RadioStationClient({ initialState = null, initialPromptM
               Pandora-style prompt feedback loop for local AI-generated songs, with Ollama prompt provenance and a raw MP3 stream URL.
             </p>
           </div>
-          <div className="rounded-2xl border border-emerald-200/15 bg-emerald-200/[0.08] p-3 text-sm text-emerald-50 md:max-w-md">
-            <div className="font-semibold">TuneIn URL</div>
+          <div className="rounded-2xl border border-emerald-200/15 bg-emerald-200/[0.08] p-3 text-sm text-emerald-50 md:max-w-xl">
+            <div className="font-semibold">Sonos/TuneIn import</div>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              {publicPlaylistUrls ? <PlaylistUrlGroup label="radio.pardev.net" urls={publicPlaylistUrls} /> : null}
+              {lanPlaylistUrls ? <PlaylistUrlGroup label="LAN host" urls={lanPlaylistUrls} /> : null}
+            </div>
+            <div className="mt-3 text-xs font-semibold text-emerald-100/85">Direct MP3 stream</div>
             <code className="mt-1 block break-all text-xs text-emerald-100/75">{visibleStreamUrl || "/api/radio?stream=1"}</code>
             <div className="mt-1 text-xs text-white/45">{radioState?.streamReady ? "Current MP3 is ready." : "Generate/register an MP3 track first."}</div>
           </div>
@@ -353,7 +519,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
                 <div className="min-w-0">
                   <div className="truncate text-lg font-semibold text-white">{currentTrack?.title ?? "No song loaded"}</div>
                   <div className="mt-1 truncate text-xs uppercase tracking-[0.14em] text-white/38">
-                    {currentTrack ? `${currentTrack.styleId} • ${currentTrack.promptProvider ?? "unknown"} ${currentTrack.promptModel ?? ""}` : selectedStyle.label}
+                    {currentTrack ? trackProvenanceLabel(currentTrack) : selectedStyle.label}
                   </div>
                 </div>
                 <div className="shrink-0 text-sm font-semibold text-emerald-100/80">
@@ -384,6 +550,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
                   className="mt-3 w-full"
                   onTimeUpdate={handleAudioTimeUpdate}
                   onEnded={handleAudioEnded}
+                  onError={handleAudioError}
                 />
               ) : (
                 <div className="mt-3 rounded-2xl border border-white/10 bg-black/24 p-3 text-sm text-white/45">Waiting for the first MP3 track.</div>
@@ -465,11 +632,18 @@ export default function RadioStationClient({ initialState = null, initialPromptM
                   <option value="elevenlabs">ElevenLabs</option>
                   <option value="deepgram">Deepgram</option>
                   <option value="gemini">Gemini</option>
+                  <option value="kokoro-onnx">Kokoro</option>
                 </select>
               </label>
               <label className="mt-3 block">
                 Voice
-                <input value={ttsVoice} onChange={(event) => setTtsVoice(event.target.value)} onBlur={() => void saveConfiguration()} className="mt-2 w-full rounded-xl border border-white/10 bg-black/35 p-3 text-white outline-none" aria-label="TTS voice" />
+                <select value={ttsVoice} onChange={(event) => changeTtsVoice(event.target.value)} className="mt-2 w-full rounded-xl border border-white/10 bg-black/50 p-3 text-white outline-none" aria-label="TTS voice">
+                  {ttsVoiceOptions.map((voice) => (
+                    <option key={voice.id} value={voice.id}>
+                      {voice.description ? `${voice.label} - ${voice.description}` : voice.label}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label className="mt-3 block">
                 Prefix
@@ -479,6 +653,24 @@ export default function RadioStationClient({ initialState = null, initialPromptM
                 Suffix
                 <input value={announcementSuffix} onChange={(event) => setAnnouncementSuffix(event.target.value)} onBlur={() => void saveConfiguration()} className="mt-2 w-full rounded-xl border border-white/10 bg-black/35 p-3 text-white outline-none" aria-label="Announcement suffix" />
               </label>
+              <button
+                type="button"
+                onClick={() => void testVoice()}
+                disabled={!!busy}
+                className="mt-3 w-full rounded-xl border border-cyan-200/30 bg-cyan-300/12 px-4 py-3 font-bold text-cyan-50 transition hover:bg-cyan-300/20 disabled:cursor-wait disabled:opacity-55"
+              >
+                {busy === "voice" ? "Testing..." : "Test voice"}
+              </button>
+              {testVoiceAudioUrl && (
+                <audio
+                  ref={testVoiceAudioRef}
+                  src={testVoiceAudioUrl}
+                  controls
+                  data-testid="test-voice-audio"
+                  className="mt-3 w-full"
+                  onError={() => setStatus("Could not play the generated test voice audio.")}
+                />
+              )}
             </div>
           </aside>
 
@@ -518,7 +710,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
                     <div>
                       <div className="text-2xl font-semibold tracking-[-0.025em] text-white">{currentTrack.title}</div>
                       <div className="mt-1 text-xs uppercase tracking-[0.16em] text-white/38">
-                        {currentTrack.filename} • prompt by {currentTrack.promptProvider ?? "unknown"} {currentTrack.promptModel ?? ""}
+                        {currentTrack.filename} • {trackProvenanceLabel(currentTrack)}
                       </div>
                     </div>
                     <p className="text-sm leading-6 text-white/58">{currentTrack.prompt}</p>
@@ -531,21 +723,45 @@ export default function RadioStationClient({ initialState = null, initialPromptM
 
             {generated && !generated.ok && <pre className="mt-4 max-h-52 overflow-auto rounded-2xl bg-black/35 p-3 text-xs text-pink-100">{JSON.stringify(generated, null, 2)}</pre>}
 
-            <Panel title="Station lineup" className="mt-4">
-              {radioState?.history.length ? (
+            <Panel title={`${selectedStyle.label} queue`} className="mt-4">
+              {selectedStyleQueue.length ? (
                 <div className="grid gap-2">
-                  {radioState.history.map((track) => (
-                    <div key={track.id} className={clsx("rounded-2xl border p-3", track.filename === currentTrack?.filename ? "border-emerald-200/35 bg-emerald-200/[0.08]" : "border-white/10 bg-white/[0.035]")}>
-                      <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
-                        <div className="font-semibold text-white/82">{track.filename === currentTrack?.filename ? "Now playing: " : ""}{track.title}</div>
-                        <div className="text-xs uppercase tracking-[0.14em] text-white/35">{track.styleId} • {track.promptProvider ?? "unknown"} {track.promptModel ?? ""}</div>
+                  {selectedStyleQueue.map((track) => {
+                    const isCurrentTrack = track.filename === currentTrack?.filename;
+                    return (
+                      <div
+                        key={track.id}
+                        aria-current={isCurrentTrack ? "true" : undefined}
+                        className={clsx(
+                          "min-w-0 rounded-2xl border p-3 transition",
+                          isCurrentTrack ? "border-emerald-200/35 bg-emerald-200/[0.08]" : "border-white/10 bg-white/[0.035]",
+                        )}
+                      >
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="min-w-0">
+                            <div className="min-w-0 truncate font-semibold text-white/82">{isCurrentTrack ? "Now playing: " : ""}{track.title}</div>
+                            <div className="mt-1 text-xs uppercase tracking-[0.14em] text-white/35">{trackProvenanceLabel(track)}</div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void selectLineupTrack(track)}
+                            disabled={isCurrentTrack || busy === "select"}
+                            aria-label={isCurrentTrack ? `Now playing ${track.title}` : `Play ${track.title}`}
+                            className={clsx(
+                              "touch-manipulation rounded-full border px-4 py-2 text-xs font-bold uppercase tracking-[0.12em] transition disabled:cursor-default",
+                              isCurrentTrack ? "border-emerald-200/30 bg-emerald-200/12 text-emerald-100/75" : "border-white/15 bg-white/[0.07] text-white/75 hover:border-emerald-200/35 hover:bg-emerald-200/12 hover:text-emerald-50",
+                            )}
+                          >
+                            {isCurrentTrack ? "Playing" : busy === "select" ? "Loading" : "Play"}
+                          </button>
+                        </div>
+                        <div className="mt-1 truncate text-xs text-white/42">{track.filename}</div>
                       </div>
-                      <div className="mt-1 truncate text-xs text-white/42">{track.filename}</div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
-                <p className="text-sm text-white/45">No station songs in the lineup yet.</p>
+                <p className="text-sm text-white/45">No songs queued for this music style yet.</p>
               )}
             </Panel>
 
@@ -571,10 +787,31 @@ function mergePromptModelOptions(models: string[], currentModel: string) {
   return [...new Set([...source, currentModel].map((model) => model.trim()).filter(Boolean))];
 }
 
+function mergeCurrentVoiceOption(options: RadioTtsVoiceOption[], currentVoice: string) {
+  if (!currentVoice || options.some((voice) => voice.id === currentVoice)) return options;
+  return [{ id: currentVoice, label: currentVoice }, ...options];
+}
+
+function PlaylistUrlGroup({ label, urls }: { label: string; urls: RadioPlaylistUrls }) {
+  return (
+    <div>
+      <div className="text-xs font-semibold text-emerald-100/85">{label}</div>
+      <code className="mt-1 block break-all text-xs text-emerald-100/75">{urls.m3u}</code>
+      <code className="mt-1 block break-all text-xs text-emerald-100/75">{urls.pls}</code>
+    </div>
+  );
+}
+
 function appendStreamReloadParam(streamUrl: string | undefined, reloadKey: number) {
   if (!streamUrl || reloadKey === 0) return streamUrl;
   const separator = streamUrl.includes("?") ? "&" : "?";
   return `${streamUrl}${separator}client=${reloadKey}`;
+}
+
+function appendSkipAnnouncementParam(streamUrl: string | undefined) {
+  if (!streamUrl) return streamUrl;
+  const separator = streamUrl.includes("?") ? "&" : "?";
+  return `${streamUrl}${separator}skipAnnouncement=1`;
 }
 
 function useBrowserOriginStreamUrl(streamUrl: string | undefined) {
@@ -596,6 +833,19 @@ function useBrowserOriginStreamUrl(streamUrl: string | undefined) {
       return `${browserOrigin}/api/radio?stream=1`;
     }
   }, [browserOrigin, streamUrl]);
+}
+
+function useBrowserOriginOutputUrl(filename: string | undefined) {
+  const [browserOrigin, setBrowserOrigin] = useState("");
+
+  useEffect(() => {
+    setBrowserOrigin(window.location.origin);
+  }, []);
+
+  return useMemo(() => {
+    if (!filename || !browserOrigin) return undefined;
+    return `${browserOrigin}/outputs/${encodeURIComponent(filename)}`;
+  }, [browserOrigin, filename]);
 }
 
 function readAudioCurrentTime(audio: HTMLAudioElement | null) {
@@ -643,6 +893,11 @@ function urlOrigin(value: string) {
 
 function trackFeedbackKey(track: RadioTrackRecord | undefined) {
   return track?.id ?? track?.filename ?? null;
+}
+
+function trackProvenanceLabel(track: RadioTrackRecord) {
+  const source = track.source === "library-fallback" ? "Library fallback" : undefined;
+  return [track.styleId, source, `${track.promptProvider ?? "unknown"} ${track.promptModel ?? ""}`.trim()].filter(Boolean).join(" • ");
 }
 
 function isRadioTrackLiked(track: RadioTrackRecord | undefined, state: RadioStreamState | null) {

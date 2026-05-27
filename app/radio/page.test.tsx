@@ -26,6 +26,7 @@ const radioState: RadioStreamState = {
   announcementPrefix: "Now playing: ",
   announcementSuffix: "",
   preferences: {},
+  currentTrackByStyle: {},
   history: [],
   updatedAt: "2026-05-26T12:00:00.000Z",
   streamReady: false,
@@ -49,6 +50,14 @@ describe("radio page loading", () => {
       streamReady: true,
       streamUrl: "https://radio.pardev.net/api/radio?stream=1",
       lanStreamUrl: "http://192.168.1.207:3007/api/radio?stream=1",
+      publicPlaylistUrls: {
+        m3u: "https://radio.pardev.net/radio.m3u",
+        pls: "https://radio.pardev.net/radio.pls",
+      },
+      lanPlaylistUrls: {
+        m3u: "http://192.168.1.207:3007/radio.m3u",
+        pls: "http://192.168.1.207:3007/radio.pls",
+      },
     };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       json: async () => ({ ok: true, state: stateWithTrack, promptModels: ["qwen3:14b"] }),
@@ -59,7 +68,115 @@ describe("radio page loading", () => {
     expect(screen.getAllByText(/Synthwave Mobile Check/).length).toBeGreaterThan(0);
     expect(screen.getByText("3/3 ahead")).toBeTruthy();
     await waitFor(() => expect(screen.getByText("http://localhost:3000/api/radio?stream=1")).toBeTruthy());
+    expect(screen.getByText("https://radio.pardev.net/radio.m3u")).toBeTruthy();
+    expect(screen.getByText("https://radio.pardev.net/radio.pls")).toBeTruthy();
+    expect(screen.getByText("http://192.168.1.207:3007/radio.m3u")).toBeTruthy();
+    expect(screen.getByText("http://192.168.1.207:3007/radio.pls")).toBeTruthy();
     expect(screen.getByRole("option", { name: "qwen3:14b" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Kokoro" })).toBeTruthy();
+  });
+
+  it("plays a generated test voice sample from the selected TTS settings", async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as { action?: string } : {};
+      if (body.action === "testVoice") {
+        return { json: async () => ({ ok: true, audioUrl: "/outputs/radio_voice_test_sample.mp3" }) };
+      }
+      return { json: async () => ({ ok: true, state: radioState, promptModels: ["qwen3:14b"], cleanedTracks: [] }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const playMock = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    const { container } = render(<RadioStationClient initialState={radioState} initialPromptModels={["qwen3:14b"]} />);
+
+    await waitFor(() => {
+      const button = screen.getByRole("button", { name: "Test voice" }) as HTMLButtonElement;
+      expect(button.disabled).toBe(false);
+    });
+    fireEvent.change(screen.getByLabelText("TTS voice"), { target: { value: "alloy" } });
+    const testVoiceButton = await waitFor(() => {
+      const button = screen.getByRole("button", { name: "Test voice" }) as HTMLButtonElement;
+      expect(button.disabled).toBe(false);
+      return button;
+    });
+    fireEvent.click(testVoiceButton);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/radio", expect.objectContaining({
+      body: expect.stringContaining('"action":"testVoice"'),
+    })));
+    expect(fetchMock).toHaveBeenCalledWith("/api/radio", expect.objectContaining({
+      body: expect.stringContaining('"ttsVoice":"alloy"'),
+    }));
+    await waitFor(() => expect(container.querySelector('audio[data-testid="test-voice-audio"]')?.getAttribute("src")).toBe("/outputs/radio_voice_test_sample.mp3"));
+    expect(playMock).toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByText("Playing test voice sample.")).toBeTruthy());
+  });
+
+  it("renders the voice control as a provider-specific dropdown", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      json: async () => ({ ok: true, state: radioState, promptModels: ["qwen3:14b"], cleanedTracks: [] }),
+    }));
+
+    render(<RadioStationClient initialState={radioState} initialPromptModels={["qwen3:14b"]} />);
+
+    const voiceSelect = screen.getByRole("combobox", { name: "TTS voice" });
+    expect(voiceSelect.tagName).toBe("SELECT");
+    expect(screen.getByRole("option", { name: /Nova/ })).toBeTruthy();
+    expect(screen.getByRole("option", { name: /Alloy/ })).toBeTruthy();
+
+    const providerSelect = screen.getByRole("combobox", { name: "Provider" });
+    fireEvent.change(providerSelect, { target: { value: "gemini" } });
+
+    await waitFor(() => expect(screen.getByRole("option", { name: /Kore/ })).toBeTruthy());
+  });
+
+  it("loads ElevenLabs account voices into the voice dropdown", async () => {
+    const elevenLabsState = { ...radioState, ttsProvider: "elevenlabs" as const, ttsVoice: "Juniper" };
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as { action?: string } : {};
+      if (body.action === "ttsVoices") {
+        return {
+          json: async () => ({
+            ok: true,
+            voices: [
+              { id: "voice-alpha", label: "Alpha", description: "warm" },
+              { id: "voice-beta", label: "Beta", description: "bright" },
+            ],
+          }),
+        };
+      }
+      return { json: async () => ({ ok: true, state: elevenLabsState, promptModels: ["qwen3:14b"], cleanedTracks: [] }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<RadioStationClient initialState={elevenLabsState} initialPromptModels={["qwen3:14b"]} />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/radio", expect.objectContaining({
+      body: expect.stringContaining('"action":"ttsVoices"'),
+    })));
+    await waitFor(() => expect(screen.getByRole("option", { name: "Alpha - warm" })).toBeTruthy());
+    expect(screen.getByRole("option", { name: "Beta - bright" })).toBeTruthy();
+  });
+
+  it("surfaces browser playback failures instead of reporting silent success", async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as { action?: string } : {};
+      if (body.action === "testVoice") {
+        return { json: async () => ({ ok: true, audioUrl: "/outputs/radio_voice_test_sample.mp3" }) };
+      }
+      return { json: async () => ({ ok: true, state: radioState, promptModels: ["qwen3:14b"], cleanedTracks: [] }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockRejectedValue(new Error("autoplay blocked"));
+    render(<RadioStationClient initialState={radioState} initialPromptModels={["qwen3:14b"]} />);
+
+    const testVoiceButton = await waitFor(() => {
+      const button = screen.getByRole("button", { name: "Test voice" }) as HTMLButtonElement;
+      expect(button.disabled).toBe(false);
+      return button;
+    });
+    fireEvent.click(testVoiceButton);
+
+    await waitFor(() => expect(screen.getByText(/Test voice sample is ready/)).toBeTruthy());
   });
 
   it("rewrites embedded radio URLs to the browser origin used to load the page", async () => {
@@ -83,6 +200,33 @@ describe("radio page loading", () => {
 
     await waitFor(() => expect(screen.getByText("https://mobile-radio.example.test/api/radio?stream=1")).toBeTruthy());
     expect(container.querySelector("audio")?.getAttribute("src")).toBe("https://mobile-radio.example.test/api/radio?stream=1");
+  });
+
+  it("plays a generated announcement asset before switching to the song stream", async () => {
+    const announcedTrack = {
+      ...currentTrack,
+      announce: true,
+      announcementFilename: "radio_announce_synthwave_mobile_check.mp3",
+    };
+    const stateWithAnnouncement = {
+      ...radioState,
+      currentTrack: announcedTrack,
+      history: [announcedTrack],
+      streamReady: true,
+      streamUrl: "/api/radio?stream=1",
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      json: async () => ({ ok: true, state: stateWithAnnouncement, promptModels: ["qwen3:14b"] }),
+    }));
+    const playMock = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+
+    const { container } = render(<RadioStationClient initialState={stateWithAnnouncement} initialPromptModels={["qwen3:14b"]} />);
+
+    await waitFor(() => expect(container.querySelector("audio")?.getAttribute("src")).toBe("http://localhost:3000/outputs/radio_announce_synthwave_mobile_check.mp3"));
+    fireEvent.ended(container.querySelector("audio")!);
+
+    await waitFor(() => expect(container.querySelector("audio")?.getAttribute("src")).toBe("http://localhost:3000/api/radio?stream=1&skipAnnouncement=1"));
+    expect(playMock).toHaveBeenCalled();
   });
 
   it("keeps one active audio player on the original source during same-track refreshes", async () => {
@@ -163,6 +307,70 @@ describe("radio page loading", () => {
     expect(fetchMock.mock.calls.some(([_url, init]) => typeof init?.body === "string" && init.body.includes('"action":"cleanup"'))).toBe(true);
   });
 
+  it("falls back to a starred library track when queue refill generation fails", async () => {
+    const depletedQueueState = {
+      ...radioState,
+      currentTrack,
+      history: [currentTrack],
+      streamReady: true,
+      streamUrl: "/api/radio?stream=1",
+      queueAheadCount: 0,
+      needsQueueFill: true,
+      updatedAt: "2026-05-26T12:00:02.000Z",
+    };
+    const fallbackTrack = {
+      ...currentTrack,
+      id: "track-library-fallback",
+      filename: "starred_keeper.mp3",
+      title: "Starred Keeper",
+      source: "library-fallback" as const,
+      fallbackReason: "queue_refill_timeout",
+    };
+    const fallbackState = {
+      ...depletedQueueState,
+      history: [currentTrack, fallbackTrack],
+      queueAheadCount: 3,
+      needsQueueFill: false,
+      updatedAt: "2026-05-26T12:00:03.000Z",
+    };
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as { action?: string } : {};
+      if (url === "/api/generate") {
+        return { json: async () => ({ ok: false, error: "generation timed out" }) };
+      }
+      if (body.action === "draft") {
+        return {
+          json: async () => ({
+            ok: true,
+            draft: {
+              id: "draft-timeout",
+              title: "Timed Out Render",
+              prompt: "slow prompt",
+              negativePrompt: "noise",
+              styleId: "synthwave",
+              createdAt: "2026-05-26T12:00:02.000Z",
+              promptProvider: "fallback",
+              promptModel: "llama3.1:8b",
+            },
+            state: depletedQueueState,
+          }),
+        };
+      }
+      if (body.action === "fallbackTrack") {
+        return { json: async () => ({ ok: true, fallbackTrack, state: fallbackState }) };
+      }
+      return { json: async () => ({ ok: true, state: depletedQueueState, promptModels: ["qwen3:14b"], cleanedTracks: [] }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<RadioStationClient initialState={depletedQueueState} initialPromptModels={["qwen3:14b"]} />);
+
+    await waitFor(() => expect(fetchMock.mock.calls.some(([_url, init]) => typeof init?.body === "string" && init.body.includes('"action":"fallbackTrack"'))).toBe(true));
+    expect(fetchMock.mock.calls.some(([_url, init]) => typeof init?.body === "string" && init.body.includes('"reason":"queue_refill_timeout"'))).toBe(true);
+    await waitFor(() => expect(screen.getByText(/Using starred library fallback/)).toBeTruthy());
+    expect(screen.getAllByText(/Library fallback/).length).toBeGreaterThan(0);
+  });
+
   it("shows song duration and progress for the current track", () => {
     const stateWithTrack = {
       ...radioState,
@@ -181,7 +389,7 @@ describe("radio page loading", () => {
     expect(screen.getByRole("progressbar", { name: "Song progress" }).getAttribute("aria-valuemax")).toBe("90");
   });
 
-  it("reconnects the stream when the browser audio element ends", async () => {
+  it("keeps the station player on the same stream when the browser audio element ends", async () => {
     const stateWithTrack = {
       ...radioState,
       currentTrack,
@@ -200,8 +408,88 @@ describe("radio page loading", () => {
     expect(audio?.getAttribute("src")).toBe("http://localhost:3000/api/radio?stream=1");
     fireEvent.ended(audio!);
 
+    expect(container.querySelector("audio")?.getAttribute("src")).toBe("http://localhost:3000/api/radio?stream=1");
+    expect(screen.getByText(/Waiting for more station audio/)).toBeTruthy();
+    expect(playMock).not.toHaveBeenCalled();
+  });
+
+  it("selects a clicked lineup song and reconnects the player", async () => {
+    const previousTrack = {
+      ...currentTrack,
+      id: "track-previous",
+      filename: "previous_song.mp3",
+      title: "Previous Song",
+      prompt: "previous prompt",
+    };
+    const stateWithLineup = {
+      ...radioState,
+      currentTrack,
+      history: [previousTrack, currentTrack],
+      streamReady: true,
+      streamUrl: "/api/radio?stream=1",
+      queueAheadCount: 0,
+    };
+    const selectedState = {
+      ...stateWithLineup,
+      currentTrack: previousTrack,
+      queueAheadCount: 1,
+      updatedAt: "2026-05-26T12:00:01.000Z",
+    };
+    let latestState: RadioStreamState = stateWithLineup;
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as { action?: string; filename?: string } : {};
+      if (body.action === "selectTrack") latestState = selectedState;
+      return {
+        json: async () => ({ ok: true, state: latestState, promptModels: ["qwen3:14b"], cleanedTracks: [] }),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const playMock = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    const { container } = render(<RadioStationClient initialState={stateWithLineup} initialPromptModels={["qwen3:14b"]} />);
+
+    const previousPlayButton = screen.getByRole("button", { name: "Play Previous Song" });
+    const currentPlayButton = screen.getByRole("button", { name: "Now playing Synthwave Mobile Check" }) as HTMLButtonElement;
+    expect(previousPlayButton.textContent).toBe("Play");
+    expect(currentPlayButton.disabled).toBe(true);
+
+    fireEvent.click(previousPlayButton);
+
+    await waitFor(() => expect(screen.getAllByText(/Now playing: Previous Song/).length).toBeGreaterThan(0));
+    expect(fetchMock).toHaveBeenCalledWith("/api/radio", expect.objectContaining({
+      body: expect.stringContaining('"action":"selectTrack"'),
+    }));
+    expect(fetchMock).toHaveBeenCalledWith("/api/radio", expect.objectContaining({
+      body: expect.stringContaining('"filename":"previous_song.mp3"'),
+    }));
     await waitFor(() => expect(container.querySelector("audio")?.getAttribute("src")).toBe("http://localhost:3000/api/radio?stream=1&client=1"));
     expect(playMock).toHaveBeenCalled();
+  });
+
+  it("shows only the selected music style queue in the lineup", async () => {
+    const ambientTrack = {
+      ...currentTrack,
+      id: "track-ambient",
+      filename: "ambient_queue_song.mp3",
+      title: "Ambient Queue Song",
+      prompt: "soft ambient queue",
+      styleId: "ambient" as const,
+    };
+    const stateWithMixedQueues = {
+      ...radioState,
+      currentTrack,
+      selectedStyleId: "synthwave" as const,
+      history: [currentTrack, ambientTrack],
+      streamReady: true,
+      streamUrl: "/api/radio?stream=1",
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      json: async () => ({ ok: true, state: stateWithMixedQueues, promptModels: ["qwen3:14b"], cleanedTracks: [] }),
+    }));
+
+    render(<RadioStationClient initialState={stateWithMixedQueues} initialPromptModels={["qwen3:14b"]} />);
+
+    expect(screen.getByRole("button", { name: "Now playing Synthwave Mobile Check" })).toBeTruthy();
+    expect(screen.queryByText("Ambient Queue Song")).toBeNull();
   });
 
   it("indicates when the current song is already liked", () => {

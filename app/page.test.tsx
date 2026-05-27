@@ -1,6 +1,11 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
-import { AudioPreview, buildCropOverlayPercentages, buildPlayheadOverlayPercentage, buildSeekTimeFromKeyboard, buildSeekTimeFromPointer, buildSpectrogramBins, clampPlaybackVolume, filterLibraryItems, libraryItemSearchText, playAudioElement, prunePlaybackState, selectedComparisonItems } from "./page";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import Home, { AudioPreview, buildCropOverlayPercentages, buildPlayheadOverlayPercentage, buildSeekTimeFromKeyboard, buildSeekTimeFromPointer, buildSpectrogramBins, clampPlaybackVolume, filterLibraryItems, libraryItemSearchText, playAudioElement, prunePlaybackState, selectedComparisonItems } from "./page";
+
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe("playback volume", () => {
   it("clamps saved playback volume into the browser audio range", () => {
@@ -77,6 +82,17 @@ describe("library filtering", () => {
   it("can restrict results to favorites", () => {
     expect(filterLibraryItems(items, "", true).map((item) => item.filename)).toEqual(["sa3-music-1.mp3"]);
   });
+
+  it("can hide radio voice tests and title announcements", () => {
+    const radioItems = [
+      ...items,
+      { filename: "radio_voice_test_1812345678901.mp3", audioUrl: "/outputs/radio_voice_test_1812345678901.mp3", downloadUrl: "/outputs/radio_voice_test_1812345678901.mp3", format: "mp3" as const, bytes: 1, createdAt: "2026-05-21T12:02:00.000Z" },
+      { filename: "radio_announce_midnight_arcade_now_playing.mp3", audioUrl: "/outputs/radio_announce_midnight_arcade_now_playing.mp3", downloadUrl: "/outputs/radio_announce_midnight_arcade_now_playing.mp3", format: "mp3" as const, bytes: 1, createdAt: "2026-05-21T12:03:00.000Z" },
+    ];
+
+    expect(filterLibraryItems(radioItems, "", false, true).map((item) => item.filename)).toEqual(["sa3-music-1.mp3", "sa3-sfx-2.wav"]);
+    expect(filterLibraryItems(radioItems, "radio", false, false).map((item) => item.filename)).toEqual(["radio_voice_test_1812345678901.mp3", "radio_announce_midnight_arcade_now_playing.mp3"]);
+  });
 });
 
 describe("comparison selection", () => {
@@ -116,6 +132,106 @@ describe("library playback state", () => {
     ];
 
     expect(prunePlaybackState(current, allLibraryItems)).toEqual(current);
+  });
+});
+
+describe("main page radio lineup action", () => {
+  it("hides radio utility audio by default and shows it when toggled", async () => {
+    window.localStorage.clear();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (input === "/api/library") {
+        return {
+          json: async () => ({
+            ok: true,
+            items: [
+              { filename: "keeper.mp3", audioUrl: "/outputs/keeper.mp3", downloadUrl: "/outputs/keeper.mp3", metadataUrl: "/outputs/keeper.mp3.json", bundleUrl: "/api/library/bundle?filename=keeper.mp3", format: "mp3", bytes: 4096, createdAt: "2026-05-21T12:00:00.000Z", favorite: false },
+              { filename: "radio_voice_test_1812345678901.mp3", audioUrl: "/outputs/radio_voice_test_1812345678901.mp3", downloadUrl: "/outputs/radio_voice_test_1812345678901.mp3", metadataUrl: "/outputs/radio_voice_test_1812345678901.mp3.json", bundleUrl: "/api/library/bundle?filename=radio_voice_test_1812345678901.mp3", format: "mp3", bytes: 1024, createdAt: "2026-05-21T12:01:00.000Z", favorite: false },
+              { filename: "radio_announce_keeper_now_playing.mp3", audioUrl: "/outputs/radio_announce_keeper_now_playing.mp3", downloadUrl: "/outputs/radio_announce_keeper_now_playing.mp3", metadataUrl: "/outputs/radio_announce_keeper_now_playing.mp3.json", bundleUrl: "/api/library/bundle?filename=radio_announce_keeper_now_playing.mp3", format: "mp3", bytes: 1024, createdAt: "2026-05-21T12:02:00.000Z", favorite: false },
+            ],
+          }),
+        } as Response;
+      }
+      return { arrayBuffer: async () => new ArrayBuffer(0) } as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      beginPath: vi.fn(),
+      clearRect: vi.fn(),
+      createLinearGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
+      fillRect: vi.fn(),
+      lineTo: vi.fn(),
+      moveTo: vi.fn(),
+      stroke: vi.fn(),
+    } as unknown as CanvasRenderingContext2D);
+
+    render(<Home />);
+
+    const hideUtilityToggle = await screen.findByRole("button", { name: "Hide Voice" });
+    expect(hideUtilityToggle.getAttribute("aria-pressed")).toBe("true");
+    expect(await screen.findByText("keeper.mp3")).toBeTruthy();
+    expect(screen.queryByText("radio_voice_test_1812345678901.mp3")).toBeNull();
+    expect(screen.queryByText("radio_announce_keeper_now_playing.mp3")).toBeNull();
+
+    fireEvent.click(hideUtilityToggle);
+
+    expect(hideUtilityToggle.getAttribute("aria-pressed")).toBe("false");
+    expect(await screen.findByText("radio_voice_test_1812345678901.mp3")).toBeTruthy();
+    expect(await screen.findByText("radio_announce_keeper_now_playing.mp3")).toBeTruthy();
+  });
+
+  it("adds an mp3 library song to the radio lineup with its saved prompt metadata", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/library") {
+        return {
+          json: async () => ({
+            ok: true,
+            items: [{
+              filename: "midnight_arcade.mp3",
+              audioUrl: "/outputs/midnight_arcade.mp3",
+              downloadUrl: "/outputs/midnight_arcade.mp3",
+              metadataUrl: "/outputs/midnight_arcade.mp3.json",
+              bundleUrl: "/api/library/bundle?filename=midnight_arcade.mp3",
+              format: "mp3",
+              bytes: 4096,
+              createdAt: "2026-05-21T12:00:00.000Z",
+              favorite: false,
+              title: "Midnight Arcade",
+              meta: { title: "Midnight Arcade", settings: { prompt: "warm synthwave night drive", mode: "music", model: "small-music", duration: 42, steps: 8, cfgScale: 1, format: "mp3", mock: false } },
+            }],
+          }),
+        } as Response;
+      }
+      if (input === "/api/radio") {
+        return { json: async () => ({ ok: true }) } as Response;
+      }
+      return { arrayBuffer: async () => new ArrayBuffer(0) } as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      beginPath: vi.fn(),
+      clearRect: vi.fn(),
+      createLinearGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
+      fillRect: vi.fn(),
+      lineTo: vi.fn(),
+      moveTo: vi.fn(),
+      stroke: vi.fn(),
+    } as unknown as CanvasRenderingContext2D);
+
+    render(<Home />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Add Midnight Arcade to radio lineup" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/radio", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        action: "track",
+        filename: "midnight_arcade.mp3",
+        title: "Midnight Arcade",
+        prompt: "warm synthwave night drive",
+        durationSeconds: 42,
+      }),
+    })));
+    expect(await screen.findByRole("button", { name: "Midnight Arcade queued for radio" })).toHaveProperty("disabled", true);
   });
 });
 

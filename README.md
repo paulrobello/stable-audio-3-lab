@@ -16,7 +16,7 @@
   * [Accept gated model terms](#accept-gated-model-terms)
   * [Install the official Stable Audio 3 repo](#install-the-official-stable-audio-3-repo)
   * [Install the MLX runtime](#install-the-mlx-runtime)
-  * [Download MLX weights](#download-mlx-weights)
+  * [Optional: pre-download MLX weights](#optional-pre-download-mlx-weights)
   * [Configure real inference](#configure-real-inference)
 * [Environment Variables](#environment-variables)
 * [Running Stable Audio 3 Lab](#running-stable-audio-3-lab)
@@ -104,8 +104,8 @@ Sound FX mode with SFX-focused prompts and the same local generation workflow.
 * Python 3.11 or newer.
 * `uv` for the vendored Stable Audio 3 Python environment.
 * `ffmpeg` and `ffprobe` for MP3 conversion, crop rendering, and real media-duration validation.
-* `hfdownloader` for Hugging Face model downloads.
-* A Hugging Face account with Stability's gated model terms accepted for real inference.
+* Hugging Face CLI (`hf`) or `HF_TOKEN` if you want higher download limits.
+* A Hugging Face account with Stability's gated model terms accepted only if you use the standard Torch checkpoints.
 
 Mock mode does not require the Stable Audio 3 models and is useful for validating the browser → API → Python → output → playback loop.
 
@@ -155,16 +155,17 @@ This lab defaults to the official **Apple Silicon MLX backend** for real inferen
 | Small SFX | `sm-sfx` | `same-s` | Sound effects, Foley, UI stings. |
 | Medium | `medium` | `same-l` | Higher-quality music and longer forms. |
 
-The MLX path uses `stabilityai/stable-audio-3-optimized` and avoids the CUDA/FlashAttention requirements of the standard PyTorch Medium checkpoint. On Paul's M4 Max, this is the happy path.
+The MLX path uses `stabilityai/stable-audio-3-optimized`, which is the public optimized-weight repo with MLX, ONNX, and TensorRT assets. Hugging Face currently describes it as experimental and points standard checkpoint users back to the normal Small/Medium repos. For this Apple Silicon app, MLX still avoids the CUDA/FlashAttention requirements of the standard PyTorch Medium checkpoint.
 
 ### Accept gated model terms
 
-Accept the license terms on Hugging Face first:
+Accept the gated license terms on Hugging Face first if you plan to use `STABLE_AUDIO_BACKEND=torch` or otherwise download the standard checkpoints:
 
 * <https://huggingface.co/stabilityai/stable-audio-3-small-sfx>
 * <https://huggingface.co/stabilityai/stable-audio-3-small-music>
 * <https://huggingface.co/stabilityai/stable-audio-3-medium>
-* <https://huggingface.co/stabilityai/stable-audio-3-optimized>
+
+The optimized MLX repo is not currently gated, but it is still covered by the Stability AI Community License and Gemma terms.
 
 ### Install the official Stable Audio 3 repo
 
@@ -176,25 +177,26 @@ uv sync
 uv run hf auth login
 ```
 
+`hf auth login` is optional for the default optimized MLX path, but it avoids anonymous Hugging Face download limits and is required for gated standard checkpoints after you accept their terms.
+
 ### Install the MLX runtime
 
 ```bash
 cd ~/Repos/stable-audio-3-lab/vendor/stable-audio-3/optimized/mlx
-./install.sh -y --download ''
+./install.sh -y
 ```
 
-### Download MLX weights
+The installer creates `optimized/mlx/.venv`, installs the MLX runtime dependencies, and offers to download the selected model bundles from `stabilityai/stable-audio-3-optimized`. If you skip weight selection, the `./sa3` wrapper downloads missing `.npz` files on first use and symlinks them into `models/mlx/` from the Hugging Face cache.
 
-Use Paul's preferred Hugging Face downloader:
+### Optional: pre-download MLX weights
+
+The runtime can auto-download missing weights, so this step is optional. If you want to pre-warm only the MLX assets with the current Hugging Face CLI:
 
 ```bash
 cd ~/Repos/stable-audio-3-lab/vendor/stable-audio-3/optimized/mlx
-hfdownloader download stabilityai/stable-audio-3-optimized \
-  --local-dir ./hf-optimized \
-  --max-active 4 \
-  -c 8 \
-  -F MLX \
-  -E onnx,tensorRT,Thumbnail
+hf download stabilityai/stable-audio-3-optimized \
+  --include 'MLX/*.npz' \
+  --local-dir ./hf-optimized
 ```
 
 Expose those files where the MLX runtime expects them:
@@ -203,7 +205,7 @@ Expose those files where the MLX runtime expects them:
 python3 - <<'PY'
 from pathlib import Path
 mlx = Path('/Users/probello/Repos/stable-audio-3-lab/vendor/stable-audio-3/optimized/mlx')
-src = mlx / 'hf-optimized/stabilityai/stable-audio-3-optimized/MLX'
+src = mlx / 'hf-optimized/MLX'
 dst = mlx / 'models/mlx'
 dst.mkdir(parents=True, exist_ok=True)
 for p in src.glob('*.npz'):
@@ -238,7 +240,7 @@ STABLE_AUDIO_TIMEOUT_MS=900000
 
 ### Environment Variables for Stable Audio 3 Lab configuration
 
-* `HF_TOKEN` - Optional Hugging Face token for gated repos/auth flows.
+* `HF_TOKEN` - Optional Hugging Face token for higher optimized-weight download limits; required for gated standard repo downloads after terms are accepted.
 * `STABLE_AUDIO_MOCK` - `true` to force mock generation; `false` for real model inference.
 * `STABLE_AUDIO_PYTHON` - Python executable for the bridge script. Defaults to `python3`.
 * `STABLE_AUDIO_BACKEND` - Real inference backend: `mlx` by default/recommended, or `torch` for the standard PyTorch path.

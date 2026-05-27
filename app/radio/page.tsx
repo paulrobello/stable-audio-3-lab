@@ -4,12 +4,11 @@ import path from "node:path";
 import { headers } from "next/headers";
 import {
   buildRadioLanStreamUrl,
+  buildRadioPlaylistUrls,
   buildRadioPublicStreamUrl,
   buildRadioStreamState,
   defaultRadioState,
-  normalizeOllamaPromptModel,
-  normalizeRadioStyleId,
-  normalizeRadioTtsConfig,
+  normalizeRadioState,
   type RadioState,
   type RadioStreamState,
 } from "@/lib/radio";
@@ -32,27 +31,24 @@ async function readInitialRadioStreamState(): Promise<RadioStreamState> {
   const requestHeaders = await headers();
   const host = requestHeaders.get("host") ?? "";
   const port = host.includes(":") ? host.split(":").at(-1) : process.env.PORT || "3007";
-  const publicStreamUrl = buildRadioPublicStreamUrl(resolvePublicRadioOrigin(requestHeaders));
+  const publicOrigin = resolvePublicRadioOrigin(requestHeaders);
+  const publicStreamUrl = buildRadioPublicStreamUrl(publicOrigin);
+  const publicPlaylistUrls = buildRadioPlaylistUrls(resolveConfiguredPublicRadioOrigin(requestHeaders));
   const lanStreamUrl = buildRadioLanStreamUrl(resolveLanIp(), port);
+  const lanPlaylistUrls = buildRadioPlaylistUrls(lanStreamUrl);
   return {
     ...buildRadioStreamState(state),
     ...(publicStreamUrl ? { streamUrl: publicStreamUrl } : {}),
-    ...(!publicStreamUrl && lanStreamUrl ? { lanStreamUrl } : {}),
+    ...(lanStreamUrl ? { lanStreamUrl } : {}),
+    ...(publicPlaylistUrls ? { publicPlaylistUrls } : {}),
+    ...(lanPlaylistUrls ? { lanPlaylistUrls } : {}),
   };
 }
 
 async function readRadioState(): Promise<RadioState> {
   try {
     const parsed = JSON.parse(await readFile(statePath(), "utf8")) as Partial<RadioState>;
-    return {
-      ...defaultRadioState(),
-      ...parsed,
-      selectedStyleId: normalizeRadioStyleId(parsed.selectedStyleId),
-      promptModel: normalizeOllamaPromptModel(parsed.promptModel),
-      ...normalizeRadioTtsConfig(parsed as Record<string, unknown>),
-      preferences: parsed.preferences ?? {},
-      history: Array.isArray(parsed.history) ? parsed.history : [],
-    };
+    return normalizeRadioState(parsed);
   } catch {
     return defaultRadioState();
   }
@@ -74,6 +70,11 @@ function resolvePublicRadioOrigin(requestHeaders: { get(name: string): string | 
   if (!host) return undefined;
   const proto = requestHeaders.get("x-forwarded-proto") ?? "https";
   return `${proto}://${host}`;
+}
+
+function resolveConfiguredPublicRadioOrigin(requestHeaders: { get(name: string): string | null }) {
+  const requestOrigin = resolvePublicRadioOrigin(requestHeaders);
+  return process.env.RADIO_PUBLIC_ORIGIN || (requestOrigin?.includes("radio.pardev.net") ? requestOrigin : "https://radio.pardev.net");
 }
 
 async function listOllamaPromptModels() {

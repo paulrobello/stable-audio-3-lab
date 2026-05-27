@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import path from "node:path";
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { homedir, networkInterfaces } from "node:os";
 import {
   advanceRadioCurrentTrack,
+  buildRadioPlaylistUrls,
   buildRadioPromptGeneratorMessages,
   buildRadioLanStreamUrl,
   buildRadioPublicStreamUrl,
@@ -17,6 +19,7 @@ import {
   defaultRadioState,
   findDuplicateRadioTitleTracks,
   findRadioTracksForCleanup,
+  normalizeRadioState,
   normalizeOllamaPromptModel,
   normalizeRadioTtsConfig,
   normalizeRadioStyleId,
@@ -24,38 +27,56 @@ import {
   recordRadioRating,
   removeRadioTracksFromLineup,
   replaceRadioTrackInLineup,
+  readRadioConfigFileValue,
   readRadioEnvFileValue,
   resolveRadioAnnouncementFilename,
   rejectCurrentRadioTrack,
   registerRadioTrack,
+  selectRadioStyle,
+  selectRadioTrack,
+  getRadioTtsVoiceOptions,
+  type RadioTtsVoiceOption,
+  type RadioPlaylistFormat,
   type RadioPromptProvider,
   type RadioState,
   type RadioTrackRecord,
 } from "@/lib/radio";
-import { isSafeAudioFilename, metadataPathForAudio, outputPathForAudio } from "@/lib/library";
+import { buildRadioPlaylistRouteResponse } from "@/lib/radio-playlist-response";
+import { isFavoriteMetadata, isSafeAudioFilename, metadataPathForAudio, outputPathForAudio } from "@/lib/library";
 
 export const runtime = "nodejs";
 export const maxDuration = 180;
 
 type TtsModule = {
-  createSpeechPipeline: (config: { provider: string; apiKey: string; model?: string; voice?: string; options?: Record<string, unknown> }) => {
-    synthesize: (text: string, request?: { voice?: string; model?: string; options?: Record<string, unknown> }) => Promise<{ audio: Uint8Array | ReadableStream<Uint8Array> }>;
-  };
+  createSpeechPipeline: (config: { provider: string; apiKey?: string; model?: string; voice?: string; options?: Record<string, unknown> }) => TtsPipeline;
+  createSpeechPipelineFromEnv?: (config: { provider: string; apiKey?: string; model?: string; voice?: string; options?: Record<string, unknown> }) => TtsPipeline;
   collectAudio: (audio: Uint8Array | ReadableStream<Uint8Array>) => Promise<Uint8Array>;
+};
+
+type TtsPipeline = {
+  synthesize: (text: string, request?: { voice?: string; model?: string; options?: Record<string, unknown> }) => Promise<{ audio: Uint8Array | ReadableStream<Uint8Array> }>;
+  listVoices?: () => Promise<Array<{ id: string; name?: string; labels?: string[]; category?: string }>>;
 };
 
 const outputDir = () => path.join(process.cwd(), "public", "outputs");
 const statePath = () => path.join(process.cwd(), ".stable-audio-radio", "state.json");
 const RADIO_STREAM_IDLE_WAIT_MS = 1200;
-const RADIO_STREAM_MAX_IDLE_POLLS = 120;
 const RADIO_STREAM_BYTES_PER_SECOND = 24_000;
 const RADIO_STREAM_CHUNK_BYTES = 24_000;
+const RADIO_STREAM_ICY_META_INTERVAL = RADIO_STREAM_CHUNK_BYTES;
 
 export async function GET(request: NextRequest) {
   try {
+    const playlistFormat = normalizePlaylistFormat(request.nextUrl.searchParams.get("playlist"));
+    if (playlistFormat) return buildRadioPlaylistRouteResponse(playlistFormat, request);
     const state = await readRadioState();
     if (request.nextUrl.searchParams.get("stream") === "1") {
-      return streamCurrentTrack(state);
+      const forceIcyMetadata = request.nextUrl.searchParams.get("icy") === "1";
+      return streamCurrentTrack(state, {
+        icyMetadataEnabled: forceIcyMetadata || request.headers.get("icy-metadata") === "1",
+        metadataOnly: forceIcyMetadata || request.nextUrl.searchParams.get("metadataOnly") === "1",
+        skipAnnouncement: request.nextUrl.searchParams.get("skipAnnouncement") === "1",
+      });
     }
     const promptModels = await listOllamaPromptModels();
     return NextResponse.json({ ok: true, state: buildRadioResponseState(state, request), promptModels });
@@ -71,7 +92,7 @@ export async function POST(request: NextRequest) {
     const state = await readRadioState();
 
     if (action === "configure") {
-      const nextState = {
+      const nextState = selectRadioStyle({
         ...state,
         selectedStyleId: normalizeRadioStyleId(body.styleId ?? state.selectedStyleId),
         promptModel: normalizeOllamaPromptModel(body.promptModel ?? state.promptModel),
@@ -83,9 +104,31 @@ export async function POST(request: NextRequest) {
           announcementSuffix: body.announcementSuffix ?? state.announcementSuffix,
         }),
         updatedAt: new Date().toISOString(),
-      };
+      }, body.styleId ?? state.selectedStyleId);
       await writeRadioState(nextState);
       return NextResponse.json({ ok: true, state: buildRadioResponseState(nextState, request) });
+    }
+
+    if (action === "testVoice") {
+      const ttsConfig = normalizeRadioTtsConfig({
+        ttsProvider: body.ttsProvider ?? state.ttsProvider,
+        ttsVoice: body.ttsVoice ?? state.ttsVoice,
+        announcementPrefix: body.announcementPrefix ?? state.announcementPrefix,
+        announcementSuffix: body.announcementSuffix ?? state.announcementSuffix,
+      });
+      const audioUrl = await createTestVoiceAudio({ ...state, ...ttsConfig });
+      return NextResponse.json({ ok: true, audioUrl });
+    }
+
+    if (action === "ttsVoices") {
+      const ttsConfig = normalizeRadioTtsConfig({
+        ttsProvider: body.ttsProvider ?? state.ttsProvider,
+        ttsVoice: body.ttsVoice ?? state.ttsVoice,
+        announcementPrefix: state.announcementPrefix,
+        announcementSuffix: state.announcementSuffix,
+      });
+      const voices = await listTtsVoiceOptions(ttsConfig.ttsProvider, ttsConfig.ttsVoice);
+      return NextResponse.json({ ok: true, voices });
     }
 
     if (action === "draft") {
@@ -119,6 +162,19 @@ export async function POST(request: NextRequest) {
       const nextState = registerRadioTrack({ ...state, currentDraft: undefined }, finalTrack);
       await writeRadioState(nextState);
       return NextResponse.json({ ok: true, track: finalTrack, state: buildRadioResponseState(nextState, request) });
+    }
+
+    if (action === "fallbackTrack") {
+      const fallback = await registerStarredLibraryFallbackTrack(state, normalizeFallbackReason(body.reason));
+      if (!fallback) return NextResponse.json({ ok: false, error: "No starred library MP3 fallback is available" }, { status: 404 });
+      return NextResponse.json({ ok: true, fallbackTrack: fallback.track, state: buildRadioResponseState(fallback.state, request) });
+    }
+
+    if (action === "selectTrack") {
+      const result = selectRadioTrack(state, body.filename);
+      if (!result.selectedTrack) return NextResponse.json({ ok: false, error: "Track is not in the radio lineup" }, { status: 404 });
+      await writeRadioState(result.state);
+      return NextResponse.json({ ok: true, track: result.selectedTrack, state: buildRadioResponseState(result.state, request) });
     }
 
     if (action === "rating") {
@@ -157,13 +213,22 @@ export async function POST(request: NextRequest) {
 
 function buildRadioResponseState(state: RadioState, request: NextRequest) {
   const port = request.nextUrl.port || process.env.PORT || "3007";
-  const publicStreamUrl = buildRadioPublicStreamUrl(resolvePublicRadioOrigin(request));
+  const publicOrigin = resolvePublicRadioOrigin(request);
+  const publicStreamUrl = buildRadioPublicStreamUrl(publicOrigin);
+  const publicPlaylistUrls = buildRadioPlaylistUrls(resolveConfiguredPublicRadioOrigin(request));
   const lanStreamUrl = buildRadioLanStreamUrl(resolveLanIp(), port);
+  const lanPlaylistUrls = buildRadioPlaylistUrls(lanStreamUrl);
   return {
     ...buildRadioStreamState(state),
     ...(publicStreamUrl ? { streamUrl: publicStreamUrl } : {}),
-    ...(!publicStreamUrl && lanStreamUrl ? { lanStreamUrl } : {}),
+    ...(lanStreamUrl ? { lanStreamUrl } : {}),
+    ...(publicPlaylistUrls ? { publicPlaylistUrls } : {}),
+    ...(lanPlaylistUrls ? { lanPlaylistUrls } : {}),
   };
+}
+
+function normalizePlaylistFormat(value: string | null): RadioPlaylistFormat | undefined {
+  return value === "m3u" || value === "pls" ? value : undefined;
 }
 
 function resolvePublicRadioOrigin(request: NextRequest) {
@@ -171,6 +236,11 @@ function resolvePublicRadioOrigin(request: NextRequest) {
   if (!host) return undefined;
   const proto = (request.headers.get("x-forwarded-proto") ?? request.nextUrl.protocol.replace(/:$/, "")) || "https";
   return `${proto}://${host}`;
+}
+
+function resolveConfiguredPublicRadioOrigin(request: NextRequest) {
+  const requestOrigin = resolvePublicRadioOrigin(request);
+  return process.env.RADIO_PUBLIC_ORIGIN || (requestOrigin?.includes("radio.pardev.net") ? requestOrigin : "https://radio.pardev.net");
 }
 
 function resolveLanIp() {
@@ -234,11 +304,9 @@ function ollamaTagsUrl() {
   return new URL("/api/tags", baseUrl).toString();
 }
 
-async function streamCurrentTrack(state: RadioState) {
-  const initialFilename = state.currentTrack?.filename;
-  if (!initialFilename || !isSafeAudioFilename(initialFilename) || !initialFilename.toLowerCase().endsWith(".mp3")) {
-    return new NextResponse("No MP3 radio track is ready", { status: 404 });
-  }
+async function streamCurrentTrack(state: RadioState, options: { icyMetadataEnabled?: boolean; metadataOnly?: boolean; skipAnnouncement?: boolean } = {}) {
+  const icyMetadataEnabled = options.icyMetadataEnabled ?? false;
+  const skipAnnouncementAudio = options.skipAnnouncement || options.metadataOnly;
   let streamState = state;
   let pendingFilenames: string[] = [];
   let pendingTrack: RadioTrackRecord | undefined;
@@ -247,29 +315,59 @@ async function streamCurrentTrack(state: RadioState) {
   let activeFilename: string | undefined;
   let activeFileStarted = false;
   let completedTrackFilename: string | undefined;
-  let idlePolls = 0;
+  let icyBytesUntilMetadata = RADIO_STREAM_ICY_META_INTERVAL;
 
   const stream = new ReadableStream<Uint8Array>({
     async pull(controller) {
       while (true) {
         if (activeAudio && activeFilename) {
-          const chunk = activeAudio.slice(activeAudioOffset, activeAudioOffset + RADIO_STREAM_CHUNK_BYTES);
+          if (pendingTrack) {
+            const latestState = await readRadioState();
+            if (latestState.currentTrack?.filename !== pendingTrack.filename) {
+              streamState = latestState;
+              pendingFilenames = [];
+              pendingTrack = undefined;
+              activeAudio = undefined;
+              activeAudioOffset = 0;
+              activeFilename = undefined;
+              activeFileStarted = false;
+              completedTrackFilename = undefined;
+              continue;
+            }
+          }
+          const chunkSize = icyMetadataEnabled ? Math.min(RADIO_STREAM_CHUNK_BYTES, icyBytesUntilMetadata) : RADIO_STREAM_CHUNK_BYTES;
+          const chunk = activeAudio.slice(activeAudioOffset, activeAudioOffset + chunkSize);
           activeAudioOffset += chunk.length;
           if (activeFileStarted) await sleep(Math.round(chunk.length / RADIO_STREAM_BYTES_PER_SECOND * 1000));
           activeFileStarted = true;
+          const finishedFilename = activeAudioOffset >= activeAudio.length ? activeFilename : undefined;
+          const metadataTitle = pendingTrack?.title;
           if (activeAudioOffset >= activeAudio.length) {
             activeAudio = undefined;
             activeAudioOffset = 0;
             activeFilename = undefined;
             activeFileStarted = false;
           }
-          controller.enqueue(chunk);
+          if (finishedFilename && pendingTrack && finishedFilename === pendingTrack.filename && pendingFilenames.length === 0) {
+            streamState = await advanceStreamStateAfterTrack(pendingTrack);
+            completedTrackFilename = streamState.currentTrack?.filename === pendingTrack.filename ? pendingTrack.filename : undefined;
+            pendingTrack = undefined;
+          }
+          let outputChunk = chunk;
+          if (icyMetadataEnabled) {
+            icyBytesUntilMetadata -= chunk.length;
+            if (icyBytesUntilMetadata <= 0) {
+              outputChunk = concatenateBytes(chunk, buildIcyMetadataBlock(metadataTitle));
+              icyBytesUntilMetadata = RADIO_STREAM_ICY_META_INTERVAL;
+            }
+          }
+          controller.enqueue(outputChunk);
           return;
         }
 
         if (!pendingFilenames.length) {
           if (pendingTrack) {
-            streamState = await advanceStreamStateAfterTrack(pendingTrack, streamState);
+            streamState = await advanceStreamStateAfterTrack(pendingTrack);
             completedTrackFilename = streamState.currentTrack?.filename === pendingTrack.filename ? pendingTrack.filename : undefined;
             pendingTrack = undefined;
           }
@@ -286,16 +384,17 @@ async function streamCurrentTrack(state: RadioState) {
 
           const track = streamState.currentTrack;
           if (!track || !isSafeAudioFilename(track.filename) || !track.filename.toLowerCase().endsWith(".mp3") || track.filename === completedTrackFilename) {
-            idlePolls += 1;
-            if (idlePolls > RADIO_STREAM_MAX_IDLE_POLLS) {
-              controller.close();
-              return;
+            const fallback = await registerStarredLibraryFallbackTrack(streamState, "stream_starvation");
+            if (fallback) {
+              streamState = fallback.state;
+              completedTrackFilename = undefined;
+              continue;
             }
             await sleep(RADIO_STREAM_IDLE_WAIT_MS);
             continue;
           }
 
-          const playableTrack = await prepareTrackForStreamPlayback(track, streamState);
+          const playableTrack = skipAnnouncementAudio ? track : await prepareTrackForStreamPlayback(track, streamState);
           if (playableTrack !== track) {
             streamState = replaceRadioTrackInLineup(streamState, playableTrack);
             await writeTrackRadioMetadata(playableTrack, streamState);
@@ -303,44 +402,101 @@ async function streamCurrentTrack(state: RadioState) {
           }
 
           pendingTrack = playableTrack;
-          pendingFilenames = buildRadioTrackPlaybackFilenames(playableTrack)
+          pendingFilenames = buildRadioTrackPlaybackFilenames(playableTrack, { skipAnnouncement: skipAnnouncementAudio })
             .filter((filename) => isSafeAudioFilename(filename) && filename.toLowerCase().endsWith(".mp3"));
-          idlePolls = 0;
           if (!pendingFilenames.length) continue;
         }
 
-        const filename = pendingFilenames.shift();
-        if (!filename) continue;
+        const segmentFilenames = pendingFilenames.splice(0);
+        if (!segmentFilenames.length) continue;
         try {
-          const audio = await readFile(outputPathForAudio(outputDir(), filename));
-          activeAudio = new Uint8Array(audio);
-          activeFilename = filename;
+          const segmentFiles = [];
+          for (const segmentFilename of segmentFilenames) {
+            try {
+              segmentFiles.push({ filename: segmentFilename, filePath: outputPathForAudio(outputDir(), segmentFilename) });
+              await readFile(outputPathForAudio(outputDir(), segmentFilename));
+            } catch (error) {
+              if (segmentFilename !== pendingTrack?.filename && isNotFoundError(error)) continue;
+              throw error;
+            }
+          }
+          if (!segmentFiles.length) continue;
+          activeAudio = await readRadioStreamSegment(segmentFiles.map((file) => file.filePath));
+          activeFilename = pendingTrack?.filename ?? segmentFiles.at(-1)?.filename;
           activeAudioOffset = 0;
           activeFileStarted = false;
           continue;
         } catch (error) {
-          if (filename !== pendingTrack?.filename && isNotFoundError(error)) continue;
           throw error;
         }
       }
     },
   });
+  const headers: Record<string, string> = {
+    "content-type": "audio/mpeg",
+    "cache-control": "no-store",
+    "connection": "keep-alive",
+    "x-accel-buffering": "no",
+    "icy-name": "Stable Audio 3 Lab Radio",
+    "icy-description": state.currentTrack?.title ?? "AI-generated local radio",
+  };
+  if (icyMetadataEnabled) headers["icy-metaint"] = String(RADIO_STREAM_ICY_META_INTERVAL);
 
   return new NextResponse(stream, {
-    headers: {
-      "content-type": "audio/mpeg",
-      "cache-control": "no-store",
-      "icy-name": "Stable Audio 3 Lab Radio",
-      "icy-description": state.currentTrack?.title ?? "AI-generated local radio",
-    },
+    headers,
   });
 }
 
-async function advanceStreamStateAfterTrack(track: RadioTrackRecord, fallbackState: RadioState) {
+function buildIcyMetadataBlock(title: string | undefined) {
+  const metadata = Buffer.from(`StreamTitle='${cleanIcyMetadataValue(title ?? "Stable Audio 3 Lab Radio")}';`, "utf8").subarray(0, 4080);
+  const blockCount = Math.ceil(metadata.length / 16);
+  const block = new Uint8Array(1 + blockCount * 16);
+  block[0] = blockCount;
+  block.set(metadata, 1);
+  return block;
+}
+
+function cleanIcyMetadataValue(value: string) {
+  return value.replace(/[\0\r\n;]/g, " ").replace(/'/g, "").replace(/\s+/g, " ").trim().slice(0, 240);
+}
+
+function concatenateBytes(first: Uint8Array, second: Uint8Array) {
+  const output = new Uint8Array(first.length + second.length);
+  output.set(first);
+  output.set(second, first.length);
+  return output;
+}
+
+function stripLeadingId3Tag(bytes: Uint8Array) {
+  if (bytes.length < 10 || String.fromCharCode(...bytes.slice(0, 3)) !== "ID3") return bytes;
+  const tagSize = (bytes[6] & 0x7f) << 21 | (bytes[7] & 0x7f) << 14 | (bytes[8] & 0x7f) << 7 | (bytes[9] & 0x7f);
+  const footerSize = (bytes[5] & 0x10) === 0x10 ? 10 : 0;
+  const offset = 10 + tagSize + footerSize;
+  return offset > 10 && offset < bytes.length ? bytes.slice(offset) : bytes;
+}
+
+async function readRadioStreamSegment(filePaths: string[]) {
+  if (filePaths.length === 1) return stripLeadingId3Tag(new Uint8Array(await readFile(filePaths[0])));
+  try {
+    return stripLeadingId3Tag(await transcodeFilesToRadioMp3(filePaths));
+  } catch {
+    const chunks = await Promise.all(filePaths.map(async (filePath) => stripLeadingId3Tag(new Uint8Array(await readFile(filePath)))));
+    const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    const output = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const chunk of chunks) {
+      output.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return output;
+  }
+}
+
+async function advanceStreamStateAfterTrack(track: RadioTrackRecord) {
   const latestState = await readRadioState();
-  const stateToAdvance = latestState.currentTrack?.filename === track.filename ? latestState : fallbackState;
-  const advanced = advanceRadioCurrentTrack(stateToAdvance);
-  if (advanced.currentTrack?.filename !== stateToAdvance.currentTrack?.filename) await writeRadioState(advanced);
+  if (latestState.currentTrack?.filename !== track.filename) return latestState;
+  const advanced = advanceRadioCurrentTrack(latestState);
+  if (advanced.currentTrack?.filename !== latestState.currentTrack?.filename) await writeRadioState(advanced);
   return advanced;
 }
 
@@ -363,15 +519,7 @@ function sleep(ms: number) {
 async function readRadioState(): Promise<RadioState> {
   try {
     const parsed = JSON.parse(await readFile(statePath(), "utf8")) as Partial<RadioState>;
-    return {
-      ...defaultRadioState(),
-      ...parsed,
-      selectedStyleId: normalizeRadioStyleId(parsed.selectedStyleId),
-      promptModel: normalizeOllamaPromptModel(parsed.promptModel),
-      ...normalizeRadioTtsConfig(parsed as Record<string, unknown>),
-      preferences: parsed.preferences ?? {},
-      history: Array.isArray(parsed.history) ? parsed.history : [],
-    };
+    return normalizeRadioState(parsed);
   } catch {
     return defaultRadioState();
   }
@@ -384,6 +532,99 @@ async function writeRadioState(state: RadioState) {
 
 function normalizePromptProvider(value: unknown): RadioPromptProvider | undefined {
   return value === "ollama" || value === "fallback" ? value : undefined;
+}
+
+function normalizeFallbackReason(value: unknown) {
+  if (typeof value !== "string") return "queue_refill_timeout";
+  return value.trim().replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80) || "queue_refill_timeout";
+}
+
+async function registerStarredLibraryFallbackTrack(state: RadioState, reason: string) {
+  const track = await buildStarredLibraryFallbackTrack(state, reason);
+  if (!track) return undefined;
+  const announcementFilename = await createAnnouncementIfEnabled(track, state);
+  const finalTrack = announcementFilename ? { ...track, announcementFilename } : track;
+  await writeTrackRadioMetadata(finalTrack, state);
+  const nextState = registerRadioTrack({ ...state, currentDraft: undefined }, finalTrack);
+  await writeRadioState(nextState);
+  return { track: finalTrack, state: nextState };
+}
+
+async function buildStarredLibraryFallbackTrack(state: RadioState, reason: string): Promise<RadioTrackRecord | undefined> {
+  const candidates = await readStarredLibraryFallbackCandidates(state);
+  const candidate = candidates[0];
+  if (!candidate) return undefined;
+  return createRadioTrackRecord({
+    filename: candidate.filename,
+    title: candidate.title,
+    prompt: candidate.prompt,
+    styleId: state.selectedStyleId,
+    announce: state.announceEnabled,
+    promptProvider: "fallback",
+    promptModel: "starred-library",
+    source: "library-fallback",
+    fallbackReason: reason,
+    durationSeconds: candidate.durationSeconds,
+  });
+}
+
+async function readStarredLibraryFallbackCandidates(state: RadioState) {
+  await mkdir(outputDir(), { recursive: true });
+  const names = await readdir(outputDir());
+  const queuedFilenames = new Set(state.history.map((track) => track.filename));
+  const candidates: Array<{
+    filename: string;
+    title: string;
+    prompt: string;
+    durationSeconds?: number;
+    queued: boolean;
+    createdAtMs: number;
+  }> = [];
+
+  for (const filename of names) {
+    if (!isSafeAudioFilename(filename) || !filename.toLowerCase().endsWith(".mp3") || filename.startsWith("radio_announce_")) continue;
+    const audioPath = outputPathForAudio(outputDir(), filename);
+    let meta: unknown;
+    try {
+      meta = JSON.parse(await readFile(metadataPathForAudio(audioPath), "utf8"));
+      if (!isFavoriteMetadata(meta)) continue;
+      const info = await stat(audioPath);
+      candidates.push({
+        filename,
+        ...readFallbackTrackMetadata(filename, meta),
+        queued: queuedFilenames.has(filename),
+        createdAtMs: info.birthtimeMs,
+      });
+    } catch {
+      continue;
+    }
+  }
+
+  return candidates.sort((a, b) => Number(a.queued) - Number(b.queued) || b.createdAtMs - a.createdAtMs);
+}
+
+function readFallbackTrackMetadata(filename: string, meta: unknown) {
+  const record = meta && typeof meta === "object" ? meta as Record<string, unknown> : {};
+  const settings = record.settings && typeof record.settings === "object" ? record.settings as Record<string, unknown> : {};
+  const request = record.request && typeof record.request === "object" ? record.request as Record<string, unknown> : {};
+  const radio = record.radio && typeof record.radio === "object" ? record.radio as Record<string, unknown> : {};
+  const title = firstString(record.title, radio.title, filename.replace(/\.(mp3|wav)$/i, ""));
+  const prompt = firstString(settings.prompt, request.prompt, radio.title, title);
+  const duration = firstNumber(settings.duration, request.duration);
+  return {
+    title,
+    prompt,
+    ...(duration ? { durationSeconds: duration } : {}),
+  };
+}
+
+function firstString(...values: unknown[]) {
+  return values.find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim() ?? "";
+}
+
+function firstNumber(...values: unknown[]) {
+  const value = values.find((item): item is number => typeof item === "number" && Number.isFinite(item) && item > 0);
+  return value;
 }
 
 async function writeTrackRadioMetadata(track: RadioTrackRecord, state: RadioState) {
@@ -401,6 +642,8 @@ async function writeTrackRadioMetadata(track: RadioTrackRecord, state: RadioStat
     radio: {
       styleId: track.styleId,
       title: track.title,
+      source: track.source,
+      fallbackReason: track.fallbackReason,
       registeredAt: track.createdAt,
       announce: track.announce,
       announcementFilename: track.announcementFilename,
@@ -475,26 +718,150 @@ async function createAnnouncementIfEnabled(track: RadioTrackRecord, state: Radio
   if (!track.announce) return undefined;
   const model = process.env.RADIO_TTS_MODEL;
   const previousAnnouncementFilename = await existingTrackAnnouncementFilename(track);
-  if (previousAnnouncementFilename) return previousAnnouncementFilename;
+  if (previousAnnouncementFilename && await ensureMp3File(outputPathForAudio(outputDir(), previousAnnouncementFilename))) return previousAnnouncementFilename;
   const filename = buildRadioAnnouncementFilename(track, { ...state, ttsModel: model });
-  if (await fileExists(outputPathForAudio(outputDir(), filename))) return filename;
-  const apiKey = await providerApiKey(state.ttsProvider);
-  if (!apiKey) return undefined;
+  const finalPath = outputPathForAudio(outputDir(), filename);
+  if (await ensureMp3File(finalPath)) return filename;
   try {
-    const modulePath = process.env.RADIO_TTS_MODULE_PATH || path.join(path.sep, "Users", "probello", "Repos", "par-tts-core-ts", "dist", "index.cjs");
-    const loadModule = new Function("createRequireFn", "moduleUrl", "specifier", "return createRequireFn(moduleUrl)(specifier);") as (createRequireFn: typeof createRequire, moduleUrl: string, specifier: string) => TtsModule;
-    const tts = loadModule(createRequire, import.meta.url, modulePath);
-    const provider = state.ttsProvider;
-    const voice = state.ttsVoice;
-    const pipeline = tts.createSpeechPipeline({ provider, apiKey, voice, model, options: { format: "mp3" } });
-    const result = await pipeline.synthesize(buildAnnouncementText(track.title, state), { voice, model, options: { format: "mp3" } });
-    const bytes = await tts.collectAudio(result.audio);
+    const bytes = await synthesizeTtsMp3(buildAnnouncementText(track.title, state), state);
     await mkdir(outputDir(), { recursive: true });
-    await writeFile(outputPathForAudio(outputDir(), filename), Buffer.from(bytes));
+    await writeFile(finalPath, Buffer.from(bytes));
     return filename;
   } catch {
     return undefined;
   }
+}
+
+async function createTestVoiceAudio(state: RadioState) {
+  const filename = `radio_voice_test_${Date.now()}.mp3`;
+  const finalPath = outputPathForAudio(outputDir(), filename);
+  const bytes = await synthesizeTtsMp3(buildAnnouncementText("Voice test", state), state);
+  await mkdir(outputDir(), { recursive: true });
+  await writeFile(finalPath, Buffer.from(bytes));
+  return `/outputs/${filename}`;
+}
+
+async function synthesizeTtsMp3(text: string, state: RadioState) {
+  const model = process.env.RADIO_TTS_MODEL;
+  const apiKey = await providerApiKey(state.ttsProvider);
+  if (!apiKey && !isKokoroTtsProvider(state.ttsProvider)) throw new Error(`Missing API key for ${state.ttsProvider} TTS`);
+  const modulePath = resolveRadioTtsModulePath(state.ttsProvider);
+  const tts = loadTtsModule(modulePath);
+  const provider = state.ttsProvider;
+  const voice = state.ttsVoice;
+  const pipeline = isKokoroTtsProvider(provider) && tts.createSpeechPipelineFromEnv
+    ? tts.createSpeechPipelineFromEnv({ provider, voice, model, options: { format: "mp3" } })
+    : tts.createSpeechPipeline({ provider, apiKey, voice, model, options: { format: "mp3" } });
+  const result = await pipeline.synthesize(text, { voice, model, options: { format: "mp3" } });
+  return transcodeToRadioMp3(await tts.collectAudio(result.audio));
+}
+
+async function ensureMp3File(filePath: string) {
+  try {
+    const bytes = await readFile(filePath);
+    const mp3Bytes = await transcodeToRadioMp3(bytes);
+    if (!bytesEqual(mp3Bytes, bytes)) await writeFile(filePath, Buffer.from(mp3Bytes));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function transcodeToRadioMp3(bytes: Uint8Array) {
+  const ffmpeg = process.env.FFMPEG_PATH || "ffmpeg";
+  return new Promise<Buffer>((resolve, reject) => {
+    const child = spawn(ffmpeg, ["-hide_banner", "-loglevel", "error", "-i", "pipe:0", "-vn", "-ar", "44100", "-ac", "2", "-codec:a", "libmp3lame", "-b:a", "128k", "-f", "mp3", "pipe:1"]);
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) resolve(Buffer.concat(stdout));
+      else reject(new Error(`ffmpeg TTS conversion failed: ${Buffer.concat(stderr).toString("utf8").trim()}`));
+    });
+    child.stdin.end(Buffer.from(bytes));
+  });
+}
+
+function transcodeFilesToRadioMp3(filePaths: string[]) {
+  const ffmpeg = process.env.FFMPEG_PATH || "ffmpeg";
+  const inputArgs = filePaths.flatMap((filePath) => ["-i", filePath]);
+  const concatInputs = filePaths.map((_, index) => `[${index}:a]`).join("");
+  return new Promise<Buffer>((resolve, reject) => {
+    const child = spawn(ffmpeg, [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      ...inputArgs,
+      "-filter_complex",
+      `${concatInputs}concat=n=${filePaths.length}:v=0:a=1[a]`,
+      "-map",
+      "[a]",
+      "-vn",
+      "-ar",
+      "44100",
+      "-ac",
+      "2",
+      "-codec:a",
+      "libmp3lame",
+      "-b:a",
+      "128k",
+      "-f",
+      "mp3",
+      "pipe:1",
+    ]);
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) resolve(Buffer.concat(stdout));
+      else reject(new Error(`ffmpeg radio segment conversion failed: ${Buffer.concat(stderr).toString("utf8").trim()}`));
+    });
+    child.stdin.end();
+  });
+}
+
+function bytesEqual(first: Uint8Array, second: Uint8Array) {
+  if (first.length !== second.length) return false;
+  for (let index = 0; index < first.length; index += 1) {
+    if (first[index] !== second[index]) return false;
+  }
+  return true;
+}
+
+async function listTtsVoiceOptions(provider: string, currentVoice: string): Promise<RadioTtsVoiceOption[]> {
+  const fallback = getRadioTtsVoiceOptions(provider, currentVoice);
+  if (provider !== "elevenlabs") return fallback;
+
+  try {
+    const apiKey = await providerApiKey(provider);
+    if (!apiKey) return fallback;
+    const tts = loadTtsModule(resolveRadioTtsModulePath(provider));
+    const pipeline = tts.createSpeechPipeline({ provider, apiKey, voice: currentVoice, options: { format: "mp3" } });
+    if (!pipeline.listVoices) return fallback;
+    const voices = await pipeline.listVoices();
+    const options = voices.map((voice) => ({
+      id: voice.id,
+      label: voice.name?.trim() || voice.id,
+      ...(voice.labels?.length ? { description: voice.labels.join(", ") } : voice.category ? { description: voice.category } : {}),
+    }));
+    return mergeCurrentVoiceOption(options, currentVoice);
+  } catch {
+    return fallback;
+  }
+}
+
+function mergeCurrentVoiceOption(options: RadioTtsVoiceOption[], currentVoice: string) {
+  if (!currentVoice || options.some((voice) => voice.id === currentVoice)) return options;
+  return [{ id: currentVoice, label: currentVoice }, ...options];
+}
+
+function loadTtsModule(modulePath: string) {
+  const loadModule = new Function("createRequireFn", "moduleUrl", "specifier", "return createRequireFn(moduleUrl)(specifier);") as (createRequireFn: typeof createRequire, moduleUrl: string, specifier: string) => TtsModule;
+  return loadModule(createRequire, import.meta.url, modulePath);
 }
 
 async function existingTrackAnnouncementFilename(track: RadioTrackRecord) {
@@ -520,16 +887,60 @@ async function fileExists(filePath: string) {
 
 async function providerApiKey(provider: string) {
   const keys = providerApiKeyNames(provider);
+  const configKeys = providerConfigApiKeyNames(provider);
+  const configValue = await readParTtsConfigApiKey(configKeys);
+  if (configValue) return configValue;
   const envValue = keys.map((key) => process.env[key]).find(Boolean);
   if (envValue) return envValue;
   return readLocalEnvApiKey(keys);
 }
 
 function providerApiKeyNames(provider: string) {
+  if (isKokoroTtsProvider(provider)) return [];
   if (provider === "elevenlabs") return ["ELEVENLABS_API_KEY"];
   if (provider === "deepgram") return ["DEEPGRAM_API_KEY", "DG_API_KEY"];
   if (provider === "gemini") return ["GEMINI_API_KEY", "GOOGLE_API_KEY"];
   return ["OPENAI_API_KEY"];
+}
+
+function providerConfigApiKeyNames(provider: string) {
+  if (isKokoroTtsProvider(provider)) return [];
+  if (provider === "elevenlabs") return ["elevenlabs_api_key"];
+  if (provider === "deepgram") return ["deepgram_api_key"];
+  if (provider === "gemini") return ["gemini_api_key"];
+  return ["openai_api_key"];
+}
+
+function isKokoroTtsProvider(provider: string) {
+  return provider === "kokoro-onnx" || provider === "kokoro";
+}
+
+function resolveRadioTtsModulePath(provider: string) {
+  if (isKokoroTtsProvider(provider)) {
+    return process.env.RADIO_TTS_NODE_MODULE_PATH || path.join(path.sep, "Users", "probello", "Repos", "par-tts-core-ts", "dist", "node", "index.cjs");
+  }
+  return process.env.RADIO_TTS_MODULE_PATH || path.join(path.sep, "Users", "probello", "Repos", "par-tts-core-ts", "dist", "index.cjs");
+}
+
+async function readParTtsConfigApiKey(keys: string[]) {
+  for (const filePath of parTtsConfigPaths()) {
+    try {
+      const contents = await readFile(filePath, "utf8");
+      const value = keys.map((key) => readRadioConfigFileValue(contents, key)).find(Boolean);
+      if (value) return value;
+    } catch {
+      // Try the next configured location.
+    }
+  }
+  return undefined;
+}
+
+function parTtsConfigPaths() {
+  return [
+    process.env.PAR_TTS_CONFIG_PATH,
+    path.join(homedir(), "Library", "Application Support", "par-tts", "config.yaml"),
+    path.join(homedir(), ".config", "par-tts", "config.yaml"),
+  ].filter((filePath): filePath is string => Boolean(filePath));
 }
 
 async function readLocalEnvApiKey(keys: string[]) {

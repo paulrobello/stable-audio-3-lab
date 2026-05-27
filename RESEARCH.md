@@ -16,7 +16,7 @@ Source: <https://stability.ai/news-updates/meet-stable-audio-3-the-model-family-
   - Small Music: 433M params, CPU / CoreML capable, max 120s.
   - Medium: 1.4B params, CUDA/TensorRT path, max 380s.
 - Hugging Face API metadata shows larger total repo parameter counts including bundled text-conditioning / related assets: ~567.6M for small repos and ~2.305B for medium.
-- Hugging Face gates the standard small/medium repos behind Stability's Community License plus Gemma terms. The optimized repo is not gated, but it is described as experimental.
+- Hugging Face gates the standard small/medium repos behind Stability's Community License plus Gemma terms. The optimized repo is not gated, but it is described as experimental and contains hardware-optimized assets rather than the standard checkpoints.
 
 ## Fit for Paul's machine
 
@@ -24,10 +24,11 @@ This MacBook Pro is an Apple M4 Max with 128GB unified memory and a 40-core GPU.
 
 ## Practical setup notes
 
-1. Accept the gated model license on Hugging Face for the standard repos.
-2. Export `HF_TOKEN` or run `huggingface-cli login` in the Python environment.
-3. Install the official `stable-audio-3` library when ready. This repo's UI already has a Python bridge, but defaults to mock mode so the interface is usable before ML deps are installed.
-4. Start with `small-sfx` for SFX and `small-music` for musical sketches; switch to `medium` for longer / more coherent tracks.
+1. Accept the gated model license on Hugging Face only for the standard Torch repos.
+2. Export `HF_TOKEN` or run `hf auth login` in the Python environment for higher optimized-weight download limits and gated standard repo access.
+3. Install the official `stable-audio-3` repo when ready. This repo's UI already has a Python bridge, but defaults to mock mode so the interface is usable before ML deps are installed.
+4. For the default MLX backend, use `vendor/stable-audio-3/optimized/mlx/install.sh`; the runtime can auto-download missing optimized weights from `stabilityai/stable-audio-3-optimized`.
+5. Start with `small-sfx` for SFX and `small-music` for musical sketches; switch to `medium` for longer / more coherent tracks.
 
 ## License note
 

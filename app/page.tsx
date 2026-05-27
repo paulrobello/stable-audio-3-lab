@@ -21,6 +21,7 @@ type PersistedSettings = {
   format: AudioFormat;
   mock: boolean;
   autoTitle: boolean;
+  hideRadioUtilityAudio: boolean;
   seed: string;
   playbackVolume: number;
 };
@@ -40,6 +41,7 @@ export default function Home() {
   const [playbackVolume, setPlaybackVolume] = useState(0.8);
   const [mock, setMock] = useState(false);
   const [autoTitle, setAutoTitle] = useState(false);
+  const [hideRadioUtilityAudio, setHideRadioUtilityAudio] = useState(true);
   const [busy, setBusy] = useState(false);
   const [batchCount, setBatchCount] = useState(1);
   const [batchProgress, setBatchProgress] = useState("");
@@ -49,10 +51,13 @@ export default function Home() {
   const [libraryQuery, setLibraryQuery] = useState("");
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [comparisonFilenames, setComparisonFilenames] = useState<Set<string>>(new Set());
+  const [radioQueueBusyFilename, setRadioQueueBusyFilename] = useState<string | null>(null);
+  const [radioQueuedFilenames, setRadioQueuedFilenames] = useState<Set<string>>(new Set());
+  const [radioQueueError, setRadioQueueError] = useState("");
   const [settingsHydrated, setSettingsHydrated] = useState(false);
 
   const selectedModel = useMemo(() => modelOptions.find((m) => m.id === model)!, [model]);
-  const filteredLibraryItems = useMemo(() => filterLibraryItems(libraryItems, libraryQuery, favoritesOnly), [libraryItems, libraryQuery, favoritesOnly]);
+  const filteredLibraryItems = useMemo(() => filterLibraryItems(libraryItems, libraryQuery, favoritesOnly, hideRadioUtilityAudio), [libraryItems, libraryQuery, favoritesOnly, hideRadioUtilityAudio]);
   const comparisonItems = useMemo(() => selectedComparisonItems(libraryItems, comparisonFilenames), [libraryItems, comparisonFilenames]);
 
   useEffect(() => {
@@ -72,6 +77,7 @@ export default function Home() {
         if (typeof saved.playbackVolume === "number") setPlaybackVolume(clampPlaybackVolume(saved.playbackVolume));
         if (typeof saved.mock === "boolean") setMock(saved.mock);
         if (typeof saved.autoTitle === "boolean") setAutoTitle(saved.autoTitle);
+        if (typeof saved.hideRadioUtilityAudio === "boolean") setHideRadioUtilityAudio(saved.hideRadioUtilityAudio);
       }
     } catch {
       // Bad localStorage should not break the app. Toss it into the void where bad JSON belongs.
@@ -84,9 +90,9 @@ export default function Home() {
 
   useEffect(() => {
     if (!settingsHydrated) return;
-    const settings: PersistedSettings = { mode, model, prompt, negativePrompt, duration, steps, cfgScale, format, mock, autoTitle, seed, playbackVolume };
+    const settings: PersistedSettings = { mode, model, prompt, negativePrompt, duration, steps, cfgScale, format, mock, autoTitle, hideRadioUtilityAudio, seed, playbackVolume };
     window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-  }, [settingsHydrated, mode, model, prompt, negativePrompt, duration, steps, cfgScale, format, mock, autoTitle, seed, playbackVolume]);
+  }, [settingsHydrated, mode, model, prompt, negativePrompt, duration, steps, cfgScale, format, mock, autoTitle, hideRadioUtilityAudio, seed, playbackVolume]);
 
   async function loadLibrary() {
     setLibraryBusy(true);
@@ -165,6 +171,26 @@ export default function Home() {
     const json = (await response.json()) as Result;
     setResult(json);
     if (json.ok) await loadLibrary();
+  }
+
+  async function addLibraryItemToRadio(item: LibraryItem) {
+    if (item.format !== "mp3") return;
+    setRadioQueueBusyFilename(item.filename);
+    setRadioQueueError("");
+    try {
+      const response = await fetch("/api/radio", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(buildRadioTrackRequestFromLibraryItem(item)),
+      });
+      const json = (await response.json()) as { ok: boolean; error?: string };
+      if (!json.ok) throw new Error(json.error ?? "Radio lineup request failed");
+      setRadioQueuedFilenames((current) => new Set(current).add(item.filename));
+    } catch (error) {
+      setRadioQueueError(error instanceof Error ? error.message : "Radio lineup request failed");
+    } finally {
+      setRadioQueueBusyFilename(null);
+    }
   }
 
   function applySettings(settings: ReusableGenerationSettings) {
@@ -431,9 +457,14 @@ export default function Home() {
               busy={libraryBusy}
               searchQuery={libraryQuery}
               favoritesOnly={favoritesOnly}
+              hideRadioUtilityAudio={hideRadioUtilityAudio}
               selectedForComparison={comparisonFilenames}
+              radioQueueBusyFilename={radioQueueBusyFilename}
+              radioQueuedFilenames={radioQueuedFilenames}
+              radioQueueError={radioQueueError}
               onSearchChange={setLibraryQuery}
               onFavoritesOnlyChange={setFavoritesOnly}
+              onHideRadioUtilityAudioChange={setHideRadioUtilityAudio}
               onToggleCompare={toggleComparison}
               onRefresh={loadLibrary}
               onDelete={deleteLibraryItem}
@@ -443,6 +474,7 @@ export default function Home() {
               onRegenerateTitle={regenerateTitle}
               onSaveAnnotation={saveLibraryAnnotation}
               onPlaybackVolumeChange={setPlaybackVolume}
+              onAddToRadio={addLibraryItemToRadio}
             />
           </motion.section>
         </section>
@@ -552,14 +584,19 @@ export function libraryItemSearchText(item: LibraryItem) {
     .toLowerCase();
 }
 
-export function filterLibraryItems(items: LibraryItem[], query: string, favoritesOnly: boolean) {
+export function filterLibraryItems(items: LibraryItem[], query: string, favoritesOnly: boolean, hideRadioUtilityAudio = false) {
   const terms = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
   return items.filter((item) => {
     if (favoritesOnly && !item.favorite) return false;
+    if (hideRadioUtilityAudio && isRadioUtilityAudioItem(item)) return false;
     if (terms.length === 0) return true;
     const haystack = libraryItemSearchText(item);
     return terms.every((term) => haystack.includes(term));
   });
+}
+
+function isRadioUtilityAudioItem(item: Pick<LibraryItem, "filename">) {
+  return item.filename.startsWith("radio_voice_test_") || item.filename.startsWith("radio_announce_");
 }
 
 export function selectedComparisonItems(items: LibraryItem[], selectedFilenames: Set<string>) {
@@ -569,6 +606,18 @@ export function selectedComparisonItems(items: LibraryItem[], selectedFilenames:
 export function prunePlaybackState(current: Record<string, PlaybackState>, items: Pick<LibraryItem, "filename">[]) {
   const liveFilenames = new Set(items.map((item) => item.filename));
   return Object.fromEntries(Object.entries(current).filter(([filename]) => liveFilenames.has(filename)));
+}
+
+export function buildRadioTrackRequestFromLibraryItem(item: LibraryItem) {
+  const settings = settingsFromMetadata(item.meta);
+  const title = item.title ?? readMetaString(item.meta, "title") ?? item.filename;
+  return {
+    action: "track" as const,
+    filename: item.filename,
+    title,
+    ...(settings?.prompt ? { prompt: settings.prompt } : {}),
+    ...(typeof settings?.duration === "number" ? { durationSeconds: settings.duration } : {}),
+  };
 }
 
 export function buildCropOverlayPercentages({ start, end, duration }: { start: number; end: number; duration: number }) {
@@ -876,9 +925,14 @@ function LibraryPanel({
   busy,
   searchQuery,
   favoritesOnly,
+  hideRadioUtilityAudio,
   selectedForComparison,
+  radioQueueBusyFilename,
+  radioQueuedFilenames,
+  radioQueueError,
   onSearchChange,
   onFavoritesOnlyChange,
+  onHideRadioUtilityAudioChange,
   onToggleCompare,
   onRefresh,
   onDelete,
@@ -888,6 +942,7 @@ function LibraryPanel({
   onRegenerateTitle,
   onSaveAnnotation,
   onPlaybackVolumeChange,
+  onAddToRadio,
 }: {
   items: LibraryItem[];
   liveItems: LibraryItem[];
@@ -896,9 +951,14 @@ function LibraryPanel({
   busy: boolean;
   searchQuery: string;
   favoritesOnly: boolean;
+  hideRadioUtilityAudio: boolean;
   selectedForComparison: Set<string>;
+  radioQueueBusyFilename: string | null;
+  radioQueuedFilenames: Set<string>;
+  radioQueueError: string;
   onSearchChange: (query: string) => void;
   onFavoritesOnlyChange: (favoritesOnly: boolean) => void;
+  onHideRadioUtilityAudioChange: (hideRadioUtilityAudio: boolean) => void;
   onToggleCompare: (filename: string) => void;
   onRefresh: () => void;
   onDelete: (filename: string) => void;
@@ -908,6 +968,7 @@ function LibraryPanel({
   onRegenerateTitle: (filename: string, prompt: string, mode: string) => void;
   onSaveAnnotation: (filename: string, notes: string, rating: number | null) => void;
   onPlaybackVolumeChange: (volume: number) => void;
+  onAddToRadio: (item: LibraryItem) => void;
 }) {
   const [playbackByFilename, setPlaybackByFilename] = useState<Record<string, PlaybackState>>({});
   const audioRefs = useRef<Record<string, HTMLAudioElement | null>>({});
@@ -972,6 +1033,17 @@ function LibraryPanel({
               <input type="checkbox" checked={favoritesOnly} onChange={(event) => onFavoritesOnlyChange(event.target.checked)} className="accent-amber-200" />
               Favorites
             </label>
+            <button
+              type="button"
+              aria-pressed={hideRadioUtilityAudio}
+              onClick={() => onHideRadioUtilityAudioChange(!hideRadioUtilityAudio)}
+              className={clsx(
+                "inline-flex min-h-10 shrink-0 items-center justify-center whitespace-nowrap rounded-full border px-4 py-2 text-sm font-semibold leading-none transition",
+                hideRadioUtilityAudio ? "border-cyan-200/35 bg-cyan-300/16 text-cyan-50" : "border-white/10 bg-white/[0.05] text-white/65 hover:bg-white/10",
+              )}
+            >
+              Hide Voice
+            </button>
             <button onClick={onRefresh} className="inline-flex min-h-10 items-center justify-center rounded-full border border-white/10 bg-white/[0.06] px-4 py-2 text-sm font-semibold leading-none text-white/70 hover:bg-white/10">
               {busy ? "Refreshing..." : "Refresh"}
             </button>
@@ -979,48 +1051,69 @@ function LibraryPanel({
           <div className="text-xs text-white/38">{items.length} of {totalItems} shown</div>
         </div>
       </div>
+      {radioQueueError && <div className="mb-3 rounded-2xl border border-pink-300/20 bg-pink-500/10 px-3 py-2 text-sm text-pink-100">{radioQueueError}</div>}
 
       {items.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-white/10 p-6 text-sm text-white/50">{totalItems === 0 ? "No generated audio yet. Make something weird." : "No library items match the current filters."}</div>
       ) : (
         <div className="grid gap-3">
-          {items.map((item) => (
-            <article key={item.filename} className="min-w-0 rounded-2xl border border-white/10 bg-black/30 p-3">
-              <div className="mb-3 flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
-                <div className="min-w-0">
-                  <div className="truncate font-semibold text-white/85">{item.favorite ? "★ " : ""}{item.title ? <>{item.title} <span className="font-normal text-white/45">• {item.filename}</span></> : item.filename}</div>
-                  <div className="text-xs uppercase tracking-[0.16em] text-white/40">
-                    {item.format} • {formatBytes(item.bytes)} • {new Date(item.createdAt).toLocaleString()}
+          {items.map((item) => {
+            const radioTitle = item.title ?? readMetaString(item.meta, "title") ?? item.filename;
+            const radioQueued = radioQueuedFilenames.has(item.filename);
+            const radioBusy = radioQueueBusyFilename === item.filename;
+            return (
+              <article key={item.filename} className="min-w-0 rounded-2xl border border-white/10 bg-black/30 p-3">
+                <div className="mb-3 flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
+                  <div className="min-w-0">
+                    <div className="truncate font-semibold text-white/85">{item.favorite ? "★ " : ""}{item.title ? <>{item.title} <span className="font-normal text-white/45">• {item.filename}</span></> : item.filename}</div>
+                    <div className="text-xs uppercase tracking-[0.16em] text-white/40">
+                      {item.format} • {formatBytes(item.bytes)} • {new Date(item.createdAt).toLocaleString()}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    <button onClick={() => onToggleCompare(item.filename)} className={clsx("inline-flex min-h-10 items-center justify-center rounded-full border px-3 py-2 text-xs font-bold leading-none", selectedForComparison.has(item.filename) ? "border-emerald-200/40 bg-emerald-200/20 text-emerald-100" : "border-white/10 bg-white/[0.05] text-white/55 hover:bg-white/10")}>
+                      {selectedForComparison.has(item.filename) ? "Comparing" : "Compare"}
+                    </button>
+                    <button onClick={() => onToggleFavorite(item.filename, !item.favorite)} className={clsx("inline-flex min-h-10 items-center justify-center rounded-full border px-3 py-2 text-xs font-bold leading-none", item.favorite ? "border-amber-200/40 bg-amber-200/20 text-amber-100" : "border-white/10 bg-white/[0.05] text-white/55 hover:bg-white/10")}>
+                      {item.favorite ? "Starred" : "Star"}
+                    </button>
+                    {item.format === "mp3" && (
+                      <button
+                        type="button"
+                        onClick={() => onAddToRadio(item)}
+                        disabled={radioBusy || radioQueued}
+                        aria-label={radioQueued ? `${radioTitle} queued for radio` : `Add ${radioTitle} to radio lineup`}
+                        className={clsx(
+                          "inline-flex min-h-10 items-center justify-center rounded-full border px-3 py-2 text-xs font-bold leading-none disabled:cursor-default",
+                          radioQueued ? "border-emerald-200/40 bg-emerald-200/20 text-emerald-100" : "border-emerald-200/20 bg-emerald-200/10 text-emerald-100 hover:bg-emerald-200/20",
+                          radioBusy && "opacity-60",
+                        )}
+                      >
+                        {radioQueued ? "Queued" : radioBusy ? "Adding..." : "Radio"}
+                      </button>
+                    )}
+                    {(() => { const m = item.meta && typeof item.meta === "object" ? item.meta as Record<string, unknown> : {}; const s = m.settings && typeof m.settings === "object" ? m.settings as Record<string, unknown> : {}; return s.prompt && s.mode ? <button onClick={() => onRegenerateTitle(item.filename, String(s.prompt), String(s.mode))} className="inline-flex min-h-10 items-center justify-center rounded-full border border-cyan-300/30 bg-cyan-400/15 px-3 py-2 text-xs font-bold leading-none text-cyan-100 hover:bg-cyan-400/25">AI Title</button> : null; })()}
+                    <a href={item.downloadUrl} download={item.filename} className="inline-flex min-h-10 items-center justify-center rounded-full bg-white px-3 py-2 text-xs font-bold leading-none text-black hover:bg-emerald-100">Download</a>
+                    {item.bundleUrl && <a href={item.bundleUrl} download className="inline-flex min-h-10 items-center justify-center rounded-full border border-violet-200/20 bg-violet-200/10 px-3 py-2 text-xs font-bold leading-none text-violet-100 hover:bg-violet-200/20">Bundle</a>}
+                    {item.batchBundleUrl && <a href={item.batchBundleUrl} download className="inline-flex min-h-10 items-center justify-center rounded-full border border-fuchsia-200/20 bg-fuchsia-200/10 px-3 py-2 text-xs font-bold leading-none text-fuchsia-100 hover:bg-fuchsia-200/20">Run ZIP</a>}
+                    <button onClick={() => onDelete(item.filename)} className="inline-flex min-h-10 items-center justify-center rounded-full border border-red-300/35 bg-red-500/20 px-3 py-2 text-xs font-bold leading-none text-red-100 hover:bg-red-500/30">Delete</button>
                   </div>
                 </div>
-                <div className="flex shrink-0 flex-wrap gap-2">
-                  <button onClick={() => onToggleCompare(item.filename)} className={clsx("inline-flex min-h-10 items-center justify-center rounded-full border px-3 py-2 text-xs font-bold leading-none", selectedForComparison.has(item.filename) ? "border-emerald-200/40 bg-emerald-200/20 text-emerald-100" : "border-white/10 bg-white/[0.05] text-white/55 hover:bg-white/10")}>
-                    {selectedForComparison.has(item.filename) ? "Comparing" : "Compare"}
-                  </button>
-                  <button onClick={() => onToggleFavorite(item.filename, !item.favorite)} className={clsx("inline-flex min-h-10 items-center justify-center rounded-full border px-3 py-2 text-xs font-bold leading-none", item.favorite ? "border-amber-200/40 bg-amber-200/20 text-amber-100" : "border-white/10 bg-white/[0.05] text-white/55 hover:bg-white/10")}>
-                    {item.favorite ? "Starred" : "Star"}
-                  </button>
-                  {(() => { const m = item.meta && typeof item.meta === "object" ? item.meta as Record<string, unknown> : {}; const s = m.settings && typeof m.settings === "object" ? m.settings as Record<string, unknown> : {}; return s.prompt && s.mode ? <button onClick={() => onRegenerateTitle(item.filename, String(s.prompt), String(s.mode))} className="inline-flex min-h-10 items-center justify-center rounded-full border border-cyan-300/30 bg-cyan-400/15 px-3 py-2 text-xs font-bold leading-none text-cyan-100 hover:bg-cyan-400/25">AI Title</button> : null; })()}
-                  <a href={item.downloadUrl} download={item.filename} className="inline-flex min-h-10 items-center justify-center rounded-full bg-white px-3 py-2 text-xs font-bold leading-none text-black hover:bg-emerald-100">Download</a>
-                  {item.bundleUrl && <a href={item.bundleUrl} download className="inline-flex min-h-10 items-center justify-center rounded-full border border-violet-200/20 bg-violet-200/10 px-3 py-2 text-xs font-bold leading-none text-violet-100 hover:bg-violet-200/20">Bundle</a>}
-                  {item.batchBundleUrl && <a href={item.batchBundleUrl} download className="inline-flex min-h-10 items-center justify-center rounded-full border border-fuchsia-200/20 bg-fuchsia-200/10 px-3 py-2 text-xs font-bold leading-none text-fuchsia-100 hover:bg-fuchsia-200/20">Run ZIP</a>}
-                  <button onClick={() => onDelete(item.filename)} className="inline-flex min-h-10 items-center justify-center rounded-full border border-red-300/35 bg-red-500/20 px-3 py-2 text-xs font-bold leading-none text-red-100 hover:bg-red-500/30">Delete</button>
-                </div>
-              </div>
-              <AudioPreview src={item.audioUrl} volume={playbackVolume} label={`Library audio preview for ${item.filename}`} hiddenPlayer onReady={(audio) => setAudioRef(item.filename, audio)} onPlaybackChange={(playback) => updatePlayback(item.filename, playback)} />
-              <CropControls
-                item={item}
-                playback={playbackByFilename[item.filename]}
-                playbackVolume={playbackVolume}
-                onTogglePlay={() => void toggleLibraryPlayback(item.filename)}
-                onVolumeChange={changeLibraryVolume}
-                onSeek={(time) => seekLibraryAudio(item.filename, time)}
-                onCrop={onCrop}
-              />
-              <AnnotationControls item={item} onSave={onSaveAnnotation} />
-              <MetadataSummary meta={item.meta} metadataUrl={item.metadataUrl} compact onLoadConfig={onLoadConfig} />
-            </article>
-          ))}
+                <AudioPreview src={item.audioUrl} volume={playbackVolume} label={`Library audio preview for ${item.filename}`} hiddenPlayer onReady={(audio) => setAudioRef(item.filename, audio)} onPlaybackChange={(playback) => updatePlayback(item.filename, playback)} />
+                <CropControls
+                  item={item}
+                  playback={playbackByFilename[item.filename]}
+                  playbackVolume={playbackVolume}
+                  onTogglePlay={() => void toggleLibraryPlayback(item.filename)}
+                  onVolumeChange={changeLibraryVolume}
+                  onSeek={(time) => seekLibraryAudio(item.filename, time)}
+                  onCrop={onCrop}
+                />
+                <AnnotationControls item={item} onSave={onSaveAnnotation} />
+                <MetadataSummary meta={item.meta} metadataUrl={item.metadataUrl} compact onLoadConfig={onLoadConfig} />
+              </article>
+            );
+          })}
         </div>
       )}
     </section>

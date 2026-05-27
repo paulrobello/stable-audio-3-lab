@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildAnnouncementText,
   buildRadioAnnouncementFilename,
+  buildRadioPlaylistContent,
+  buildRadioPlaylistUrls,
   buildRadioPublicStreamUrl,
   buildRadioPromptGeneratorMessages,
   buildRadioPromptSeed,
@@ -15,17 +17,20 @@ import {
   findRadioTracksForCleanup,
   getRadioQueueAheadCount,
   normalizeRadioTtsConfig,
+  getRadioTtsVoiceOptions,
   normalizeRadioRating,
   normalizeRadioStyleId,
   radioStyles,
   registerRadioTrack,
   replaceRadioTrackInLineup,
   removeRadioTracksFromLineup,
+  readRadioConfigFileValue,
   readRadioEnvFileValue,
   resolveRadioAnnouncementFilename,
   rejectCurrentRadioTrack,
   advanceRadioCurrentTrack,
   recordRadioRating,
+  selectRadioTrack,
   shouldGenerateRadioQueueTrack,
 } from "./radio";
 
@@ -123,6 +128,17 @@ describe("radio ratings", () => {
 });
 
 describe("radio TTS settings", () => {
+  it("lists provider-specific voice options and preserves a saved custom voice", () => {
+    expect(getRadioTtsVoiceOptions("openai").map((voice) => voice.id)).toContain("nova");
+    expect(getRadioTtsVoiceOptions("gemini").map((voice) => voice.id)).toContain("Kore");
+    expect(getRadioTtsVoiceOptions("deepgram").map((voice) => voice.id)).toContain("aura-2-thalia-en");
+    expect(getRadioTtsVoiceOptions("kokoro-onnx").map((voice) => voice.id)).toContain("af_sarah");
+    expect(getRadioTtsVoiceOptions("elevenlabs", "custom-account-voice")[0]).toEqual({
+      id: "custom-account-voice",
+      label: "custom-account-voice",
+    });
+  });
+
   it("normalizes configurable TTS provider, voice, and announcement text", () => {
     const config = normalizeRadioTtsConfig({
       ttsProvider: "elevenlabs",
@@ -138,6 +154,37 @@ describe("radio TTS settings", () => {
       announcementSuffix: " on Paul's station",
     });
     expect(buildAnnouncementText("Night Signal", config)).toBe("Coming up: Night Signal on Paul's station");
+  });
+
+  it("normalizes Kokoro TTS provider aliases to the node provider", () => {
+    expect(normalizeRadioTtsConfig({
+      ttsProvider: "kokoro-onnx",
+      ttsVoice: "af_sarah",
+      announcementPrefix: "Now playing: ",
+      announcementSuffix: "",
+    }).ttsProvider).toBe("kokoro-onnx");
+    expect(normalizeRadioTtsConfig({
+      ttsProvider: "kokoro",
+      ttsVoice: "af_sarah",
+      announcementPrefix: "Now playing: ",
+      announcementSuffix: "",
+    }).ttsProvider).toBe("kokoro-onnx");
+  });
+
+  it("reads API keys from the par-tts YAML config format", () => {
+    const contents = [
+      "# PAR CLI TTS Configuration File",
+      "provider: \"elevenlabs\"",
+      "elevenlabs_api_key: \"eleven-test-key\"",
+      "deepgram_api_key: 'deepgram-test-key'",
+      "gemini_api_key: gemini-test-key # inline comment",
+      "openai_api_key: ",
+    ].join("\n");
+
+    expect(readRadioConfigFileValue(contents, "elevenlabs_api_key")).toBe("eleven-test-key");
+    expect(readRadioConfigFileValue(contents, "deepgram_api_key")).toBe("deepgram-test-key");
+    expect(readRadioConfigFileValue(contents, "gemini_api_key")).toBe("gemini-test-key");
+    expect(readRadioConfigFileValue(contents, "openai_api_key")).toBeUndefined();
   });
 
   it("builds stable announcer filenames for the same song and TTS settings", () => {
@@ -187,6 +234,9 @@ describe("radio TTS settings", () => {
 
     expect(buildRadioTrackPlaybackFilenames(track)).toEqual([
       "radio_announce_synthwave_mobile_check.mp3",
+      "synthwave_mobile_check.mp3",
+    ]);
+    expect(buildRadioTrackPlaybackFilenames(track, { skipAnnouncement: true })).toEqual([
       "synthwave_mobile_check.mp3",
     ]);
   });
@@ -246,6 +296,37 @@ describe("radio stream state", () => {
     expect(buildRadioPublicStreamUrl("https://radio.pardev.net")).toBe("https://radio.pardev.net/api/radio?stream=1");
     expect(buildRadioPublicStreamUrl("https://radio.pardev.net/radio")).toBe("https://radio.pardev.net/api/radio?stream=1");
     expect(buildRadioPublicStreamUrl("ftp://radio.pardev.net")).toBeUndefined();
+  });
+
+  it("builds TuneIn playlist URLs without changing the continuous mp3 stream URL", () => {
+    expect(buildRadioPlaylistUrls("https://radio.pardev.net")).toEqual({
+      m3u: "https://radio.pardev.net/radio.m3u",
+      pls: "https://radio.pardev.net/radio.pls",
+    });
+    expect(buildRadioPlaylistUrls("http://192.168.1.50:3007/radio")).toEqual({
+      m3u: "http://192.168.1.50:3007/radio.m3u",
+      pls: "http://192.168.1.50:3007/radio.pls",
+    });
+    expect(buildRadioPlaylistUrls("ftp://radio.pardev.net")).toBeUndefined();
+    expect(buildRadioPublicStreamUrl("https://radio.pardev.net")).toBe("https://radio.pardev.net/api/radio?stream=1");
+  });
+
+  it("builds m3u and pls files that point TuneIn clients at the icy mp3 stream", () => {
+    expect(buildRadioPlaylistContent("m3u", "https://radio.pardev.net/api/radio?stream=1&icy=1")).toBe([
+      "#EXTM3U",
+      "#EXTINF:-1,Stable Audio 3 Lab Radio",
+      "https://radio.pardev.net/api/radio?stream=1&icy=1",
+      "",
+    ].join("\n"));
+    expect(buildRadioPlaylistContent("pls", "http://192.168.1.50:3007/api/radio?stream=1&icy=1")).toBe([
+      "[playlist]",
+      "NumberOfEntries=1",
+      "File1=http://192.168.1.50:3007/api/radio?stream=1&icy=1",
+      "Title1=Stable Audio 3 Lab Radio",
+      "Length1=-1",
+      "Version=2",
+      "",
+    ].join("\n"));
   });
 
   it("exposes an mp3 current track as streamable", () => {
@@ -329,6 +410,70 @@ describe("radio stream state", () => {
     expect(advanced.currentTrack?.filename).toBe("next_song.mp3");
     expect(advanced.history.map((track) => track.filename)).toEqual(["current_song.mp3", "next_song.mp3"]);
     expect(advanced.updatedAt).not.toBe(state.updatedAt);
+  });
+
+  it("advances and counts queue tracks inside the current music style", () => {
+    const current = createRadioTrackRecord({
+      filename: "synth_current.mp3",
+      title: "Synth Current",
+      prompt: "warm bass",
+      styleId: "synthwave",
+      announce: false,
+    });
+    const ambient = createRadioTrackRecord({
+      filename: "ambient_current.mp3",
+      title: "Ambient Current",
+      prompt: "wide pads",
+      styleId: "ambient",
+      announce: false,
+    });
+    const next = createRadioTrackRecord({
+      filename: "synth_next.mp3",
+      title: "Synth Next",
+      prompt: "neon lead",
+      styleId: "synthwave",
+      announce: false,
+    });
+    const state = { ...defaultRadioState(), currentTrack: current, history: [current, ambient, next] };
+
+    expect(getRadioQueueAheadCount(state)).toBe(1);
+
+    const advanced = advanceRadioCurrentTrack(state);
+
+    expect(advanced.currentTrack?.filename).toBe("synth_next.mp3");
+  });
+
+  it("selects an earlier lineup song without removing or reordering metadata", () => {
+    const first = createRadioTrackRecord({
+      filename: "first_song.mp3",
+      title: "First Song",
+      prompt: "first prompt",
+      styleId: "synthwave",
+      announce: false,
+    });
+    const current = createRadioTrackRecord({
+      filename: "current_song.mp3",
+      title: "Current Song",
+      prompt: "current prompt",
+      styleId: "synthwave",
+      announce: false,
+    });
+    const next = createRadioTrackRecord({
+      filename: "next_song.mp3",
+      title: "Next Song",
+      prompt: "next prompt",
+      styleId: "synthwave",
+      announce: false,
+    });
+    const originalState = { ...defaultRadioState(), currentTrack: current, history: [first, current, next] };
+
+    const result = selectRadioTrack(originalState, "first_song.mp3");
+
+    expect(result.selectedTrack).toEqual(first);
+    expect(result.state.currentTrack).toEqual(first);
+    expect(result.state.history.map((track) => track.filename)).toEqual(["first_song.mp3", "current_song.mp3", "next_song.mp3"]);
+    expect(getRadioQueueAheadCount(result.state)).toBe(2);
+    expect(result.state.updatedAt).not.toBe(originalState.updatedAt);
   });
 
   it("queues newly generated tracks behind the current song", () => {
