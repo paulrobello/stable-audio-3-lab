@@ -728,6 +728,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
                 <div className="grid gap-2">
                   {selectedStyleQueue.map((track) => {
                     const isCurrentTrack = track.filename === currentTrack?.filename;
+                    const trackLiked = isRadioTrackLiked(track, radioState);
                     return (
                       <div
                         key={track.id}
@@ -742,18 +743,26 @@ export default function RadioStationClient({ initialState = null, initialPromptM
                             <div className="min-w-0 truncate font-semibold text-white/82">{isCurrentTrack ? "Now playing: " : ""}{track.title}</div>
                             <div className="mt-1 text-xs uppercase tracking-[0.14em] text-white/35">{trackProvenanceLabel(track)}</div>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => void selectLineupTrack(track)}
-                            disabled={isCurrentTrack || busy === "select"}
-                            aria-label={isCurrentTrack ? `Now playing ${track.title}` : `Play ${track.title}`}
-                            className={clsx(
-                              "touch-manipulation rounded-full border px-4 py-2 text-xs font-bold uppercase tracking-[0.12em] transition disabled:cursor-default",
-                              isCurrentTrack ? "border-emerald-200/30 bg-emerald-200/12 text-emerald-100/75" : "border-white/15 bg-white/[0.07] text-white/75 hover:border-emerald-200/35 hover:bg-emerald-200/12 hover:text-emerald-50",
+                          <div className="flex shrink-0 items-center gap-2">
+                            {trackLiked && (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-amber-200/30 bg-amber-200/12 px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-amber-100">
+                                <HandThumbUpIcon className="h-4 w-4" aria-hidden="true" />
+                                <span>Thumbs up</span>
+                              </span>
                             )}
-                          >
-                            {isCurrentTrack ? "Playing" : busy === "select" ? "Loading" : "Play"}
-                          </button>
+                            <button
+                              type="button"
+                              onClick={() => void selectLineupTrack(track)}
+                              disabled={isCurrentTrack || busy === "select"}
+                              aria-label={isCurrentTrack ? `Now playing ${track.title}` : `Play ${track.title}`}
+                              className={clsx(
+                                "touch-manipulation rounded-full border px-4 py-2 text-xs font-bold uppercase tracking-[0.12em] transition disabled:cursor-default",
+                                isCurrentTrack ? "border-emerald-200/30 bg-emerald-200/12 text-emerald-100/75" : "border-white/15 bg-white/[0.07] text-white/75 hover:border-emerald-200/35 hover:bg-emerald-200/12 hover:text-emerald-50",
+                              )}
+                            >
+                              {isCurrentTrack ? "Playing" : busy === "select" ? "Loading" : "Play"}
+                            </button>
+                          </div>
                         </div>
                         <div className="mt-1 truncate text-xs text-white/42">{track.filename}</div>
                       </div>

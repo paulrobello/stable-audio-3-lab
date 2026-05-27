@@ -492,6 +492,33 @@ describe("radio page loading", () => {
     expect(screen.queryByText("Ambient Queue Song")).toBeNull();
   });
 
+  it("shows thumbs up status for liked queue items", () => {
+    const likedQueuedTrack = {
+      ...currentTrack,
+      id: "track-liked-queue",
+      filename: "liked_queue_song.mp3",
+      title: "Liked Queue Song",
+      prompt: "liked queue prompt",
+      rating: "up" as const,
+    };
+    const stateWithLikedQueuedTrack = {
+      ...radioState,
+      currentTrack,
+      selectedStyleId: "synthwave" as const,
+      history: [currentTrack, likedQueuedTrack],
+      streamReady: true,
+      streamUrl: "/api/radio?stream=1",
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      json: async () => ({ ok: true, state: stateWithLikedQueuedTrack, promptModels: ["qwen3:14b"], cleanedTracks: [] }),
+    }));
+
+    render(<RadioStationClient initialState={stateWithLikedQueuedTrack} initialPromptModels={["qwen3:14b"]} />);
+
+    expect(screen.getByText("Liked Queue Song")).toBeTruthy();
+    expect(screen.getByText("Thumbs up")).toBeTruthy();
+  });
+
   it("indicates when the current song is already liked", () => {
     const likedTrack = { ...currentTrack, rating: "up" as const };
     const stateWithLikedTrack = {
