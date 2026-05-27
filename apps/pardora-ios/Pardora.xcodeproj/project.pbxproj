@@ -11,11 +11,13 @@
 		379D754617397768AB7BB2A5 /* PardoraApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08372637BE5403229D4E0EF6 /* PardoraApp.swift */; };
 		47B5AFCB2A7C38288B4B591A /* AppRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23BD467777D391EB06DF855E /* AppRootView.swift */; };
 		4986FF208E3E8933EAAB9361 /* RadioAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F9FFA84DD252960323EA8D /* RadioAppModel.swift */; };
+		4CAF4D72A14DACD2A168ED12 /* RadioPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E4F9A7ABC4DB8DB6CCB028C /* RadioPlayer.swift */; };
 		5495061E41D686AF3D885E27 /* RadioModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A1D662F0C2BBA84572B9C4C /* RadioModels.swift */; };
 		5EDFFBCBE3E866A5292595D6 /* MemoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83BBE6D955A979784C28F72E /* MemoryView.swift */; };
 		8C0FD5E9AF8FDA46891AD166 /* NowPlayingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6D4FDA64E77E467D2980C9E /* NowPlayingView.swift */; };
 		904F22FD8477C1451A6EA553 /* RadioAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761670DD56C97F39DE70353F /* RadioAPIClient.swift */; };
 		942AD844711B208DFE8E68BA /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32D4A2488E0485950AC9CD79 /* SettingsView.swift */; };
+		BAE2F32085F983044470542C /* RadioAppModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB8B977B5C0D7C55362C7DE9 /* RadioAppModelTests.swift */; };
 		D0F82EE21A6A3A2874D1728D /* PardoraTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10A9066296E26D967D523B2D /* PardoraTheme.swift */; };
 		D570AE90FF8C3C9372D8FA56 /* RadioModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4AC7390FC2C0078F36FF56A /* RadioModelsTests.swift */; };
 		D8EDCA4DD638AB42721EFEEA /* QueueView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6EDA14FBD4B994CBE875BFD /* QueueView.swift */; };
@@ -35,6 +37,7 @@
 		08372637BE5403229D4E0EF6 /* PardoraApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PardoraApp.swift; sourceTree = "<group>"; };
 		10A9066296E26D967D523B2D /* PardoraTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PardoraTheme.swift; sourceTree = "<group>"; };
 		23BD467777D391EB06DF855E /* AppRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRootView.swift; sourceTree = "<group>"; };
+		2E4F9A7ABC4DB8DB6CCB028C /* RadioPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadioPlayer.swift; sourceTree = "<group>"; };
 		32D4A2488E0485950AC9CD79 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		4B5E1918683A7065423DB90B /* RadioAPIClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadioAPIClientTests.swift; sourceTree = "<group>"; };
 		761670DD56C97F39DE70353F /* RadioAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadioAPIClient.swift; sourceTree = "<group>"; };
@@ -45,6 +48,7 @@
 		D6EDA14FBD4B994CBE875BFD /* QueueView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueueView.swift; sourceTree = "<group>"; };
 		E28AB0E994B58696348C0B61 /* Pardora.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Pardora.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E5F9FFA84DD252960323EA8D /* RadioAppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadioAppModel.swift; sourceTree = "<group>"; };
+		EB8B977B5C0D7C55362C7DE9 /* RadioAppModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadioAppModelTests.swift; sourceTree = "<group>"; };
 		F6D4FDA64E77E467D2980C9E /* NowPlayingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -70,6 +74,7 @@
 			children = (
 				761670DD56C97F39DE70353F /* RadioAPIClient.swift */,
 				E5F9FFA84DD252960323EA8D /* RadioAppModel.swift */,
+				2E4F9A7ABC4DB8DB6CCB028C /* RadioPlayer.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -126,6 +131,7 @@
 			isa = PBXGroup;
 			children = (
 				4B5E1918683A7065423DB90B /* RadioAPIClientTests.swift */,
+				EB8B977B5C0D7C55362C7DE9 /* RadioAppModelTests.swift */,
 				D4AC7390FC2C0078F36FF56A /* RadioModelsTests.swift */,
 			);
 			path = PardoraTests;
@@ -248,6 +254,7 @@
 				904F22FD8477C1451A6EA553 /* RadioAPIClient.swift in Sources */,
 				4986FF208E3E8933EAAB9361 /* RadioAppModel.swift in Sources */,
 				5495061E41D686AF3D885E27 /* RadioModels.swift in Sources */,
+				4CAF4D72A14DACD2A168ED12 /* RadioPlayer.swift in Sources */,
 				942AD844711B208DFE8E68BA /* SettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -257,6 +264,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				307DF81E9B2A6CFFB32EAC6F /* RadioAPIClientTests.swift in Sources */,
+				BAE2F32085F983044470542C /* RadioAppModelTests.swift in Sources */,
 				D570AE90FF8C3C9372D8FA56 /* RadioModelsTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

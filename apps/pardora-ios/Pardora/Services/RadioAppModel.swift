@@ -51,4 +51,24 @@ final class RadioAppModel {
             statusMessage = error.localizedDescription
         }
     }
+
+    func likeCurrentTrack() async {
+        await post(["action": .string("rating"), "rating": .string("up")])
+    }
+
+    func dislikeCurrentTrack() async {
+        await post(["action": .string("rating"), "rating": .string("down")])
+    }
+
+    func skipCurrentTrack() async {
+        await post(["action": .string("skipTrack")])
+    }
+
+    func selectTrack(_ track: RadioTrackRecord) async {
+        await post(["action": .string("selectTrack"), "filename": .string(track.filename)])
+    }
+
+    func deleteTrack(_ track: RadioTrackRecord) async {
+        await post(["action": .string("deleteTrack"), "filename": .string(track.filename)])
+    }
 }

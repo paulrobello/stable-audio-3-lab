@@ -18,6 +18,21 @@ struct QueueView: View {
                             .foregroundStyle(PardoraTheme.warning)
                     }
                 }
+                .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                    Button {
+                        Task { await model.selectTrack(track) }
+                    } label: {
+                        Label("Play", systemImage: "play.fill")
+                    }
+                    .tint(PardoraTheme.accent)
+                }
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    Button(role: .destructive) {
+                        Task { await model.deleteTrack(track) }
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                }
             }
         }
         .overlay {
