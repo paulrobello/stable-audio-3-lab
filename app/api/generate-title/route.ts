@@ -17,7 +17,6 @@ function cleanTitle(raw: string): string {
 }
 
 export async function generateTitle(prompt: string, mode: string): Promise<string | null> {
-  const ollamaPort = process.env.OLLAMA_PORT || "11434";
   const model = process.env.OLLAMA_TITLE_MODEL || "phi4-mini";
   const systemPrompt = TITLE_SYSTEM_PROMPT.replace("{mode}", mode);
 
@@ -26,7 +25,7 @@ export async function generateTitle(prompt: string, mode: string): Promise<strin
 
   let response: Response;
   try {
-    response = await fetch(`http://localhost:${ollamaPort}/api/generate`, {
+    response = await fetch(ollamaGenerateUrl(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model, system: systemPrompt, prompt, stream: false }),
@@ -43,6 +42,11 @@ export async function generateTitle(prompt: string, mode: string): Promise<strin
   const data = await response.json();
   const title = cleanTitle(data.response ?? "");
   return title || null;
+}
+
+function ollamaGenerateUrl() {
+  const baseUrl = process.env.OLLAMA_BASE_URL ?? `http://${process.env.OLLAMA_HOST ?? "127.0.0.1"}:${process.env.OLLAMA_PORT ?? "11434"}`;
+  return new URL("/api/generate", baseUrl).toString();
 }
 
 export async function POST(request: NextRequest) {

@@ -255,7 +255,7 @@ export default function Home() {
             </div>
           </div>
           <div className="hidden items-center gap-2 text-sm text-white/60 md:flex">
-            <span>M4 Max</span><span className="text-white/20">•</span><span>128GB unified</span><span className="text-white/20">•</span><span>{mock ? "mock-safe" : "real models"}</span>
+            <a href="/radio" className="font-semibold text-emerald-100/80 hover:text-emerald-50">Radio</a><span className="text-white/20">•</span><span>M4 Max</span><span className="text-white/20">•</span><span>128GB unified</span><span className="text-white/20">•</span><span>{mock ? "mock-safe" : "real models"}</span>
           </div>
         </header>
 
