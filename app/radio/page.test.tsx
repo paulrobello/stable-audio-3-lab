@@ -530,6 +530,52 @@ describe("radio page loading", () => {
     expect(playMock).toHaveBeenCalled();
   });
 
+  it("deletes a radio queue row after confirmation", async () => {
+    const previousTrack = {
+      ...currentTrack,
+      id: "track-previous",
+      filename: "previous_song.mp3",
+      title: "Previous Song",
+      prompt: "previous prompt",
+    };
+    const stateWithLineup = {
+      ...radioState,
+      currentTrack,
+      history: [previousTrack, currentTrack],
+      streamReady: true,
+      streamUrl: "/api/radio?stream=1",
+      queueAheadCount: 3,
+      needsQueueFill: false,
+    };
+    const deletedState = {
+      ...stateWithLineup,
+      history: [currentTrack],
+      updatedAt: "2026-05-26T12:00:01.000Z",
+    };
+    let latestState: RadioStreamState = stateWithLineup;
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as { action?: string; filename?: string } : {};
+      if (body.action === "deleteTrack") latestState = deletedState;
+      return {
+        json: async () => ({ ok: true, deletedTrack: previousTrack, state: latestState, promptModels: ["qwen3:14b"], cleanedTracks: [] }),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(<RadioStationClient initialState={stateWithLineup} initialPromptModels={["qwen3:14b"]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete Previous Song" }));
+
+    await waitFor(() => expect(screen.queryByText("Previous Song")).toBeNull());
+    expect(fetchMock).toHaveBeenCalledWith("/api/radio", expect.objectContaining({
+      body: expect.stringContaining('"action":"deleteTrack"'),
+    }));
+    expect(fetchMock).toHaveBeenCalledWith("/api/radio", expect.objectContaining({
+      body: expect.stringContaining('"filename":"previous_song.mp3"'),
+    }));
+  });
+
   it("shows only the selected music style queue in the lineup", async () => {
     const ambientTrack = {
       ...currentTrack,

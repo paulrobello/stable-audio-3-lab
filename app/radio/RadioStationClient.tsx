@@ -3,10 +3,10 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
-import { ForwardIcon, HandThumbDownIcon, HandThumbUpIcon } from "@heroicons/react/24/solid";
+import { ForwardIcon, HandThumbDownIcon, HandThumbUpIcon, TrashIcon } from "@heroicons/react/24/solid";
 import { defaultRadioTtsVoice, getRadioTtsVoiceOptions, normalizeRadioSongLengthMinutes, radioOllamaModels, radioSongLengthMinuteOptions, radioStyles, type RadioPlaylistUrls, type RadioPromptDraft, type RadioStreamState, type RadioStyleId, type RadioTrackRecord, type RadioTtsProvider, type RadioTtsVoiceOption } from "@/lib/radio";
 
-type RadioApiResponse = { ok: boolean; state?: RadioStreamState; draft?: RadioPromptDraft; fallbackTrack?: RadioTrackRecord; rejectedTrack?: RadioTrackRecord; cleanedTracks?: RadioTrackRecord[]; promptModels?: string[]; voices?: RadioTtsVoiceOption[]; error?: string };
+type RadioApiResponse = { ok: boolean; state?: RadioStreamState; draft?: RadioPromptDraft; fallbackTrack?: RadioTrackRecord; rejectedTrack?: RadioTrackRecord; deletedTrack?: RadioTrackRecord; cleanedTracks?: RadioTrackRecord[]; promptModels?: string[]; voices?: RadioTtsVoiceOption[]; error?: string };
 type RadioTestVoiceResponse = { ok: boolean; audioUrl?: string; error?: string };
 type GenerateResponse = { ok: boolean; filename?: string; title?: string; audioUrl?: string; meta?: unknown; error?: string };
 const RADIO_STATE_RETRY_MS = 1500;
@@ -31,7 +31,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
   const [testVoiceAudioUrl, setTestVoiceAudioUrl] = useState("");
   const [remoteTtsVoiceOptions, setRemoteTtsVoiceOptions] = useState<{ provider: RadioTtsProvider; voices: RadioTtsVoiceOption[] } | null>(null);
   const [browserStreamUrl, setBrowserStreamUrl] = useState(initialState?.streamUrl ?? initialState?.lanStreamUrl ?? "");
-  const [busy, setBusy] = useState<"draft" | "generate" | "rating" | "config" | "maintenance" | "select" | "voice" | null>(null);
+  const [busy, setBusy] = useState<"draft" | "generate" | "rating" | "config" | "maintenance" | "select" | "delete" | "voice" | null>(null);
   const [optimisticLike, setOptimisticLike] = useState<{ trackKey: string; liked: boolean } | null>(null);
   const [streamReloadKey, setStreamReloadKey] = useState(0);
   const [trackElapsedSeconds, setTrackElapsedSeconds] = useState(0);
@@ -376,6 +376,32 @@ export default function RadioStationClient({ initialState = null, initialPromptM
     } catch (error) {
       resumeAfterStreamReloadRef.current = false;
       setStatus(error instanceof Error ? error.message : "Could not load selected song.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function deleteLineupTrack(track: RadioTrackRecord) {
+    const metadataText = hasRadioTrackFeedback(track, radioState) ? "Feedback metadata will be kept." : "Metadata will be deleted too.";
+    const confirmed = window.confirm(`Delete ${track.title} from the radio queue and remove ${track.filename}? ${metadataText}`);
+    if (!confirmed) return;
+
+    setBusy("delete");
+    setStatus(`Deleting "${track.title}"...`);
+    try {
+      const wasCurrentTrack = track.filename === currentTrack?.filename;
+      const json = await postRadio({ action: "deleteTrack", filename: track.filename });
+      if (wasCurrentTrack) {
+        resumeAfterStreamReloadRef.current = true;
+        setStreamReloadKey((key) => key + 1);
+        setTrackElapsedSeconds(0);
+      }
+      maintenancePausedRef.current = false;
+      setStatus(json.deletedTrack ? `Deleted "${json.deletedTrack.title}" from the radio queue.` : "Deleted radio queue item.");
+      if (json.state) await maintainQueue(json.state);
+    } catch (error) {
+      resumeAfterStreamReloadRef.current = false;
+      setStatus(error instanceof Error ? error.message : "Could not delete radio queue item.");
     } finally {
       setBusy(null);
     }
@@ -776,7 +802,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
                             <button
                               type="button"
                               onClick={() => void selectLineupTrack(track)}
-                              disabled={isCurrentTrack || busy === "select"}
+                              disabled={isCurrentTrack || busy === "select" || busy === "delete"}
                               aria-label={isCurrentTrack ? `Now playing ${track.title}` : `Play ${track.title}`}
                               className={clsx(
                                 "touch-manipulation rounded-full border px-4 py-2 text-xs font-bold uppercase tracking-[0.12em] transition disabled:cursor-default",
@@ -784,6 +810,16 @@ export default function RadioStationClient({ initialState = null, initialPromptM
                               )}
                             >
                               {isCurrentTrack ? "Playing" : busy === "select" ? "Loading" : "Play"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void deleteLineupTrack(track)}
+                              disabled={busy === "delete"}
+                              aria-label={`Delete ${track.title}`}
+                              title={`Delete ${track.title}`}
+                              className="touch-manipulation rounded-full border border-rose-200/20 bg-rose-400/10 p-2 text-rose-100/80 transition hover:border-rose-200/40 hover:bg-rose-400/18 hover:text-rose-50 disabled:cursor-default disabled:opacity-45"
+                            >
+                              <TrashIcon className="h-4 w-4" aria-hidden="true" />
                             </button>
                           </div>
                         </div>
@@ -936,6 +972,12 @@ function isRadioTrackLiked(track: RadioTrackRecord | undefined, state: RadioStre
   if (!track) return false;
   if (track.rating === "up") return true;
   return state?.preferences[track.styleId]?.likes.includes(track.prompt) ?? false;
+}
+
+function hasRadioTrackFeedback(track: RadioTrackRecord, state: RadioStreamState | null) {
+  if (track.rating === "up" || track.rating === "down") return true;
+  const preference = state?.preferences[track.styleId];
+  return !!preference && (preference.likes.includes(track.prompt) || preference.dislikes.includes(track.prompt));
 }
 
 function Panel({ title, className, children }: { title: string; className?: string; children: React.ReactNode }) {

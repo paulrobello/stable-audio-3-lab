@@ -184,6 +184,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, track: result.selectedTrack, state: buildRadioResponseState(result.state, request) });
     }
 
+    if (action === "deleteTrack") {
+      const filename = typeof body.filename === "string" ? body.filename.trim() : "";
+      if (!isSafeAudioFilename(filename)) return NextResponse.json({ ok: false, error: "Invalid track filename" }, { status: 400 });
+      const deletedTrack = state.history.find((track) => track.filename === filename);
+      if (!deletedTrack) return NextResponse.json({ ok: false, error: "Track is not in the radio lineup" }, { status: 404 });
+      const nextState = removeRadioTracksFromLineup(state, [deletedTrack]);
+      await removeDeletedTrackAudio(deletedTrack, state);
+      await writeRadioState(nextState);
+      return NextResponse.json({ ok: true, deletedTrack, state: buildRadioResponseState(nextState, request) });
+    }
+
     if (action === "rating") {
       const styleId = normalizeRadioStyleId(body.styleId ?? state.currentTrack?.styleId ?? state.selectedStyleId);
       const phrase = typeof body.phrase === "string" && body.phrase.trim()
@@ -793,6 +804,21 @@ async function removeDuplicateTrackAudio(track: RadioTrackRecord) {
   await removeTrackAudio(track, { duplicateRemovedAt: new Date().toISOString(), removalReason: "duplicate_title" });
 }
 
+async function removeDeletedTrackAudio(track: RadioTrackRecord, state: RadioState) {
+  const removalMetadata = { deletedAt: new Date().toISOString(), removalReason: "manual_delete" };
+  if (hasRadioTrackFeedback(track, state)) {
+    await removeTrackAudio(track, removalMetadata);
+    return;
+  }
+  await deleteTrackAudioAndMetadata(track);
+}
+
+function hasRadioTrackFeedback(track: RadioTrackRecord, state: RadioState) {
+  if (track.rating === "up" || track.rating === "down") return true;
+  const preference = state.preferences[track.styleId];
+  return !!preference && (preference.likes.includes(track.prompt) || preference.dislikes.includes(track.prompt));
+}
+
 async function removeTrackAudio(track: RadioTrackRecord, removalMetadata: Record<string, unknown>) {
   const meta = await markRemovedTrackMetadata(track, removalMetadata);
   const announcementFilename = resolveRadioAnnouncementFilename(track, meta);
@@ -800,16 +826,20 @@ async function removeTrackAudio(track: RadioTrackRecord, removalMetadata: Record
   if (announcementFilename) await unlinkIfPresent(outputPathForAudio(outputDir(), announcementFilename));
 }
 
+async function deleteTrackAudioAndMetadata(track: RadioTrackRecord) {
+  const audioPath = outputPathForAudio(outputDir(), track.filename);
+  const metaPath = metadataPathForAudio(audioPath);
+  const meta = await readTrackMetadata(track);
+  const announcementFilename = resolveRadioAnnouncementFilename(track, meta);
+  await unlinkIfPresent(audioPath);
+  if (announcementFilename) await unlinkIfPresent(outputPathForAudio(outputDir(), announcementFilename));
+  await unlinkIfPresent(metaPath);
+}
+
 async function markRemovedTrackMetadata(track: RadioTrackRecord, removalMetadata: Record<string, unknown>) {
   const audioPath = outputPathForAudio(outputDir(), track.filename);
   const metaPath = metadataPathForAudio(audioPath);
-  let meta: Record<string, unknown> = {};
-  try {
-    const parsed = JSON.parse(await readFile(metaPath, "utf8"));
-    if (parsed && typeof parsed === "object") meta = parsed as Record<string, unknown>;
-  } catch {
-    meta = { filename: track.filename, audioUrl: `/outputs/${track.filename}` };
-  }
+  const meta = await readTrackMetadata(track);
   const previousRadio = meta.radio && typeof meta.radio === "object" ? meta.radio as Record<string, unknown> : {};
   const updated = {
     ...meta,
@@ -822,6 +852,19 @@ async function markRemovedTrackMetadata(track: RadioTrackRecord, removalMetadata
   };
   await writeFile(metaPath, JSON.stringify(updated, null, 2));
   return updated;
+}
+
+async function readTrackMetadata(track: RadioTrackRecord) {
+  const audioPath = outputPathForAudio(outputDir(), track.filename);
+  const metaPath = metadataPathForAudio(audioPath);
+  let meta: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(await readFile(metaPath, "utf8"));
+    if (parsed && typeof parsed === "object") meta = parsed as Record<string, unknown>;
+  } catch {
+    meta = { filename: track.filename, audioUrl: `/outputs/${track.filename}` };
+  }
+  return meta;
 }
 
 async function unlinkIfPresent(filePath: string) {

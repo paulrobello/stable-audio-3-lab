@@ -127,6 +127,102 @@ describe("radio stream route", () => {
     await reader!.cancel();
   }, 5000);
 
+  it("deletes an unrated radio queue track audio, announcement, and metadata", async () => {
+    tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
+    process.chdir(tempCwd);
+    const outputDir = path.join(tempCwd, "public", "outputs");
+    const stateFile = path.join(tempCwd, ".stable-audio-radio", "state.json");
+    await mkdir(outputDir, { recursive: true });
+    await mkdir(path.dirname(stateFile), { recursive: true });
+    await writeFile(path.join(outputDir, "current.mp3"), Buffer.from("current"));
+    await writeFile(path.join(outputDir, "next.mp3"), Buffer.from("next"));
+    await writeFile(path.join(outputDir, "radio_announce_current.mp3"), Buffer.from("announce"));
+    await writeFile(path.join(outputDir, "current.mp3.json"), JSON.stringify({
+      title: "Current",
+      radio: { announcementFilename: "radio_announce_current.mp3" },
+    }));
+    const current = createRadioTrackRecord({ filename: "current.mp3", title: "Current", prompt: "current", styleId: "synthwave", announce: false });
+    const next = createRadioTrackRecord({ filename: "next.mp3", title: "Next", prompt: "next", styleId: "synthwave", announce: false });
+    await writeFile(stateFile, JSON.stringify({ ...defaultRadioState(), currentTrack: current, history: [current, next] }, null, 2));
+
+    const response = await POST(new NextRequest("http://localhost:3007/api/radio", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "deleteTrack", filename: "current.mp3" }),
+    }));
+    const json = await response.json() as { ok: boolean; deletedTrack?: { filename?: string }; state?: { currentTrack?: { filename?: string }; history?: Array<{ filename?: string }> } };
+
+    expect(json.ok).toBe(true);
+    expect(json.deletedTrack?.filename).toBe("current.mp3");
+    expect(json.state?.currentTrack?.filename).toBe("next.mp3");
+    expect(json.state?.history?.map((track) => track.filename)).toEqual(["next.mp3"]);
+    await expect(readFile(path.join(outputDir, "current.mp3"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(path.join(outputDir, "radio_announce_current.mp3"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(path.join(outputDir, "current.mp3.json"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("keeps feedback metadata when deleting a rated radio queue track", async () => {
+    tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
+    process.chdir(tempCwd);
+    const outputDir = path.join(tempCwd, "public", "outputs");
+    const stateFile = path.join(tempCwd, ".stable-audio-radio", "state.json");
+    await mkdir(outputDir, { recursive: true });
+    await mkdir(path.dirname(stateFile), { recursive: true });
+    await writeFile(path.join(outputDir, "current.mp3"), Buffer.from("current"));
+    await writeFile(path.join(outputDir, "liked.mp3"), Buffer.from("liked"));
+    await writeFile(path.join(outputDir, "liked.mp3.json"), JSON.stringify({ title: "Liked" }));
+    const current = createRadioTrackRecord({ filename: "current.mp3", title: "Current", prompt: "current", styleId: "synthwave", announce: false });
+    const liked = { ...createRadioTrackRecord({ filename: "liked.mp3", title: "Liked", prompt: "liked", styleId: "synthwave", announce: false }), rating: "up" as const };
+    await writeFile(stateFile, JSON.stringify({ ...defaultRadioState(), currentTrack: current, history: [current, liked] }, null, 2));
+
+    const response = await POST(new NextRequest("http://localhost:3007/api/radio", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "deleteTrack", filename: "liked.mp3" }),
+    }));
+    const json = await response.json() as { ok: boolean; state?: { history?: Array<{ filename?: string }> } };
+    const metadata = JSON.parse(await readFile(path.join(outputDir, "liked.mp3.json"), "utf8")) as { radio?: { removalReason?: string; deletedAt?: string; removedAudioFilename?: string } };
+
+    expect(json.ok).toBe(true);
+    expect(json.state?.history?.map((track) => track.filename)).toEqual(["current.mp3"]);
+    await expect(readFile(path.join(outputDir, "liked.mp3"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(metadata.radio).toMatchObject({ removalReason: "manual_delete", removedAudioFilename: "liked.mp3" });
+    expect(typeof metadata.radio?.deletedAt).toBe("string");
+  });
+
+  it("keeps feedback metadata when shared preferences record thumbs feedback", async () => {
+    tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
+    process.chdir(tempCwd);
+    const outputDir = path.join(tempCwd, "public", "outputs");
+    const stateFile = path.join(tempCwd, ".stable-audio-radio", "state.json");
+    await mkdir(outputDir, { recursive: true });
+    await mkdir(path.dirname(stateFile), { recursive: true });
+    await writeFile(path.join(outputDir, "current.mp3"), Buffer.from("current"));
+    await writeFile(path.join(outputDir, "shared_feedback.mp3"), Buffer.from("liked"));
+    await writeFile(path.join(outputDir, "shared_feedback.mp3.json"), JSON.stringify({ title: "Shared Feedback" }));
+    const current = createRadioTrackRecord({ filename: "current.mp3", title: "Current", prompt: "current", styleId: "synthwave", announce: false });
+    const sharedFeedback = createRadioTrackRecord({ filename: "shared_feedback.mp3", title: "Shared Feedback", prompt: "shared prompt", styleId: "synthwave", announce: false });
+    await writeFile(stateFile, JSON.stringify({
+      ...defaultRadioState(),
+      currentTrack: current,
+      history: [current, sharedFeedback],
+      preferences: { synthwave: { likes: [], dislikes: [sharedFeedback.prompt] } },
+    }, null, 2));
+
+    const response = await POST(new NextRequest("http://localhost:3007/api/radio", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "deleteTrack", filename: "shared_feedback.mp3" }),
+    }));
+    const json = await response.json() as { ok: boolean; state?: { history?: Array<{ filename?: string }> } };
+    const metadata = JSON.parse(await readFile(path.join(outputDir, "shared_feedback.mp3.json"), "utf8")) as { radio?: { removalReason?: string; removedAudioFilename?: string } };
+
+    expect(json.ok).toBe(true);
+    expect(json.state?.history?.map((track) => track.filename)).toEqual(["current.mp3"]);
+    await expect(readFile(path.join(outputDir, "shared_feedback.mp3"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(metadata.radio).toMatchObject({ removalReason: "manual_delete", removedAudioFilename: "shared_feedback.mp3" });
+  });
+
   it("streams the current track for the requested style query", async () => {
     tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
     process.chdir(tempCwd);
