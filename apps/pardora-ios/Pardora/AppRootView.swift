@@ -29,6 +29,7 @@ enum AppTab: String, CaseIterable, Identifiable {
 
 struct AppRootView: View {
     @State private var selectedTab: AppTab = .now
+    @State private var model = RadioAppModel()
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -44,6 +45,9 @@ struct AppRootView: View {
             }
         }
         .tint(PardoraTheme.accent)
+        .task {
+            await model.refresh()
+        }
     }
 }
 
