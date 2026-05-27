@@ -24,6 +24,109 @@ final class RadioAppModelTests: XCTestCase {
         XCTAssertEqual(payload?["action"], .string("skipTrack"))
     }
 
+    func testDeleteTracksPostsDeleteForEachSelectedTrack() async {
+        let client = FakeRadioActionClient()
+        let model = RadioAppModel(serverOrigin: "https://radio.pardev.net", actionClient: client)
+        let first = RadioTrackRecord(
+            id: "track-1",
+            filename: "first.mp3",
+            title: "First",
+            prompt: "first prompt",
+            styleId: .synthwave,
+            announce: true,
+            createdAt: "2026-05-27T16:00:00.000Z"
+        )
+        let second = RadioTrackRecord(
+            id: "track-2",
+            filename: "second.mp3",
+            title: "Second",
+            prompt: "second prompt",
+            styleId: .synthwave,
+            announce: true,
+            createdAt: "2026-05-27T16:00:00.000Z"
+        )
+
+        await model.deleteTracks([first, second])
+
+        let payloads = await client.payloads
+        XCTAssertEqual(payloads.count, 2)
+        XCTAssertEqual(payloads[0]["action"], .string("deleteTrack"))
+        XCTAssertEqual(payloads[0]["filename"], .string("first.mp3"))
+        XCTAssertEqual(payloads[1]["action"], .string("deleteTrack"))
+        XCTAssertEqual(payloads[1]["filename"], .string("second.mp3"))
+    }
+
+    func testSelectMusicStylePostsConfigureAction() async {
+        let client = FakeRadioActionClient()
+        let model = RadioAppModel(serverOrigin: "https://radio.pardev.net", actionClient: client)
+
+        await model.selectMusicStyle(.ambient)
+
+        let payload = await client.lastPayload
+        XCTAssertEqual(payload?["action"], .string("configure"))
+        XCTAssertEqual(payload?["styleId"], .string("ambient"))
+    }
+
+    func testSelectMusicStyleAppliesReturnedState() async {
+        var nextState = Self.stateWithLANURL
+        nextState.selectedStyleId = .ambient
+        let client = FakeRadioActionClient(response: RadioActionResponse(
+            ok: true,
+            state: nextState,
+            error: nil,
+            deletedTrack: nil,
+            rejectedTrack: nil,
+            skippedTrack: nil
+        ))
+        let model = RadioAppModel(serverOrigin: "https://radio.pardev.net", actionClient: client)
+
+        await model.selectMusicStyle(.ambient)
+
+        XCTAssertEqual(model.state?.selectedStyleId, .ambient)
+    }
+
+    func testSaveConfigurationPostsEditedStationSettings() async {
+        let client = FakeRadioActionClient()
+        let model = RadioAppModel(serverOrigin: "https://radio.pardev.net", actionClient: client)
+        model.state = Self.stateWithLANURL
+
+        model.updatePromptModel("qwen2.5:14b")
+        model.updateAnnouncementsEnabled(false)
+        model.updateTTSProvider(.deepgram)
+        model.updateTTSVoice("aura-2-apollo-en")
+
+        await model.saveConfiguration()
+
+        let payload = await client.lastPayload
+        XCTAssertEqual(payload?["action"], .string("configure"))
+        XCTAssertEqual(payload?["styleId"], .string("synthwave"))
+        XCTAssertEqual(payload?["promptModel"], .string("qwen2.5:14b"))
+        XCTAssertEqual(payload?["announceEnabled"], .bool(false))
+        XCTAssertEqual(payload?["ttsProvider"], .string("deepgram"))
+        XCTAssertEqual(payload?["ttsVoice"], .string("aura-2-apollo-en"))
+    }
+
+    func testLoadTTSVoiceOptionsPostsProviderAndAppliesReturnedVoices() async {
+        var state = Self.stateWithLANURL
+        state.ttsProvider = .elevenlabs
+        state.ttsVoice = "Juniper"
+        let voices = [
+            RadioTTSVoiceOption(id: "voice-alpha", label: "Alpha", description: "Account voice"),
+            RadioTTSVoiceOption(id: "voice-beta", label: "Beta", description: nil),
+        ]
+        let client = FakeRadioActionClient(response: RadioActionResponse(ok: true, voices: voices))
+        let model = RadioAppModel(serverOrigin: "https://radio.pardev.net", actionClient: client)
+        model.state = state
+
+        await model.loadTTSVoiceOptions()
+
+        let payload = await client.lastPayload
+        XCTAssertEqual(payload?["action"], .string("ttsVoices"))
+        XCTAssertEqual(payload?["ttsProvider"], .string("elevenlabs"))
+        XCTAssertEqual(payload?["ttsVoice"], .string("Juniper"))
+        XCTAssertEqual(model.ttsVoiceOptions, voices)
+    }
+
     func testEndpointModeDefaultsToAuto() {
         let model = RadioAppModel()
 
@@ -150,6 +253,20 @@ final class RadioAppModelTests: XCTestCase {
         XCTAssertEqual(model.statusMessage, RadioAppModel.cloudflareVPNMessage)
     }
 
+    func testConnectionTestLeavesVisibleSuccessMessage() async {
+        let transport = FallbackRadioTransport()
+        let model = RadioAppModel(
+            serverOrigin: "http://localhost:3007",
+            endpointMode: .custom,
+            transport: transport
+        )
+
+        await model.testConnection()
+
+        XCTAssertEqual(model.connectionTestMessage, "Connected to http://localhost:3007")
+        XCTAssertNil(model.statusMessage)
+    }
+
     func testCloudflareOneShortcutUsesDocumentedURLScheme() {
         XCTAssertEqual(CloudflareOneApp.url.scheme, "cf1app")
         XCTAssertEqual(CloudflareOneApp.url.host, "oneapp.cloudflare.com")
@@ -173,6 +290,22 @@ final class RadioAppModelTests: XCTestCase {
             "http://localhost:3007/api/radio",
         ])
         XCTAssertEqual(model.state?.currentTrack?.title, "Local Track")
+    }
+
+    func testSilentRefreshUpdatesQueueWithoutVisibleTestingStatus() async {
+        let transport = QueueRefreshRadioTransport()
+        let model = RadioAppModel(
+            serverOrigin: "http://localhost:3007",
+            endpointMode: .custom,
+            transport: transport
+        )
+
+        await model.refresh()
+        await model.refresh(showStatus: false)
+
+        XCTAssertEqual(model.state?.queueAheadCount, 3)
+        XCTAssertEqual(model.state?.history.count, 4)
+        XCTAssertNil(model.statusMessage)
     }
 
     private static var stateWithLANURL: RadioStreamState {
@@ -203,8 +336,77 @@ final class RadioAppModelTests: XCTestCase {
     """
 }
 
+private actor QueueRefreshRadioTransport: RadioTransport {
+    private var responseCount = 0
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        let url = try XCTUnwrap(request.url)
+        responseCount += 1
+        let queueAheadCount = responseCount == 1 ? 0 : 3
+        let history = (0...queueAheadCount).map { index in
+            """
+            {
+              "id": "track-\(index)",
+              "filename": "track-\(index).mp3",
+              "title": "Track \(index)",
+              "prompt": "instrumental synthwave",
+              "styleId": "synthwave",
+              "announce": true,
+              "createdAt": "2026-05-27T16:00:00.000Z"
+            }
+            """
+        }.joined(separator: ",")
+        let envelope = """
+        {
+          "ok": true,
+          "state": {
+            "selectedStyleId": "synthwave",
+            "announceEnabled": true,
+            "promptModel": "llama3.1:8b",
+            "ttsProvider": "openai",
+            "ttsVoice": "nova",
+            "announcementPrefix": "Now playing: ",
+            "announcementSuffix": "",
+            "preferences": {},
+            "currentTrackByStyle": { "synthwave": "track-0.mp3" },
+            "currentTrack": {
+              "id": "track-0",
+              "filename": "track-0.mp3",
+              "title": "Track 0",
+              "prompt": "instrumental synthwave",
+              "styleId": "synthwave",
+              "announce": true,
+              "createdAt": "2026-05-27T16:00:00.000Z"
+            },
+            "history": [\(history)],
+            "updatedAt": "2026-05-27T16:00:0\(responseCount).000Z",
+            "streamReady": true,
+            "queueAheadCount": \(queueAheadCount),
+            "queueTarget": 3,
+            "needsQueueFill": \(queueAheadCount < 3),
+            "streamUrl": "http://localhost:3007/api/radio?stream=1"
+          }
+        }
+        """
+        let response = try XCTUnwrap(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil))
+        return (Data(envelope.utf8), response)
+    }
+}
+
 private actor FakeRadioActionClient: RadioActionClient {
     var payloads: [RadioActionPayload] = []
+    let response: RadioActionResponse
+
+    init(response: RadioActionResponse = RadioActionResponse(
+        ok: true,
+        state: nil,
+        error: nil,
+        deletedTrack: nil,
+        rejectedTrack: nil,
+        skippedTrack: nil
+    )) {
+        self.response = response
+    }
 
     var lastPayload: RadioActionPayload? {
         payloads.last
@@ -212,14 +414,7 @@ private actor FakeRadioActionClient: RadioActionClient {
 
     func postAction(_ payload: RadioActionPayload) async throws -> RadioActionResponse {
         payloads.append(payload)
-        return RadioActionResponse(
-            ok: true,
-            state: nil,
-            error: nil,
-            deletedTrack: nil,
-            rejectedTrack: nil,
-            skippedTrack: nil
-        )
+        return response
     }
 }
 

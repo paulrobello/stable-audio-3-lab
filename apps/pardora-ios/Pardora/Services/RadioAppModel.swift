@@ -10,6 +10,9 @@ final class RadioAppModel {
     var state: RadioStreamState?
     var isRefreshing = false
     var statusMessage: String?
+    var connectionTestMessage: String?
+    var promptModels = RadioPromptModelOptions.defaults
+    var ttsVoiceOptions = RadioTTSVoiceOption.options(for: .openai, currentVoice: "nova")
 
     static let cloudflareVPNMessage = "Public radio endpoint returned a web login page. If you are remote, enable Cloudflare VPN/WARP, then try again."
     static let testingConnectionMessage = "Testing radio connection..."
@@ -133,9 +136,11 @@ final class RadioAppModel {
         await refresh()
     }
 
-    func refresh() async {
+    func refresh(showStatus: Bool = true) async {
         isRefreshing = true
-        statusMessage = Self.testingConnectionMessage
+        if showStatus {
+            statusMessage = Self.testingConnectionMessage
+        }
         defer { isRefreshing = false }
 
         var lastError: Error?
@@ -148,7 +153,11 @@ final class RadioAppModel {
             client = RadioAPIClient(baseURL: baseURL, transport: transport)
 
             do {
-                setState(try await client.fetchState(), origin: origin)
+                let response = try await client.fetchEnvelope()
+                guard response.ok, let state = response.state else {
+                    throw RadioAPIError.server(response.error ?? "Radio state unavailable.")
+                }
+                setState(state, origin: origin, promptModels: response.promptModels)
                 return
             } catch {
                 lastError = error
@@ -156,14 +165,29 @@ final class RadioAppModel {
         }
 
         if shouldDiscoverLAN {
-            statusMessage = Self.scanningLANMessage
+            if showStatus {
+                statusMessage = Self.scanningLANMessage
+            }
             if let discovered = await fetchFirstReachableState(origins: lanDiscoveryOrigins) {
                 setState(discovered.state, origin: discovered.origin)
                 return
             }
         }
 
-        statusMessage = statusMessage(for: lastError)
+        if showStatus {
+            statusMessage = statusMessage(for: lastError)
+        }
+    }
+
+    func testConnection() async {
+        connectionTestMessage = Self.testingConnectionMessage
+        await refresh()
+
+        if let statusMessage {
+            connectionTestMessage = statusMessage
+        } else {
+            connectionTestMessage = "Connected to \(serverOrigin)"
+        }
     }
 
     func post(_ payload: RadioActionPayload) async {
@@ -171,9 +195,12 @@ final class RadioAppModel {
             let response = try await (actionClient ?? client).postAction(payload)
             if response.ok {
                 if let state = response.state {
+                    applyStateOptions(state)
                     self.state = state
                     applyEndpointMode()
                 }
+                applyPromptModels(response.promptModels)
+                applyVoiceOptions(response.voices)
                 statusMessage = nil
             } else {
                 statusMessage = response.error ?? "Radio action failed."
@@ -201,6 +228,50 @@ final class RadioAppModel {
 
     func deleteTrack(_ track: RadioTrackRecord) async {
         await post(["action": .string("deleteTrack"), "filename": .string(track.filename)])
+    }
+
+    func deleteTracks(_ tracks: [RadioTrackRecord]) async {
+        for track in tracks {
+            await deleteTrack(track)
+        }
+    }
+
+    func selectMusicStyle(_ style: RadioStyleID) async {
+        await post(["action": .string("configure"), "styleId": .string(style.rawValue)])
+    }
+
+    func updatePromptModel(_ promptModel: String) {
+        state?.promptModel = promptModel
+    }
+
+    func updateAnnouncementsEnabled(_ enabled: Bool) {
+        state?.announceEnabled = enabled
+    }
+
+    func updateTTSProvider(_ provider: RadioTTSProvider) {
+        guard state != nil else {
+            return
+        }
+
+        state?.ttsProvider = provider
+        state?.ttsVoice = RadioTTSVoiceOption.defaultVoice(for: provider)
+        ttsVoiceOptions = RadioTTSVoiceOption.options(for: provider, currentVoice: state?.ttsVoice)
+    }
+
+    func updateTTSVoice(_ voice: String) {
+        state?.ttsVoice = voice
+    }
+
+    func loadTTSVoiceOptions() async {
+        guard let state else {
+            return
+        }
+
+        await post([
+            "action": .string("ttsVoices"),
+            "ttsProvider": .string(state.ttsProvider.rawValue),
+            "ttsVoice": .string(state.ttsVoice),
+        ])
     }
 
     func saveConfiguration() async {
@@ -270,11 +341,29 @@ final class RadioAppModel {
         client = RadioAPIClient(baseURL: baseURL, transport: transport)
     }
 
-    private func setState(_ state: RadioStreamState, origin: String) {
+    private func setState(_ state: RadioStreamState, origin: String, promptModels: [String]? = nil) {
+        applyStateOptions(state)
         self.state = state
         serverOrigin = origin
+        applyPromptModels(promptModels)
         applyEndpointMode()
         statusMessage = nil
+    }
+
+    private func applyStateOptions(_ state: RadioStreamState) {
+        ttsVoiceOptions = RadioTTSVoiceOption.options(for: state.ttsProvider, currentVoice: state.ttsVoice)
+    }
+
+    private func applyPromptModels(_ models: [String]?) {
+        promptModels = RadioPromptModelOptions.merged(models ?? promptModels, currentModel: state?.promptModel)
+    }
+
+    private func applyVoiceOptions(_ voices: [RadioTTSVoiceOption]?) {
+        guard let voices, !voices.isEmpty else {
+            return
+        }
+
+        ttsVoiceOptions = voices
     }
 
     private func fetchFirstReachableState(origins: [String]) async -> (origin: String, state: RadioStreamState)? {

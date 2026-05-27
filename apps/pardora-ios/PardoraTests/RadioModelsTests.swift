@@ -20,6 +20,92 @@ final class RadioModelsTests: XCTestCase {
         XCTAssertEqual(state.selectedStyleId.displayName, "Future Style")
     }
 
+    func testTrackFeedbackFallsBackToStylePreferences() throws {
+        var state = try JSONDecoder().decode(RadioStreamState.self, from: Data(Self.fixture.utf8))
+        state.currentTrack?.rating = nil
+        state.currentTrack?.prompt = "warm analog bass"
+
+        XCTAssertTrue(state.isTrackLiked(state.currentTrack))
+        XCTAssertFalse(state.isTrackDisliked(state.currentTrack))
+
+        state.currentTrack?.prompt = "harsh cymbals"
+
+        XCTAssertFalse(state.isTrackLiked(state.currentTrack))
+        XCTAssertTrue(state.isTrackDisliked(state.currentTrack))
+    }
+
+    func testNextUpTrackUsesSelectedQueueAfterCurrentTrack() throws {
+        var state = try JSONDecoder().decode(RadioStreamState.self, from: Data(Self.fixture.utf8))
+        let current = try XCTUnwrap(state.currentTrack)
+        let next = RadioTrackRecord(
+            id: "track-2",
+            filename: "neon_ascent.mp3",
+            title: "Neon Ascent",
+            prompt: "instrumental synthwave, bright lead",
+            styleId: .synthwave,
+            announce: true,
+            createdAt: "2026-05-27T16:01:00.000Z",
+            promptProvider: nil,
+            promptModel: nil,
+            source: nil,
+            fallbackReason: nil,
+            announcementFilename: nil,
+            durationSeconds: 90,
+            rating: nil,
+            ratedAt: nil
+        )
+        let otherStyle = RadioTrackRecord(
+            id: "track-3",
+            filename: "quiet_room.mp3",
+            title: "Quiet Room",
+            prompt: "ambient pads",
+            styleId: .ambient,
+            announce: true,
+            createdAt: "2026-05-27T16:02:00.000Z",
+            promptProvider: nil,
+            promptModel: nil,
+            source: nil,
+            fallbackReason: nil,
+            announcementFilename: nil,
+            durationSeconds: 120,
+            rating: nil,
+            ratedAt: nil
+        )
+        state.history = [current, otherStyle, next]
+
+        XCTAssertEqual(state.nextUpTrack?.title, "Neon Ascent")
+    }
+
+    func testQueueStatusAndNextUpFallbackStayVisible() throws {
+        var state = try JSONDecoder().decode(RadioStreamState.self, from: Data(Self.fixture.utf8))
+        state.history = [try XCTUnwrap(state.currentTrack)]
+        state.queueAheadCount = 2
+        state.queueTarget = 3
+
+        XCTAssertEqual(state.queueStatusText, "2/3 ahead")
+        XCTAssertEqual(state.nextUpTrack, nil)
+        XCTAssertEqual(state.nextUpTitleText, "Preparing next song")
+
+        state.queueAheadCount = 0
+        state.needsQueueFill = true
+
+        XCTAssertEqual(state.nextUpTitleText, "Generating new music")
+
+        state.needsQueueFill = false
+
+        XCTAssertEqual(state.nextUpTitleText, "Queue empty")
+    }
+
+    func testTrackCreatedAgeAndFileSizeText() throws {
+        let track = try XCTUnwrap(try JSONDecoder().decode(RadioStreamState.self, from: Data(Self.fixture.utf8)).currentTrack)
+        let now = try Date("2026-05-27T18:05:00.000Z", strategy: .iso8601)
+
+        XCTAssertEqual(track.createdAgeText(now: now), "2h old")
+        XCTAssertEqual(track.fileSizeText, "1.2 MB")
+        XCTAssertTrue(track.createdDetailText(now: now).contains("2h old"))
+        XCTAssertTrue(track.createdDetailText(now: now).contains("1.2 MB"))
+    }
+
     private static let fixture = """
     {
       "selectedStyleId": "synthwave",
@@ -58,6 +144,7 @@ final class RadioModelsTests: XCTestCase {
         "promptProvider": "ollama",
         "promptModel": "llama3.1:8b",
         "durationSeconds": 60,
+        "fileSizeBytes": 1234567,
         "rating": "up"
       },
       "history": [],

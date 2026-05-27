@@ -14,6 +14,10 @@ targets:
     platform: iOS
     sources:
       - Pardora
+    dependencies:
+      - target: PardoraLiveActivityExtension
+        embed: true
+      - sdk: ActivityKit.framework
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: net.pardev.pardora
@@ -21,6 +25,33 @@ targets:
         INFOPLIST_FILE: Pardora/Resources/Info.plist
         MARKETING_VERSION: "0.1"
         CURRENT_PROJECT_VERSION: "1"
+        SUPPORTS_LIVE_ACTIVITIES: YES
+  PardoraLiveActivityExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: PardoraLiveActivityExtension
+      - path: Pardora/Support/PardoraActivityAttributes.swift
+    dependencies:
+      - sdk: WidgetKit.framework
+      - sdk: ActivityKit.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.pardev.pardora.liveactivity
+        GENERATE_INFOPLIST_FILE: YES
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "1"
+        SUPPORTS_LIVE_ACTIVITIES: YES
+        SWIFT_VERSION: "6.0"
+    info:
+      path: PardoraLiveActivityExtension/Info.plist
+      properties:
+        CFBundleDisplayName: Pardora Activity
+        CFBundleShortVersionString: "0.1"
+        CFBundleVersion: "1"
+        NSSupportsLiveActivities: true
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
   PardoraTests:
     type: bundle.unit-test
     platform: iOS

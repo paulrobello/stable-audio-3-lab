@@ -15,6 +15,17 @@ final class RadioAPIClientTests: XCTestCase {
         XCTAssertEqual(state.currentTrack?.title, "Neon Causeway")
     }
 
+    func testFetchEnvelopeDecodesPromptModels() async throws {
+        let transport = MockRadioTransport { request in
+            (Self.okEnvelope, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
+        let client = RadioAPIClient(baseURL: URL(string: "https://radio.pardev.net")!, transport: transport)
+
+        let envelope = try await client.fetchEnvelope()
+
+        XCTAssertEqual(envelope.promptModels, ["qwen3:14b", "gemma3:12b"])
+    }
+
     func testPostActionSendsBooleanJSONBody() async throws {
         let transport = MockRadioTransport { request in
             XCTAssertEqual(request.httpMethod, "POST")
@@ -34,6 +45,7 @@ final class RadioAPIClientTests: XCTestCase {
     private static let okEnvelope = """
     {
       "ok": true,
+      "promptModels": ["qwen3:14b", "gemma3:12b"],
       "state": {
         "selectedStyleId": "synthwave",
         "announceEnabled": true,

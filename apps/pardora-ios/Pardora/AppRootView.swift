@@ -56,6 +56,14 @@ struct AppRootView: View {
         .task {
             model.startNetworkMonitoring()
             await model.refresh()
+            await refreshStateLoop()
+        }
+    }
+
+    private func refreshStateLoop() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(5))
+            await model.refresh(showStatus: false)
         }
     }
 }

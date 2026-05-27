@@ -44,12 +44,16 @@ struct RadioAPIClient: RadioActionClient {
     }
 
     func fetchState() async throws -> RadioStreamState {
-        let response: RadioEnvelope = try await send(path: "/api/radio", method: "GET", body: nil)
+        let response = try await fetchEnvelope()
         guard response.ok, let state = response.state else {
             throw RadioAPIError.server(response.error ?? "Radio state unavailable.")
         }
 
         return state
+    }
+
+    func fetchEnvelope() async throws -> RadioEnvelope {
+        try await send(path: "/api/radio", method: "GET", body: nil)
     }
 
     func postAction(_ payload: RadioActionPayload) async throws -> RadioActionResponse {
@@ -91,17 +95,20 @@ struct RadioAPIClient: RadioActionClient {
 
 struct RadioEnvelope: Decodable {
     var ok: Bool
-    var state: RadioStreamState?
-    var error: String?
+    var state: RadioStreamState? = nil
+    var error: String? = nil
+    var promptModels: [String]? = nil
 }
 
 struct RadioActionResponse: Decodable {
     var ok: Bool
-    var state: RadioStreamState?
-    var error: String?
-    var deletedTrack: RadioTrackRecord?
-    var rejectedTrack: RadioTrackRecord?
-    var skippedTrack: RadioTrackRecord?
+    var state: RadioStreamState? = nil
+    var error: String? = nil
+    var deletedTrack: RadioTrackRecord? = nil
+    var rejectedTrack: RadioTrackRecord? = nil
+    var skippedTrack: RadioTrackRecord? = nil
+    var promptModels: [String]? = nil
+    var voices: [RadioTTSVoiceOption]? = nil
 }
 
 enum RadioAPIError: Error, Equatable, LocalizedError {

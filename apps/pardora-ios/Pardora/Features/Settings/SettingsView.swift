@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @Bindable var model: RadioAppModel
+    @AppStorage(PardoraSettings.autoPlayOnLaunchKey) private var autoPlayOnLaunch = false
 
     var body: some View {
         Form {
@@ -34,25 +35,113 @@ struct SettingsView: View {
                 LabeledContent("Public", value: model.publicServerOrigin)
 
                 Button(model.isRefreshing ? "Testing..." : "Test Connection") {
-                    Task { await model.refresh() }
+                    Task { await model.testConnection() }
                 }
                 .disabled(model.isRefreshing)
+
+                if let connectionTestMessage = model.connectionTestMessage {
+                    Text(connectionTestMessage)
+                        .font(.callout)
+                        .foregroundStyle(model.statusMessage == nil ? .secondary : PardoraTheme.warning)
+                }
 
                 CloudflareOneButton()
             }
 
             Section("Station") {
-                LabeledContent("Style", value: model.state?.selectedStyleId.displayName ?? "Unknown")
-                LabeledContent("Prompt Model", value: model.state?.promptModel ?? "Unknown")
-                LabeledContent("Announcements", value: model.state?.announceEnabled == true ? "On" : "Off")
-                LabeledContent("TTS", value: model.state?.ttsProvider.displayName ?? "Unknown")
+                Picker("Prompt Model", selection: promptModelSelection) {
+                    ForEach(promptModelOptions, id: \.self) { promptModel in
+                        Text(promptModel).tag(promptModel)
+                    }
+                }
+                .disabled(model.state == nil)
+
+                Toggle("Announcements", isOn: announcementsSelection)
+                    .disabled(model.state == nil)
+
+                Picker("TTS Provider", selection: ttsProviderSelection) {
+                    ForEach(RadioTTSProvider.allCases) { provider in
+                        Text(provider.displayName).tag(provider)
+                    }
+                }
+                .disabled(model.state == nil)
+                .onChange(of: model.state?.ttsProvider) {
+                    Task { await model.loadTTSVoiceOptions() }
+                }
+
+                Picker("TTS Voice", selection: ttsVoiceSelection) {
+                    ForEach(model.ttsVoiceOptions) { voice in
+                        Text(voice.label).tag(voice.id)
+                    }
+                }
+                .disabled(model.state == nil)
+
+                if let voiceDescription {
+                    Text(voiceDescription)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
                 Button("Save Station Settings") {
                     Task { await model.saveConfiguration() }
                 }
                 .disabled(model.state == nil)
             }
+
+            Section("Playback") {
+                Toggle("Auto Play on App Launch", isOn: $autoPlayOnLaunch)
+            }
         }
         .navigationTitle("Settings")
+    }
+
+    private var promptModelSelection: Binding<String> {
+        Binding(
+            get: { model.state?.promptModel ?? RadioPromptModelOptions.defaults[0] },
+            set: { promptModel in
+                model.updatePromptModel(promptModel)
+            }
+        )
+    }
+
+    private var promptModelOptions: [String] {
+        RadioPromptModelOptions.merged(model.promptModels, currentModel: model.state?.promptModel)
+    }
+
+    private var announcementsSelection: Binding<Bool> {
+        Binding(
+            get: { model.state?.announceEnabled == true },
+            set: { enabled in
+                model.updateAnnouncementsEnabled(enabled)
+            }
+        )
+    }
+
+    private var ttsProviderSelection: Binding<RadioTTSProvider> {
+        Binding(
+            get: { model.state?.ttsProvider ?? .openai },
+            set: { provider in
+                model.updateTTSProvider(provider)
+                Task { await model.loadTTSVoiceOptions() }
+            }
+        )
+    }
+
+    private var ttsVoiceSelection: Binding<String> {
+        Binding(
+            get: { model.state?.ttsVoice ?? RadioTTSVoiceOption.defaultVoice(for: model.state?.ttsProvider ?? .openai) },
+            set: { voice in
+                model.updateTTSVoice(voice)
+            }
+        )
+    }
+
+    private var voiceDescription: String? {
+        guard let voice = model.ttsVoiceOptions.first(where: { $0.id == model.state?.ttsVoice }) else {
+            return nil
+        }
+
+        return voice.description
     }
 }
 
