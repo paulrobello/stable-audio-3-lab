@@ -25,40 +25,6 @@ struct NowPlayingView: View {
                 .padding()
                 .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
 
-                HStack(spacing: 12) {
-                    Button {
-                        player.togglePlayback()
-                    } label: {
-                        Label(player.isPlaying ? "Pause" : "Play", systemImage: player.isPlaying ? "pause.fill" : "play.fill")
-                    }
-                    .buttonStyle(.borderedProminent)
-
-                    Button {
-                        Task { await model.likeCurrentTrack() }
-                    } label: {
-                        Label("Like", systemImage: "hand.thumbsup.fill")
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button {
-                        Task { await model.skipCurrentTrack() }
-                    } label: {
-                        Label("Skip", systemImage: "forward.fill")
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button(role: .destructive) {
-                        Task { await model.dislikeCurrentTrack() }
-                    } label: {
-                        Label("Dislike", systemImage: "hand.thumbsdown.fill")
-                    }
-                    .buttonStyle(.bordered)
-                }
-                .labelStyle(.iconOnly)
-                .task(id: model.state?.streamUrl ?? model.state?.lanStreamUrl) {
-                    player.load(url: model.state?.streamURL)
-                }
-
                 if let status = model.statusMessage {
                     Text(status)
                         .font(.callout)
@@ -71,6 +37,49 @@ struct NowPlayingView: View {
         .refreshable {
             await model.refresh()
         }
+        .safeAreaInset(edge: .bottom) {
+            playbackControls
+        }
+        .task(id: model.state?.streamUrl ?? model.state?.lanStreamUrl) {
+            player.load(url: model.state?.streamURL)
+        }
+    }
+
+    private var playbackControls: some View {
+        HStack(spacing: 12) {
+            Button {
+                player.togglePlayback()
+            } label: {
+                Label(player.isPlaying ? "Pause" : "Play", systemImage: player.isPlaying ? "pause.fill" : "play.fill")
+            }
+            .buttonStyle(.borderedProminent)
+
+            Button {
+                Task { await model.likeCurrentTrack() }
+            } label: {
+                Label("Like", systemImage: "hand.thumbsup.fill")
+            }
+            .buttonStyle(.bordered)
+
+            Button {
+                Task { await model.skipCurrentTrack() }
+            } label: {
+                Label("Skip", systemImage: "forward.fill")
+            }
+            .buttonStyle(.bordered)
+
+            Button(role: .destructive) {
+                Task { await model.dislikeCurrentTrack() }
+            } label: {
+                Label("Dislike", systemImage: "hand.thumbsdown.fill")
+            }
+            .buttonStyle(.bordered)
+        }
+        .labelStyle(.iconOnly)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        .background(.bar)
     }
 }
 

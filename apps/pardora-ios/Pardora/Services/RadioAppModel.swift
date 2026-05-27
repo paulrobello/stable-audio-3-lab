@@ -71,4 +71,22 @@ final class RadioAppModel {
     func deleteTrack(_ track: RadioTrackRecord) async {
         await post(["action": .string("deleteTrack"), "filename": .string(track.filename)])
     }
+
+    func saveConfiguration() async {
+        guard let state else {
+            statusMessage = "Load station settings before saving."
+            return
+        }
+
+        await post([
+            "action": .string("configure"),
+            "styleId": .string(state.selectedStyleId.rawValue),
+            "promptModel": .string(state.promptModel),
+            "announceEnabled": .bool(state.announceEnabled),
+            "ttsProvider": .string(state.ttsProvider.rawValue),
+            "ttsVoice": .string(state.ttsVoice),
+            "announcementPrefix": .string(state.announcementPrefix),
+            "announcementSuffix": .string(state.announcementSuffix),
+        ])
+    }
 }

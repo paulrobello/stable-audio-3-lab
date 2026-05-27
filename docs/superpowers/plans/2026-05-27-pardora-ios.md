@@ -69,6 +69,7 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Pardora
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
         MARKETING_VERSION: "0.1"
@@ -113,6 +114,7 @@ checkall: test
 
 run: build
 	xcrun simctl install booted $(APP)
+	xcrun simctl ui booted appearance dark
 	xcrun simctl launch booted net.pardev.pardora
 ```
 
@@ -216,6 +218,7 @@ make build
 ```
 
 Expected: `xcodegen generate` creates `Pardora.xcodeproj`, and `xcodebuild` succeeds.
+Simulator smoke should show the app full screen, not in the compatibility letterboxed frame.
 
 - [ ] **Step 7: Commit**
 

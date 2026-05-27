@@ -26,4 +26,5 @@ checkall: test
 
 run: build
 	xcrun simctl install booted $(APP)
+	xcrun simctl ui booted appearance dark
 	xcrun simctl launch booted net.pardev.pardora
