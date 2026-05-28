@@ -16,6 +16,7 @@ const originalRadioTtsModulePath = process.env.RADIO_TTS_MODULE_PATH;
 const originalFfmpegPath = process.env.FFMPEG_PATH;
 const originalPathEnv = process.env.PATH;
 const originalRadioCodexTasteModel = process.env.RADIO_CODEX_TASTE_MODEL;
+const originalRadioCodexStyleModel = process.env.RADIO_CODEX_STYLE_MODEL;
 const originalRadioOllamaModelsTimeoutMs = process.env.RADIO_OLLAMA_MODELS_TIMEOUT_MS;
 const originalStableAudioPython = process.env.STABLE_AUDIO_PYTHON;
 const originalStableAudioMock = process.env.STABLE_AUDIO_MOCK;
@@ -50,6 +51,8 @@ describe("radio stream route", () => {
     else process.env.PATH = originalPathEnv;
     if (originalRadioCodexTasteModel === undefined) delete process.env.RADIO_CODEX_TASTE_MODEL;
     else process.env.RADIO_CODEX_TASTE_MODEL = originalRadioCodexTasteModel;
+    if (originalRadioCodexStyleModel === undefined) delete process.env.RADIO_CODEX_STYLE_MODEL;
+    else process.env.RADIO_CODEX_STYLE_MODEL = originalRadioCodexStyleModel;
     if (originalRadioOllamaModelsTimeoutMs === undefined) delete process.env.RADIO_OLLAMA_MODELS_TIMEOUT_MS;
     else process.env.RADIO_OLLAMA_MODELS_TIMEOUT_MS = originalRadioOllamaModelsTimeoutMs;
     if (originalStableAudioPython === undefined) delete process.env.STABLE_AUDIO_PYTHON;
@@ -139,6 +142,17 @@ describe("radio stream route", () => {
     });
   });
 
+  it("can skip prompt model refresh for lightweight polling", async () => {
+    tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
+    process.chdir(tempCwd);
+
+    const response = await GET(new NextRequest("http://localhost:3007/api/radio?promptModels=0"));
+    const json = await response.json() as { ok: boolean; promptModels?: string[] };
+
+    expect(json.ok).toBe(true);
+    expect(json).not.toHaveProperty("promptModels");
+  });
+
   it("creates custom music styles and exposes them in radio state responses", async () => {
     tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
     process.chdir(tempCwd);
@@ -170,6 +184,80 @@ describe("radio stream route", () => {
       customStyles?: Array<{ id?: string; label?: string }>;
     };
     expect(saved.customStyles).toEqual([expect.objectContaining({ id: "dungeon-synth", label: "Dungeon Synth" })]);
+  });
+
+  it("drafts custom music style prompts with Codex CLI and updates and deletes saved styles", async () => {
+    tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
+    process.chdir(tempCwd);
+    process.env.RADIO_OLLAMA_MODELS_TIMEOUT_MS = "1";
+    process.env.RADIO_CODEX_STYLE_MODEL = "gpt-5.5";
+    const codexPath = path.join(tempCwd, "codex");
+    await writeFile(codexPath, `#!/bin/sh
+printf '%s\\n' "$@" > codex-style-args.txt
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    shift
+    out="$1"
+  fi
+  shift || true
+done
+cat > codex-style-stdin.txt
+printf '%s' '{"label":"Dark Orchestral Breaks","seedPrompt":"brooding cinematic trip-hop with piano ostinatos, stormy strings, slow breakbeats, distorted bass, no vocals","negativePrompt":"direct artist imitation, recognizable melodies, vocals"}' > "$out"
+`);
+    await chmod(codexPath, 0o755);
+    process.env.PATH = `${tempCwd}:${originalPathEnv ?? ""}`;
+
+    const draftResponse = await POST(new NextRequest("http://localhost:3007/api/radio", {
+      method: "POST",
+      body: JSON.stringify({ action: "draftStyle", request: "Rob D style like Furious Angels" }),
+    }));
+    const draftJson = await draftResponse.json() as { ok: boolean; styleDraft?: { label?: string; seedPrompt?: string; negativePrompt?: string; model?: string } };
+
+    expect(draftJson.ok).toBe(true);
+    expect(draftJson.styleDraft).toMatchObject({
+      label: "Dark Orchestral Breaks",
+      seedPrompt: expect.stringContaining("brooding cinematic trip-hop"),
+      negativePrompt: expect.stringContaining("direct artist imitation"),
+      model: "gpt-5.5",
+    });
+    expect(await readFile(path.join(tempCwd, "codex-style-stdin.txt"), "utf8")).toContain("Rob D style like Furious Angels");
+    expect(await readFile(path.join(tempCwd, "codex-style-args.txt"), "utf8")).toContain("-m\ngpt-5.5");
+
+    const createResponse = await POST(new NextRequest("http://localhost:3007/api/radio", {
+      method: "POST",
+      body: JSON.stringify({
+        action: "createStyle",
+        label: draftJson.styleDraft?.label,
+        seedPrompt: draftJson.styleDraft?.seedPrompt,
+        negativePrompt: draftJson.styleDraft?.negativePrompt,
+      }),
+    }));
+    const createJson = await createResponse.json() as { style?: { id?: string } };
+    const updateResponse = await POST(new NextRequest("http://localhost:3007/api/radio", {
+      method: "POST",
+      body: JSON.stringify({
+        action: "updateStyle",
+        styleId: createJson.style?.id,
+        label: "Dark Orchestral Breaks XL",
+        seedPrompt: "larger stormy string sections with heavier half-time drums",
+        negativePrompt: "vocals, direct artist imitation",
+      }),
+    }));
+    const updateJson = await updateResponse.json() as { ok: boolean; style?: { label?: string }; state?: { styles?: Array<{ id?: string; label?: string }> } };
+    const deleteResponse = await POST(new NextRequest("http://localhost:3007/api/radio", {
+      method: "POST",
+      body: JSON.stringify({ action: "deleteStyle", styleId: createJson.style?.id }),
+    }));
+    const deleteJson = await deleteResponse.json() as { ok: boolean; deletedStyle?: { id?: string }; state?: { customStyles?: Array<{ id?: string }>; selectedStyleId?: string } };
+
+    expect(updateJson.ok).toBe(true);
+    expect(updateJson.style?.label).toBe("Dark Orchestral Breaks XL");
+    expect(updateJson.state?.styles?.map((style) => style.label)).toContain("Dark Orchestral Breaks XL");
+    expect(deleteJson.ok).toBe(true);
+    expect(deleteJson.deletedStyle?.id).toBe(createJson.style?.id);
+    expect(deleteJson.state?.customStyles).toEqual([]);
+    expect(deleteJson.state?.selectedStyleId).toBe("synthwave");
   });
 
   it("registers a starred library mp3 as a marked fallback track", async () => {

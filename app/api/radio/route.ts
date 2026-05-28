@@ -13,12 +13,14 @@ import {
   buildRadioPublicStreamUrl,
   buildRadioStats,
   buildRadioStreamState,
+  buildRadioStyleGenerationPrompt,
   buildAnnouncementText,
   buildRadioAnnouncementFilename,
   buildRadioTrackPlaybackFilenames,
   createFallbackRadioPromptDraft,
   createRadioStyle,
   createRadioTrackRecord,
+  deleteRadioStyle,
   defaultRadioState,
   findDuplicateRadioTitleTracks,
   findRadioTracksForCleanup,
@@ -30,6 +32,7 @@ import {
   normalizeRadioStyleId,
   normalizeRadioStyleUrlParam,
   parseRadioPromptDraft,
+  parseRadioStyleDraft,
   recordRadioRating,
   removeRadioTracksFromLineup,
   replaceRadioTrackInLineup,
@@ -42,6 +45,8 @@ import {
   selectRadioTrack,
   getRadioTtsVoiceOptions,
   updateRadioTasteProfile,
+  updateRadioStyle,
+  type RadioStyleDraft,
   type RadioTasteProfileInput,
   type RadioTtsVoiceOption,
   type RadioPlaylistFormat,
@@ -91,8 +96,9 @@ export async function GET(request: NextRequest) {
       });
     }
     startRadioQueueMaintenance(state);
-    const promptModels = await listOllamaPromptModels();
-    return NextResponse.json({ ok: true, state: await buildRadioResponseState(state, request), promptModels });
+    const includePromptModels = request.nextUrl.searchParams.get("promptModels") !== "0";
+    const promptModels = includePromptModels ? await listOllamaPromptModels() : undefined;
+    return NextResponse.json({ ok: true, state: await buildRadioResponseState(state, request), ...(promptModels ? { promptModels } : {}) });
   } catch (error) {
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Unknown radio error" }, { status: 500 });
   }
@@ -114,6 +120,33 @@ export async function POST(request: NextRequest) {
       await writeRadioState(result.state);
       startRadioQueueMaintenance(result.state);
       return NextResponse.json({ ok: true, style: result.style, state: await buildRadioResponseState(result.state, request) });
+    }
+
+    if (action === "draftStyle") {
+      const styleDraft = await draftRadioStyleWithCodex(body.request);
+      if (!styleDraft) return NextResponse.json({ ok: false, error: "Could not draft a music style from that request" }, { status: 500 });
+      return NextResponse.json({ ok: true, styleDraft });
+    }
+
+    if (action === "updateStyle") {
+      const result = updateRadioStyle(state, {
+        styleId: body.styleId,
+        label: body.label,
+        seedPrompt: body.seedPrompt,
+        negativePrompt: body.negativePrompt,
+      });
+      if (!result) return NextResponse.json({ ok: false, error: "Custom style was not found or the style fields are invalid" }, { status: 400 });
+      await writeRadioState(result.state);
+      startRadioQueueMaintenance(result.state);
+      return NextResponse.json({ ok: true, style: result.style, state: await buildRadioResponseState(result.state, request) });
+    }
+
+    if (action === "deleteStyle") {
+      const result = deleteRadioStyle(state, body.styleId);
+      if (!result) return NextResponse.json({ ok: false, error: "Custom style was not found" }, { status: 404 });
+      await writeRadioState(result.state);
+      startRadioQueueMaintenance(result.state);
+      return NextResponse.json({ ok: true, deletedStyle: result.deletedStyle, state: await buildRadioResponseState(result.state, request) });
     }
 
     if (action === "configure") {
@@ -731,7 +764,26 @@ async function runCodexTasteDistillation(state: RadioState, styleId: ReturnType<
   }
 }
 
-async function runCodexCli(prompt: string, outputPath: string, model: string) {
+async function draftRadioStyleWithCodex(requestInput: unknown): Promise<RadioStyleDraft | undefined> {
+  const request = typeof requestInput === "string" ? requestInput.trim() : "";
+  if (request.length < 3) return undefined;
+  const model = normalizeCodexTasteModel(process.env.RADIO_CODEX_STYLE_MODEL ?? process.env.RADIO_CODEX_TASTE_MODEL);
+  const stateDir = path.dirname(statePath());
+  await mkdir(stateDir, { recursive: true });
+  const outputPath = path.join(stateDir, `codex-style-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`);
+  const prompt = buildRadioStyleGenerationPrompt(request);
+  try {
+    await runCodexCli(prompt, outputPath, model, "Codex style generation");
+    const draft = parseRadioStyleDraft(await readFile(outputPath, "utf8"), request);
+    return draft ? { ...draft, model } : undefined;
+  } finally {
+    await unlink(outputPath).catch((error: unknown) => {
+      if (!isNotFoundError(error)) throw error;
+    });
+  }
+}
+
+async function runCodexCli(prompt: string, outputPath: string, model: string, taskLabel = "Codex taste distillation") {
   const codexBin = process.env.RADIO_CODEX_BIN || "codex";
   const timeoutMs = Number(process.env.RADIO_CODEX_TASTE_TIMEOUT_MS || 120000);
   const args = [
@@ -768,11 +820,11 @@ async function runCodexCli(prompt: string, outputPath: string, model: string) {
     child.on("close", (code) => {
       clearTimeout(timeout);
       if (timedOut) {
-        reject(new Error("Codex taste distillation timed out"));
+        reject(new Error(`${taskLabel} timed out`));
         return;
       }
       if (code === 0) resolve();
-      else reject(new Error(`Codex taste distillation failed: ${Buffer.concat(stderr).toString("utf8").trim()}`));
+      else reject(new Error(`${taskLabel} failed: ${Buffer.concat(stderr).toString("utf8").trim()}`));
     });
     child.stdin.end(prompt);
   });

@@ -3,14 +3,14 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
-import { ForwardIcon, HandThumbDownIcon, HandThumbUpIcon, TrashIcon } from "@heroicons/react/24/solid";
-import { buildRadioStats, defaultRadioTtsVoice, getRadioTtsVoiceOptions, normalizeRadioSongLengthMinutes, normalizeRadioUnlikedTrackExpirationHours, radioOllamaModels, radioSongLengthMinuteOptions, radioStyles, radioUnlikedTrackExpirationHourOptions, type RadioPlaylistUrls, type RadioPromptDraft, type RadioStats, type RadioStreamState, type RadioStyle, type RadioStyleId, type RadioTrackRecord, type RadioTtsProvider, type RadioTtsVoiceOption } from "@/lib/radio";
+import { ForwardIcon, HandThumbDownIcon, HandThumbUpIcon, PencilSquareIcon, SparklesIcon, TrashIcon, XMarkIcon } from "@heroicons/react/24/solid";
+import { buildRadioStats, defaultRadioTtsVoice, getRadioTtsVoiceOptions, normalizeRadioSongLengthMinutes, normalizeRadioUnlikedTrackExpirationHours, radioOllamaModels, radioSongLengthMinuteOptions, radioStyles, radioUnlikedTrackExpirationHourOptions, type RadioPlaylistUrls, type RadioPromptDraft, type RadioStats, type RadioStreamState, type RadioStyle, type RadioStyleDraft, type RadioStyleId, type RadioTrackRecord, type RadioTtsProvider, type RadioTtsVoiceOption } from "@/lib/radio";
 
-type RadioApiResponse = { ok: boolean; state?: RadioStreamState; draft?: RadioPromptDraft; style?: RadioStyle; fallbackTrack?: RadioTrackRecord; rejectedTrack?: RadioTrackRecord; skippedTrack?: RadioTrackRecord; deletedTrack?: RadioTrackRecord; cleanedTracks?: RadioTrackRecord[]; promptModels?: string[]; voices?: RadioTtsVoiceOption[]; error?: string };
+type RadioApiResponse = { ok: boolean; state?: RadioStreamState; draft?: RadioPromptDraft; style?: RadioStyle; styleDraft?: RadioStyleDraft; deletedStyle?: RadioStyle; fallbackTrack?: RadioTrackRecord; rejectedTrack?: RadioTrackRecord; skippedTrack?: RadioTrackRecord; deletedTrack?: RadioTrackRecord; cleanedTracks?: RadioTrackRecord[]; promptModels?: string[]; voices?: RadioTtsVoiceOption[]; error?: string };
 type RadioTestVoiceResponse = { ok: boolean; audioUrl?: string; error?: string };
 type GenerateResponse = { ok: boolean; filename?: string; title?: string; audioUrl?: string; meta?: unknown; error?: string };
 const RADIO_STATE_RETRY_MS = 1500;
-const RADIO_STATE_POLL_MS = 5000;
+const RADIO_STATE_POLL_MS = 30000;
 type RadioPlaybackPhase = "announcement" | "song";
 
 export default function RadioStationClient({ initialState = null, initialPromptModels = [] }: { initialState?: RadioStreamState | null; initialPromptModels?: string[] }) {
@@ -25,6 +25,8 @@ export default function RadioStationClient({ initialState = null, initialPromptM
   const [ttsVoice, setTtsVoice] = useState(initialState?.ttsVoice ?? "nova");
   const [announcementPrefix, setAnnouncementPrefix] = useState(initialState?.announcementPrefix ?? "Now playing: ");
   const [announcementSuffix, setAnnouncementSuffix] = useState(initialState?.announcementSuffix ?? "");
+  const [styleRequest, setStyleRequest] = useState("");
+  const [editingStyleId, setEditingStyleId] = useState<RadioStyleId | null>(null);
   const [styleLabel, setStyleLabel] = useState("");
   const [styleSeedPrompt, setStyleSeedPrompt] = useState("");
   const [styleNegativePrompt, setStyleNegativePrompt] = useState("");
@@ -34,7 +36,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
   const [testVoiceAudioUrl, setTestVoiceAudioUrl] = useState("");
   const [remoteTtsVoiceOptions, setRemoteTtsVoiceOptions] = useState<{ provider: RadioTtsProvider; voices: RadioTtsVoiceOption[] } | null>(null);
   const [browserStreamUrl, setBrowserStreamUrl] = useState(initialState?.streamUrl ?? initialState?.lanStreamUrl ?? "");
-  const [busy, setBusy] = useState<"draft" | "generate" | "rating" | "config" | "maintenance" | "select" | "delete" | "voice" | "style" | null>(null);
+  const [busy, setBusy] = useState<"draft" | "generate" | "rating" | "config" | "maintenance" | "select" | "delete" | "voice" | "style" | "styleDraft" | null>(null);
   const [optimisticLike, setOptimisticLike] = useState<{ trackKey: string; liked: boolean } | null>(null);
   const [selectedQueueTrackIds, setSelectedQueueTrackIds] = useState<Set<string>>(() => new Set());
   const [streamReloadKey, setStreamReloadKey] = useState(0);
@@ -47,6 +49,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
   const resumeAfterStreamReloadRef = useRef(false);
 
   const availableStyles = useMemo(() => radioState?.styles?.length ? radioState.styles : radioStyles, [radioState?.styles]);
+  const customStyleIds = useMemo(() => new Set((radioState?.customStyles ?? []).map((style) => style.id)), [radioState?.customStyles]);
   const selectedStyle = useMemo(() => availableStyles.find((style) => style.id === selectedStyleId) ?? availableStyles[0] ?? radioStyles[0], [availableStyles, selectedStyleId]);
   const promptModelOptions = useMemo(() => mergePromptModelOptions(promptModels, promptModel), [promptModels, promptModel]);
   const ttsVoiceOptions = useMemo(() => {
@@ -88,8 +91,9 @@ export default function RadioStationClient({ initialState = null, initialPromptM
 
   useEffect(() => {
     setBrowserStreamUrl(`${window.location.origin}/api/radio?stream=1`);
-    void loadState();
-    const poll = setInterval(() => void loadState(), RADIO_STATE_POLL_MS);
+    const includePromptModels = promptModels.length === 0;
+    void loadState({ includePromptModels });
+    const poll = setInterval(() => void loadState({ includePromptModels: false }), RADIO_STATE_POLL_MS);
     return () => {
       if (loadRetryTimerRef.current) clearTimeout(loadRetryTimerRef.current);
       clearInterval(poll);
@@ -133,9 +137,10 @@ export default function RadioStationClient({ initialState = null, initialPromptM
     };
   }, [ttsProvider]);
 
-  async function loadState() {
+  async function loadState(options: { includePromptModels?: boolean } = {}) {
     try {
-      const response = await fetch("/api/radio", { cache: "no-store" });
+      const stateUrl = options.includePromptModels === false ? "/api/radio?promptModels=0" : "/api/radio";
+      const response = await fetch(stateUrl, { cache: "no-store" });
       const json = await response.json() as RadioApiResponse;
       if (!json.ok || !json.state) throw new Error(json.error ?? "Radio state unavailable");
       if (loadRetryTimerRef.current) {
@@ -159,7 +164,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
       if (!loadRetryTimerRef.current) {
         loadRetryTimerRef.current = setTimeout(() => {
           loadRetryTimerRef.current = null;
-          void loadState();
+          void loadState(options);
         }, RADIO_STATE_RETRY_MS);
       }
     }
@@ -175,6 +180,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
     if (!json.ok) throw new Error(json.error ?? "Radio request failed");
     if (json.state) {
       setRadioState(json.state);
+      setSelectedStyleId(json.state.selectedStyleId);
       setSongLengthMinutes(normalizeRadioSongLengthMinutes(json.state.songLengthMinutes));
       setUnlikedTrackExpirationHours(normalizeRadioUnlikedTrackExpirationHours(json.state.unlikedTrackExpirationHours));
     }
@@ -432,25 +438,75 @@ export default function RadioStationClient({ initialState = null, initialPromptM
     void saveConfiguration({ nextStyleId: styleId });
   }
 
-  async function createCustomStyle() {
+  async function draftCustomStyleWithCodex() {
+    setBusy("styleDraft");
+    setStatus("Asking Codex CLI for style prompts...");
+    try {
+      const json = await postRadio({ action: "draftStyle", request: styleRequest });
+      if (!json.styleDraft) throw new Error("Codex did not return a style draft.");
+      setStyleLabel(json.styleDraft.label);
+      setStyleSeedPrompt(json.styleDraft.seedPrompt);
+      setStyleNegativePrompt(json.styleDraft.negativePrompt);
+      setEditingStyleId(null);
+      setStatus(`Drafted ${json.styleDraft.label}${json.styleDraft.model ? ` with ${json.styleDraft.model}` : ""}.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not draft music style prompts.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function saveCustomStyle() {
     setBusy("style");
-    setStatus("Creating music style...");
+    setStatus(editingStyleId ? "Saving music style..." : "Creating music style...");
     try {
       const json = await postRadio({
-        action: "createStyle",
+        action: editingStyleId ? "updateStyle" : "createStyle",
+        ...(editingStyleId ? { styleId: editingStyleId } : {}),
         label: styleLabel,
         seedPrompt: styleSeedPrompt,
         negativePrompt: styleNegativePrompt,
       });
       if (json.style) {
         setSelectedStyleId(json.style.id);
+        setEditingStyleId(null);
         setStyleLabel("");
         setStyleSeedPrompt("");
         setStyleNegativePrompt("");
-        setStatus(`Created ${json.style.label}.`);
+        setStatus(editingStyleId ? `Saved ${json.style.label}.` : `Created ${json.style.label}.`);
       }
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Could not create music style.");
+      setStatus(error instanceof Error ? error.message : "Could not save music style.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function editCustomStyle(style: RadioStyle) {
+    setEditingStyleId(style.id);
+    setStyleLabel(style.label);
+    setStyleSeedPrompt(style.seedPrompt);
+    setStyleNegativePrompt(style.negativePrompt);
+    setStatus(`Editing ${style.label}.`);
+  }
+
+  function cancelStyleEdit() {
+    setEditingStyleId(null);
+    setStyleLabel("");
+    setStyleSeedPrompt("");
+    setStyleNegativePrompt("");
+  }
+
+  async function deleteCustomStyle(style: RadioStyle) {
+    if (!window.confirm(`Delete ${style.label}? Existing generated songs are kept, but this style will be removed from the station menu.`)) return;
+    setBusy("style");
+    setStatus(`Deleting ${style.label}...`);
+    try {
+      await postRadio({ action: "deleteStyle", styleId: style.id });
+      if (editingStyleId === style.id) cancelStyleEdit();
+      setStatus(`Deleted ${style.label}.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not delete music style.");
     } finally {
       setBusy(null);
     }
@@ -553,7 +609,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
     }
     setTrackElapsedSeconds(trackDurationSeconds);
     setStatus("Waiting for more station audio from the continuous stream...");
-    void loadState();
+    void loadState({ includePromptModels: false });
   }
 
   function handleAudioError() {
@@ -683,20 +739,35 @@ export default function RadioStationClient({ initialState = null, initialPromptM
             <div>
               <h2 className="text-lg font-semibold">Music style</h2>
               <div className="mt-3 grid gap-2">
-                {availableStyles.map((style) => (
-                  <button
-                    key={style.id}
-                    type="button"
-                    onClick={() => changeStyle(style.id)}
-                    className={clsx(
-                      "rounded-2xl border p-3 text-left transition hover:bg-white/[0.08]",
-                      selectedStyleId === style.id ? "border-emerald-200/45 bg-emerald-200/15" : "border-white/10 bg-white/[0.04]",
-                    )}
-                  >
-                    <div className="font-semibold text-white/88">{style.label}</div>
-                    <div className="mt-1 line-clamp-2 text-xs leading-5 text-white/45">{style.seedPrompt}</div>
-                  </button>
-                ))}
+                {availableStyles.map((style) => {
+                  const isCustomStyle = customStyleIds.has(style.id);
+                  return (
+                    <div
+                      key={style.id}
+                      className={clsx(
+                        "rounded-2xl border p-3 transition",
+                        selectedStyleId === style.id ? "border-emerald-200/45 bg-emerald-200/15" : "border-white/10 bg-white/[0.04]",
+                      )}
+                    >
+                      <button type="button" onClick={() => changeStyle(style.id)} className="block w-full text-left">
+                        <div className="font-semibold text-white/88">{style.label}</div>
+                        <div className="mt-1 line-clamp-2 text-xs leading-5 text-white/45">{style.seedPrompt}</div>
+                      </button>
+                      {isCustomStyle ? (
+                        <div className="mt-3 flex gap-2">
+                          <button type="button" onClick={() => editCustomStyle(style)} disabled={!!busy} aria-label={`Edit ${style.label}`} className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.06] px-3 py-2 text-xs font-bold text-white/72 hover:bg-white/[0.1] disabled:opacity-45">
+                            <PencilSquareIcon className="h-4 w-4" aria-hidden="true" />
+                            <span>Edit</span>
+                          </button>
+                          <button type="button" onClick={() => void deleteCustomStyle(style)} disabled={!!busy} aria-label={`Delete ${style.label}`} className="inline-flex items-center gap-2 rounded-full border border-rose-200/20 bg-rose-400/10 px-3 py-2 text-xs font-bold text-rose-100/80 hover:bg-rose-400/18 disabled:opacity-45">
+                            <TrashIcon className="h-4 w-4" aria-hidden="true" />
+                            <span>Delete</span>
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
@@ -704,10 +775,25 @@ export default function RadioStationClient({ initialState = null, initialPromptM
               className="space-y-3 rounded-2xl border border-emerald-200/15 bg-emerald-200/[0.05] p-3"
               onSubmit={(event) => {
                 event.preventDefault();
-                void createCustomStyle();
+                void saveCustomStyle();
               }}
             >
-              <h3 className="text-sm font-semibold text-white/78">New music style</h3>
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-sm font-semibold text-white/78">{editingStyleId ? "Edit music style" : "New music style"}</h3>
+                {editingStyleId ? (
+                  <button type="button" onClick={cancelStyleEdit} aria-label="Cancel style edit" className="rounded-full border border-white/15 bg-white/[0.06] p-2 text-white/70 hover:bg-white/[0.1]">
+                    <XMarkIcon className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                ) : null}
+              </div>
+              <label className="block text-xs font-semibold text-white/55">
+                Describe style
+                <textarea value={styleRequest} onChange={(event) => setStyleRequest(event.target.value)} rows={2} className="mt-2 w-full resize-y rounded-xl border border-white/10 bg-black/45 p-3 text-sm leading-5 text-white outline-none" />
+              </label>
+              <button type="button" onClick={() => void draftCustomStyleWithCodex()} disabled={!!busy || styleRequest.trim().length < 3} className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-cyan-200/30 bg-cyan-300/12 px-4 py-3 text-sm font-bold text-cyan-50 transition hover:bg-cyan-300/20 disabled:opacity-45">
+                <SparklesIcon className="h-4 w-4" aria-hidden="true" />
+                <span>{busy === "styleDraft" ? "Generating style prompts..." : "Generate style prompts with Codex"}</span>
+              </button>
               <label className="block text-xs font-semibold text-white/55">
                 Style name
                 <input value={styleLabel} onChange={(event) => setStyleLabel(event.target.value)} className="mt-2 w-full rounded-xl border border-white/10 bg-black/45 p-3 text-sm font-semibold text-white outline-none" />
@@ -721,7 +807,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
                 <textarea value={styleNegativePrompt} onChange={(event) => setStyleNegativePrompt(event.target.value)} rows={2} className="mt-2 w-full resize-y rounded-xl border border-white/10 bg-black/45 p-3 text-sm leading-5 text-white outline-none" />
               </label>
               <button type="submit" disabled={!!busy || !styleLabel.trim() || !styleSeedPrompt.trim()} className="w-full rounded-xl border border-emerald-200/35 bg-emerald-200/15 px-4 py-3 text-sm font-bold text-emerald-50 transition hover:bg-emerald-200/22 disabled:opacity-45">
-                {busy === "style" ? "Creating..." : "Create music style"}
+                {busy === "style" ? (editingStyleId ? "Saving..." : "Creating...") : editingStyleId ? "Save music style" : "Create music style"}
               </button>
             </form>
 

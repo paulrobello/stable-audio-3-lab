@@ -85,6 +85,23 @@ describe("radio page loading", () => {
     expect(screen.getByRole("option", { name: "Kokoro" })).toBeTruthy();
   });
 
+  it("uses lightweight radio state refreshes after server-provided prompt models are loaded", async () => {
+    const stateWithTrack = {
+      ...radioState,
+      currentTrack,
+      history: [currentTrack],
+      streamReady: true,
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: async () => ({ ok: true, state: stateWithTrack }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<RadioStationClient initialState={stateWithTrack} initialPromptModels={["qwen3:14b"]} />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/radio?promptModels=0", { cache: "no-store" }));
+  });
+
   it("creates custom music styles from the radio UI", async () => {
     const customState: RadioStreamState = {
       ...radioState,
@@ -131,6 +148,92 @@ describe("radio page loading", () => {
     }));
     await waitFor(() => expect(screen.getByRole("option", { name: "Dungeon Synth" })).toBeTruthy());
     expect(screen.getByText("moody dungeon synth instrumental, tape hiss, simple medieval melody, no vocals")).toBeTruthy();
+  });
+
+  it("generates style prompts with Codex and edits and deletes custom styles", async () => {
+    const dungeonStyle = {
+      id: "dungeon-synth",
+      label: "Dungeon Synth",
+      seedPrompt: "moody dungeon synth instrumental, tape hiss, simple medieval melody, no vocals",
+      negativePrompt: "modern EDM drops, bright pop drums",
+    };
+    const customState: RadioStreamState = {
+      ...radioState,
+      selectedStyleId: dungeonStyle.id,
+      customStyles: [dungeonStyle],
+      styles: [...radioState.styles, dungeonStyle],
+    };
+    const updatedStyle = {
+      ...dungeonStyle,
+      label: "Dungeon Synth Tape",
+      seedPrompt: "warbly cassette dungeon synth with bells and long minor-key pads",
+      negativePrompt: "club drums, vocals",
+    };
+    const updatedState = {
+      ...customState,
+      customStyles: [updatedStyle],
+      styles: [radioState.styles[0], updatedStyle],
+    };
+    const deletedState = {
+      ...radioState,
+      selectedStyleId: "synthwave",
+      customStyles: [],
+      styles: radioState.styles,
+    };
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as { action?: string } : {};
+      if (body.action === "draftStyle") {
+        return {
+          json: async () => ({
+            ok: true,
+            styleDraft: {
+              label: "Dark Orchestral Breaks",
+              seedPrompt: "brooding cinematic trip-hop with piano ostinatos and stormy strings",
+              negativePrompt: "direct artist imitation, vocals",
+              model: "gpt-5.5",
+            },
+          }),
+        };
+      }
+      if (body.action === "updateStyle") {
+        return { json: async () => ({ ok: true, style: updatedStyle, state: updatedState }) };
+      }
+      if (body.action === "deleteStyle") {
+        return { json: async () => ({ ok: true, deletedStyle: updatedStyle, state: deletedState }) };
+      }
+      return { json: async () => ({ ok: true, state: customState, promptModels: ["qwen3:14b"], cleanedTracks: [] }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(<RadioStationClient initialState={customState} initialPromptModels={["qwen3:14b"]} />);
+
+    fireEvent.change(screen.getByLabelText("Describe style"), { target: { value: "Rob D style like Furious Angels" } });
+    fireEvent.click(screen.getByRole("button", { name: "Generate style prompts with Codex" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/radio", expect.objectContaining({
+      body: expect.stringContaining('"action":"draftStyle"'),
+    })));
+    await waitFor(() => expect((screen.getByLabelText("Style name") as HTMLInputElement).value).toBe("Dark Orchestral Breaks"));
+    expect((screen.getByLabelText("Style prompt") as HTMLTextAreaElement).value).toContain("brooding cinematic trip-hop");
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit Dungeon Synth" }));
+    fireEvent.change(screen.getByLabelText("Style name"), { target: { value: "Dungeon Synth Tape" } });
+    fireEvent.change(screen.getByLabelText("Style prompt"), { target: { value: "warbly cassette dungeon synth with bells and long minor-key pads" } });
+    fireEvent.change(screen.getByLabelText("Style negative prompt"), { target: { value: "club drums, vocals" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save music style" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/radio", expect.objectContaining({
+      body: expect.stringContaining('"action":"updateStyle"'),
+    })));
+    await waitFor(() => expect(screen.getByRole("option", { name: "Dungeon Synth Tape" })).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete Dungeon Synth Tape" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/radio", expect.objectContaining({
+      body: expect.stringContaining('"action":"deleteStyle"'),
+    })));
+    await waitFor(() => expect(screen.queryByRole("option", { name: "Dungeon Synth Tape" })).toBeNull());
   });
 
   it("plays a generated test voice sample from the selected TTS settings", async () => {
@@ -354,7 +457,7 @@ describe("radio page loading", () => {
     });
     expect(fetchMock.mock.calls.filter(([_url, init]) => !init?.method).length).toBe(1);
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(5000);
+      await vi.advanceTimersByTimeAsync(30000);
     });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);

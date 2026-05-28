@@ -5,6 +5,7 @@ import {
   buildRadioPlaylistContent,
   buildRadioPlaylistUrls,
   buildRadioPublicStreamUrl,
+  buildRadioStyleGenerationPrompt,
   buildRadioPromptGeneratorMessages,
   buildRadioPromptSeed,
   buildRadioTasteDistillationPrompt,
@@ -14,6 +15,7 @@ import {
   createFallbackRadioPromptDraft,
   createRadioStyle,
   createRadioTrackRecord,
+  deleteRadioStyle,
   defaultRadioState,
   findDuplicateRadioTitleTracks,
   findRadioTracksForCleanup,
@@ -37,6 +39,8 @@ import {
   selectRadioTrack,
   shouldGenerateRadioQueueTrack,
   updateRadioTasteProfile,
+  updateRadioStyle,
+  parseRadioStyleDraft,
 } from "./radio";
 
 describe("radio station styles", () => {
@@ -69,6 +73,52 @@ describe("radio station styles", () => {
     expect(result?.style.id).toBe("dungeon-synth");
     expect(buildRadioPromptSeed(result!.state, result!.style.id)).toContain("Style: Dungeon Synth");
     expect(buildRadioPromptSeed(result!.state, result!.style.id)).toContain("Base direction: moody dungeon synth instrumental");
+  });
+
+  it("updates and deletes custom music styles without mutating built-in presets", () => {
+    const created = createRadioStyle(defaultRadioState(), {
+      label: "Dungeon Synth",
+      seedPrompt: "moody dungeon synth instrumental, tape hiss, simple medieval melody, no vocals",
+      negativePrompt: "modern EDM drops, bright pop drums",
+    })!;
+
+    const updated = updateRadioStyle(created.state, {
+      styleId: created.style.id,
+      label: "Dungeon Synth Tape",
+      seedPrompt: "dungeon synth instrumental with warbly cassette pads and slow minor-key bells",
+      negativePrompt: "club drums, vocals",
+    });
+    const deleted = deleteRadioStyle(updated!.state, created.style.id);
+
+    expect(updateRadioStyle(created.state, {
+      styleId: "synthwave",
+      label: "Edited Synthwave",
+      seedPrompt: "changed built-in",
+      negativePrompt: "none",
+    })).toBeUndefined();
+    expect(updated?.style).toMatchObject({
+      id: "dungeon-synth",
+      label: "Dungeon Synth Tape",
+      seedPrompt: "dungeon synth instrumental with warbly cassette pads and slow minor-key bells",
+    });
+    expect(buildRadioPromptSeed(updated!.state, "dungeon-synth")).toContain("Dungeon Synth Tape");
+    expect(deleted?.deletedStyle.id).toBe("dungeon-synth");
+    expect(deleted?.state.customStyles).toEqual([]);
+    expect(deleted?.state.selectedStyleId).toBe("synthwave");
+  });
+
+  it("builds and parses a Codex CLI style draft without direct artist imitation", () => {
+    const prompt = buildRadioStyleGenerationPrompt("like Rob Dougan's Furious Angels but instrumental");
+    const draft = parseRadioStyleDraft(`prefix {"label":"Dark Orchestral Breaks","seedPrompt":"brooding cinematic trip-hop with piano ostinatos and stormy strings","negativePrompt":"vocals, direct artist imitation"} suffix`, "dark cinematic breaks");
+
+    expect(prompt).toContain("Return JSON only");
+    expect(prompt).toContain("Do not directly imitate");
+    expect(prompt).toContain("like Rob Dougan's Furious Angels");
+    expect(draft).toEqual({
+      label: "Dark Orchestral Breaks",
+      seedPrompt: "brooding cinematic trip-hop with piano ostinatos and stormy strings",
+      negativePrompt: "vocals, direct artist imitation",
+    });
   });
 
   it("builds a station prompt seed from selected style and feedback", () => {

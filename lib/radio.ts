@@ -11,6 +11,10 @@ export type RadioStyle = {
   negativePrompt: string;
 };
 
+export type RadioStyleDraft = Omit<RadioStyle, "id"> & {
+  model?: string;
+};
+
 export type RadioTtsConfig = {
   ttsProvider: RadioTtsProvider;
   ttsVoice: string;
@@ -354,6 +358,79 @@ export function createRadioStyle(
     updatedAt: nextTimestamp(state.updatedAt),
   }, style.id);
   return { state: nextState, style };
+}
+
+export function updateRadioStyle(
+  state: RadioState,
+  input: { styleId?: unknown; label?: unknown; seedPrompt?: unknown; negativePrompt?: unknown },
+): { state: RadioState; style: RadioStyle } | undefined {
+  const styleId = typeof input.styleId === "string" ? input.styleId.trim() : "";
+  const existing = state.customStyles.find((style) => style.id === styleId);
+  if (!existing) return undefined;
+  const label = typeof input.label === "string" ? cleanShortText(input.label, "", 80) : "";
+  const seedPrompt = typeof input.seedPrompt === "string" ? cleanShortText(input.seedPrompt, "", 1000) : "";
+  const negativePrompt = typeof input.negativePrompt === "string"
+    ? cleanShortText(input.negativePrompt, "vocals, clipping, harsh noise", 500)
+    : "vocals, clipping, harsh noise";
+  if (label.length < 2 || seedPrompt.length < 8) return undefined;
+  const style: RadioStyle = { id: existing.id, label, seedPrompt, negativePrompt };
+  const nextState = {
+    ...state,
+    customStyles: state.customStyles.map((item) => item.id === existing.id ? style : item),
+    updatedAt: nextTimestamp(state.updatedAt),
+  };
+  return { state: nextState, style };
+}
+
+export function deleteRadioStyle(state: RadioState, styleIdInput: unknown): { state: RadioState; deletedStyle: RadioStyle } | undefined {
+  const styleId = typeof styleIdInput === "string" ? styleIdInput.trim() : "";
+  const deletedStyle = state.customStyles.find((style) => style.id === styleId);
+  if (!deletedStyle) return undefined;
+  const customStyles = state.customStyles.filter((style) => style.id !== styleId);
+  const { [styleId]: _removedPreference, ...preferences } = state.preferences;
+  const { [styleId]: _removedPosition, ...currentTrackByStyle } = state.currentTrackByStyle;
+  const selectedStyleId = state.selectedStyleId === styleId ? "synthwave" : normalizeRadioStyleId(state.selectedStyleId, customStyles);
+  const stateWithoutDeletedStyle = alignRadioStateToSelectedStyle({
+    ...state,
+    selectedStyleId,
+    customStyles,
+    preferences,
+    currentTrack: state.currentTrack?.styleId === styleId ? undefined : state.currentTrack,
+    currentTrackByStyle,
+    updatedAt: nextTimestamp(state.updatedAt),
+  });
+  return { state: stateWithoutDeletedStyle, deletedStyle };
+}
+
+export function buildRadioStyleGenerationPrompt(requestInput: unknown): string {
+  const request = typeof requestInput === "string" ? cleanShortText(requestInput, "", 500) : "";
+  return [
+    "Create a custom Stable Audio 3 radio music style from the user's request.",
+    "Do not directly imitate a named artist, song, score, or soundtrack, or copy recognizable melodies, lyrics, hooks, or production fingerprints.",
+    "Translate references into broad, reusable musical traits such as instrumentation, tempo feel, arrangement arc, mood, mix character, and negative constraints.",
+    "Return JSON only with string fields: label, seedPrompt, negativePrompt.",
+    "Keep label under 40 characters. Keep seedPrompt under 700 characters. Keep negativePrompt under 300 characters.",
+    "",
+    `User request: ${request || "a distinctive instrumental radio style"}`,
+    "",
+    "Return JSON only.",
+  ].join("\n");
+}
+
+export function parseRadioStyleDraft(rawResponse: string, requestInput: unknown): RadioStyleDraft | undefined {
+  try {
+    const parsed = JSON.parse(extractJsonObject(rawResponse)) as Partial<Record<"label" | "seedPrompt" | "negativePrompt", unknown>>;
+    const request = typeof requestInput === "string" ? requestInput : "";
+    const label = typeof parsed.label === "string" ? cleanShortText(parsed.label, "Custom Style", 80) : cleanShortText(request, "Custom Style", 80);
+    const seedPrompt = typeof parsed.seedPrompt === "string" ? cleanShortText(parsed.seedPrompt, "", 1000) : "";
+    const negativePrompt = typeof parsed.negativePrompt === "string"
+      ? cleanShortText(parsed.negativePrompt, "direct artist imitation, recognizable melodies, vocals, clipping, harsh noise", 500)
+      : "direct artist imitation, recognizable melodies, vocals, clipping, harsh noise";
+    if (label.length < 2 || seedPrompt.length < 8) return undefined;
+    return { label, seedPrompt, negativePrompt };
+  } catch {
+    return undefined;
+  }
 }
 
 export function normalizeOllamaPromptModel(value: unknown): string {
