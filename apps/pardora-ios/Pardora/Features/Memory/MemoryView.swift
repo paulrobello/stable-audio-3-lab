@@ -16,12 +16,18 @@ struct MemoryView: View {
             Section("Likes") {
                 ForEach(feedback?.likes ?? [], id: \.self) { item in
                     Text(item)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            deleteFeedbackButton(phrase: item, rating: .up)
+                        }
                 }
             }
 
             Section("Dislikes") {
                 ForEach(feedback?.dislikes ?? [], id: \.self) { item in
                     Text(item)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            deleteFeedbackButton(phrase: item, rating: .down)
+                        }
                 }
             }
 
@@ -39,6 +45,21 @@ struct MemoryView: View {
             }
         }
         .navigationTitle("Memory")
+    }
+
+    private func deleteFeedbackButton(phrase: String, rating: RadioRating) -> some View {
+        Button(role: .destructive) {
+            guard let styleID = model.state?.selectedStyleId else {
+                return
+            }
+
+            Task {
+                await model.deleteMemoryFeedback(styleID: styleID, phrase: phrase, rating: rating)
+            }
+        } label: {
+            Label("Delete", systemImage: "trash")
+        }
+        .tint(PardoraTheme.destructive)
     }
 }
 

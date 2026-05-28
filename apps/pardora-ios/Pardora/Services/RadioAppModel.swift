@@ -220,6 +220,15 @@ final class RadioAppModel {
         await post(["action": .string("rating"), "rating": .string("down")])
     }
 
+    func deleteMemoryFeedback(styleID: RadioStyleID, phrase: String, rating: RadioRating) async {
+        await post([
+            "action": .string("deleteFeedback"),
+            "styleId": .string(styleID.rawValue),
+            "phrase": .string(phrase),
+            "rating": .string(rating.rawValue),
+        ])
+    }
+
     func skipCurrentTrack() async {
         await post(["action": .string("skipTrack")])
     }
@@ -253,8 +262,12 @@ final class RadioAppModel {
                 return nil
             }
             applyPromptModels(response.promptModels)
+            guard let styleDraft = response.styleDraft else {
+                statusMessage = "Codex did not return a style draft."
+                return nil
+            }
             statusMessage = nil
-            return response.styleDraft
+            return styleDraft
         } catch {
             statusMessage = error.localizedDescription
             return nil

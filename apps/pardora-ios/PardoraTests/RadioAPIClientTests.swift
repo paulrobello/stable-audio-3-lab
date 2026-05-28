@@ -65,6 +65,19 @@ final class RadioAPIClientTests: XCTestCase {
         XCTAssertTrue(response.ok)
     }
 
+    func testDraftStyleActionUsesLongRunningTimeout() async throws {
+        let transport = MockRadioTransport { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.timeoutInterval, 150)
+            return (Self.okEnvelope, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
+        let client = RadioAPIClient(baseURL: URL(string: "https://radio.pardev.net")!, transport: transport)
+
+        let response = try await client.postAction(["action": .string("draftStyle"), "request": .string("dark cassette synth")])
+
+        XCTAssertTrue(response.ok)
+    }
+
     private static let okEnvelope = """
     {
       "ok": true,

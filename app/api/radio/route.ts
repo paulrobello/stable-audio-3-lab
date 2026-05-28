@@ -51,6 +51,7 @@ import {
   type RadioTtsVoiceOption,
   type RadioPlaylistFormat,
   type RadioPromptProvider,
+  type RadioRating,
   type RadioState,
   type RadioTrackRecord,
 } from "@/lib/radio";
@@ -278,6 +279,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, rejectedTrack: rejectResult.rejectedTrack, state: await buildRadioResponseState(nextState, request) });
     }
 
+    if (action === "deleteFeedback") {
+      const rating = normalizeRadioRatingPayload(body.rating);
+      const phrase = typeof body.phrase === "string" ? body.phrase.trim().slice(0, 180) : "";
+      if (!rating || !phrase) return NextResponse.json({ ok: false, error: "Feedback rating and phrase are required" }, { status: 400 });
+      const styleId = normalizeRadioStyleId(body.styleId ?? state.selectedStyleId, state.customStyles, state.deletedStyleIds);
+      const nextState = removeRadioFeedback(state, styleId, phrase, rating);
+      await writeRadioState(nextState);
+      startRadioQueueMaintenance(nextState);
+      return NextResponse.json({ ok: true, state: await buildRadioResponseState(nextState, request) });
+    }
+
     if (action === "cleanup") {
       const expiredTracks = findRadioTracksForCleanup(state);
       const cleanupBaseState = removeRadioTracksFromLineup(state, expiredTracks);
@@ -344,6 +356,39 @@ async function getRadioAudioDiskBytes(state: RadioState) {
 
 function normalizePlaylistFormat(value: string | null): RadioPlaylistFormat | undefined {
   return value === "m3u" || value === "pls" ? value : undefined;
+}
+
+function normalizeRadioRatingPayload(value: unknown): RadioRating | undefined {
+  return value === "up" || value === "down" ? value : undefined;
+}
+
+function removeRadioFeedback(state: RadioState, styleId: string, phrase: string, rating: RadioRating): RadioState {
+  const previous = state.preferences[styleId] ?? { likes: [], dislikes: [] };
+  const nextPreference = {
+    ...previous,
+    likes: rating === "up" ? previous.likes.filter((item) => item !== phrase) : previous.likes,
+    dislikes: rating === "down" ? previous.dislikes.filter((item) => item !== phrase) : previous.dislikes,
+  };
+  const preferences = { ...state.preferences };
+  if (nextPreference.likes.length || nextPreference.dislikes.length || nextPreference.tasteProfile) {
+    preferences[styleId] = nextPreference;
+  } else {
+    delete preferences[styleId];
+  }
+
+  const clearMatchingRating = (track: RadioTrackRecord) => {
+    if (track.styleId !== styleId || track.prompt !== phrase || track.rating !== rating) return track;
+    const { rating: _rating, ratedAt: _ratedAt, ...rest } = track;
+    return rest;
+  };
+
+  return {
+    ...state,
+    preferences,
+    currentTrack: state.currentTrack ? clearMatchingRating(state.currentTrack) : state.currentTrack,
+    history: state.history.map(clearMatchingRating),
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 function resolvePublicRadioOrigin(request: NextRequest) {
@@ -811,18 +856,24 @@ async function runCodexCli(prompt: string, outputPath: string, model: string, ta
   return new Promise<void>((resolve, reject) => {
     const stderr: Buffer[] = [];
     let timedOut = false;
+    let forceKillTimeout: ReturnType<typeof setTimeout> | undefined;
     const timeout = setTimeout(() => {
       timedOut = true;
       child.kill("SIGTERM");
+      forceKillTimeout = setTimeout(() => {
+        child.kill("SIGKILL");
+      }, 1000);
     }, Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 120000);
 
     child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
     child.on("error", (error) => {
       clearTimeout(timeout);
+      if (forceKillTimeout) clearTimeout(forceKillTimeout);
       reject(error);
     });
     child.on("close", (code) => {
       clearTimeout(timeout);
+      if (forceKillTimeout) clearTimeout(forceKillTimeout);
       if (timedOut) {
         reject(new Error(`${taskLabel} timed out`));
         return;

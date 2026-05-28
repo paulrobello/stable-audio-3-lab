@@ -15,8 +15,10 @@ const originalParTtsConfigPath = process.env.PAR_TTS_CONFIG_PATH;
 const originalRadioTtsModulePath = process.env.RADIO_TTS_MODULE_PATH;
 const originalFfmpegPath = process.env.FFMPEG_PATH;
 const originalPathEnv = process.env.PATH;
+const originalRadioCodexBin = process.env.RADIO_CODEX_BIN;
 const originalRadioCodexTasteModel = process.env.RADIO_CODEX_TASTE_MODEL;
 const originalRadioCodexStyleModel = process.env.RADIO_CODEX_STYLE_MODEL;
+const originalRadioCodexTasteTimeoutMs = process.env.RADIO_CODEX_TASTE_TIMEOUT_MS;
 const originalRadioOllamaModelsTimeoutMs = process.env.RADIO_OLLAMA_MODELS_TIMEOUT_MS;
 const originalStableAudioPython = process.env.STABLE_AUDIO_PYTHON;
 const originalStableAudioMock = process.env.STABLE_AUDIO_MOCK;
@@ -49,10 +51,14 @@ describe("radio stream route", () => {
     else process.env.FFMPEG_PATH = originalFfmpegPath;
     if (originalPathEnv === undefined) delete process.env.PATH;
     else process.env.PATH = originalPathEnv;
+    if (originalRadioCodexBin === undefined) delete process.env.RADIO_CODEX_BIN;
+    else process.env.RADIO_CODEX_BIN = originalRadioCodexBin;
     if (originalRadioCodexTasteModel === undefined) delete process.env.RADIO_CODEX_TASTE_MODEL;
     else process.env.RADIO_CODEX_TASTE_MODEL = originalRadioCodexTasteModel;
     if (originalRadioCodexStyleModel === undefined) delete process.env.RADIO_CODEX_STYLE_MODEL;
     else process.env.RADIO_CODEX_STYLE_MODEL = originalRadioCodexStyleModel;
+    if (originalRadioCodexTasteTimeoutMs === undefined) delete process.env.RADIO_CODEX_TASTE_TIMEOUT_MS;
+    else process.env.RADIO_CODEX_TASTE_TIMEOUT_MS = originalRadioCodexTasteTimeoutMs;
     if (originalRadioOllamaModelsTimeoutMs === undefined) delete process.env.RADIO_OLLAMA_MODELS_TIMEOUT_MS;
     else process.env.RADIO_OLLAMA_MODELS_TIMEOUT_MS = originalRadioOllamaModelsTimeoutMs;
     if (originalStableAudioPython === undefined) delete process.env.STABLE_AUDIO_PYTHON;
@@ -258,6 +264,30 @@ printf '%s' '{"label":"Dark Orchestral Breaks","seedPrompt":"brooding cinematic 
     expect(deleteJson.deletedStyle?.id).toBe(createJson.style?.id);
     expect(deleteJson.state?.customStyles).toEqual([]);
     expect(deleteJson.state?.selectedStyleId).toBe("synthwave");
+  });
+
+  it("returns an error when Codex style generation ignores the timeout signal", async () => {
+    tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
+    process.chdir(tempCwd);
+    process.env.RADIO_CODEX_TASTE_TIMEOUT_MS = "20";
+    const codexPath = path.join(tempCwd, "codex-hangs.js");
+    await writeFile(codexPath, `#!/usr/bin/env node
+process.on("SIGTERM", () => {});
+process.stdin.resume();
+process.stdin.on("end", () => setInterval(() => {}, 1000));
+`);
+    await chmod(codexPath, 0o755);
+    process.env.RADIO_CODEX_BIN = codexPath;
+
+    const response = await POST(new NextRequest("http://localhost:3007/api/radio", {
+      method: "POST",
+      body: JSON.stringify({ action: "draftStyle", request: "dark fantasy cassette synth" }),
+    }));
+    const json = await response.json() as { ok: boolean; error?: string };
+
+    expect(response.status).toBe(500);
+    expect(json.ok).toBe(false);
+    expect(json.error).toBe("Codex style generation timed out");
   });
 
   it("updates and deletes built-in music styles through the style API", async () => {
@@ -627,6 +657,65 @@ printf '%s' '{"likedTraits":["wide neon pads"],"dislikedTraits":["thin supersaw 
       provider: "codex-cli",
     });
     expect(saved.preferences?.ambient).toEqual({ likes: ["granular cloud drift"], dislikes: [] });
+  });
+
+  it("deletes thumbs feedback from preferences and matching rated tracks", async () => {
+    tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
+    process.chdir(tempCwd);
+    const stateFile = path.join(tempCwd, ".stable-audio-radio", "state.json");
+    await mkdir(path.dirname(stateFile), { recursive: true });
+    const liked = {
+      ...createRadioTrackRecord({
+        filename: "liked.mp3",
+        title: "Liked",
+        prompt: "warm bass with wide neon pads",
+        styleId: "synthwave",
+        announce: false,
+      }),
+      rating: "up" as const,
+      ratedAt: "2026-05-27T16:00:00.000Z",
+    };
+    const disliked = {
+      ...createRadioTrackRecord({
+        filename: "disliked.mp3",
+        title: "Disliked",
+        prompt: "thin brittle drums",
+        styleId: "synthwave",
+        announce: false,
+      }),
+      rating: "down" as const,
+      ratedAt: "2026-05-27T16:00:00.000Z",
+    };
+    await writeFile(stateFile, JSON.stringify({
+      ...defaultRadioState(),
+      currentTrack: liked,
+      history: [liked, disliked],
+      preferences: {
+        synthwave: { likes: [liked.prompt], dislikes: [disliked.prompt] },
+      },
+    }, null, 2));
+
+    const response = await POST(new NextRequest("http://localhost:3007/api/radio", {
+      method: "POST",
+      body: JSON.stringify({ action: "deleteFeedback", styleId: "synthwave", phrase: liked.prompt, rating: "up" }),
+    }));
+    const json = await response.json() as {
+      ok: boolean;
+      state?: {
+        preferences?: { synthwave?: { likes?: string[]; dislikes?: string[] } };
+        currentTrack?: { rating?: string; ratedAt?: string };
+        history?: Array<{ filename?: string; rating?: string; ratedAt?: string }>;
+      };
+    };
+
+    expect(response.status).toBe(200);
+    expect(json.ok).toBe(true);
+    expect(json.state?.preferences?.synthwave?.likes).toEqual([]);
+    expect(json.state?.preferences?.synthwave?.dislikes).toEqual([disliked.prompt]);
+    expect(json.state?.currentTrack?.rating).toBeUndefined();
+    expect(json.state?.currentTrack?.ratedAt).toBeUndefined();
+    expect(json.state?.history?.find((track) => track.filename === liked.filename)?.rating).toBeUndefined();
+    expect(json.state?.history?.find((track) => track.filename === disliked.filename)?.rating).toBe("down");
   });
 
   it("switches an open stream to the selected current track after a skip", async () => {

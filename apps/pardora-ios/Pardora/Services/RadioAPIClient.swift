@@ -33,6 +33,8 @@ protocol RadioActionClient: Sendable {
 }
 
 struct RadioAPIClient: RadioActionClient {
+    private static let longRunningActionTimeoutInterval: TimeInterval = 150
+
     let baseURL: URL
     let transport: RadioTransport
     let timeoutInterval: TimeInterval
@@ -58,15 +60,20 @@ struct RadioAPIClient: RadioActionClient {
 
     func postAction(_ payload: RadioActionPayload) async throws -> RadioActionResponse {
         let body = try JSONSerialization.data(withJSONObject: payload.jsonObject)
-        return try await send(path: "/api/radio", method: "POST", body: body)
+        return try await send(path: "/api/radio", method: "POST", body: body, timeoutInterval: timeoutInterval(for: payload))
     }
 
-    private func send<T: Decodable>(path: String, method: String, body: Data?) async throws -> T {
+    private func send<T: Decodable>(
+        path: String,
+        method: String,
+        body: Data?,
+        timeoutInterval requestTimeoutInterval: TimeInterval? = nil
+    ) async throws -> T {
         let url = baseURL.appending(path: path)
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.cachePolicy = .reloadIgnoringLocalCacheData
-        request.timeoutInterval = timeoutInterval
+        request.timeoutInterval = requestTimeoutInterval ?? timeoutInterval
 
         if let body {
             request.httpBody = body
@@ -88,6 +95,14 @@ struct RadioAPIClient: RadioActionClient {
         }
 
         return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    private func timeoutInterval(for payload: RadioActionPayload) -> TimeInterval {
+        if payload["action"] == .string("draftStyle") {
+            return Self.longRunningActionTimeoutInterval
+        }
+
+        return timeoutInterval
     }
 
     private static func isHTMLResponse(data: Data, response: HTTPURLResponse) -> Bool {

@@ -14,6 +14,19 @@ final class RadioAppModelTests: XCTestCase {
         XCTAssertEqual(payload?["rating"], .string("up"))
     }
 
+    func testDeleteMemoryFeedbackPostsDeleteFeedbackAction() async {
+        let client = FakeRadioActionClient()
+        let model = RadioAppModel(serverOrigin: "https://radio.pardev.net", actionClient: client)
+
+        await model.deleteMemoryFeedback(styleID: .synthwave, phrase: "warm analog bass", rating: .up)
+
+        let payload = await client.lastPayload
+        XCTAssertEqual(payload?["action"], .string("deleteFeedback"))
+        XCTAssertEqual(payload?["styleId"], .string("synthwave"))
+        XCTAssertEqual(payload?["phrase"], .string("warm analog bass"))
+        XCTAssertEqual(payload?["rating"], .string("up"))
+    }
+
     func testSkipPostsSkipTrack() async {
         let client = FakeRadioActionClient()
         let model = RadioAppModel(serverOrigin: "https://radio.pardev.net", actionClient: client)
@@ -101,6 +114,16 @@ final class RadioAppModelTests: XCTestCase {
         XCTAssertEqual(payload?["action"], .string("draftStyle"))
         XCTAssertEqual(payload?["request"], .string("dark fantasy cassette synth"))
         XCTAssertEqual(result, draft)
+    }
+
+    func testDraftMusicStyleReportsMissingDraftResponse() async {
+        let client = FakeRadioActionClient(response: RadioActionResponse(ok: true))
+        let model = RadioAppModel(serverOrigin: "https://radio.pardev.net", actionClient: client)
+
+        let result = await model.draftMusicStyle(request: "dark fantasy cassette synth")
+
+        XCTAssertNil(result)
+        XCTAssertEqual(model.statusMessage, "Codex did not return a style draft.")
     }
 
     func testSaveMusicStyleCreatesStyleAndAppliesReturnedState() async {
