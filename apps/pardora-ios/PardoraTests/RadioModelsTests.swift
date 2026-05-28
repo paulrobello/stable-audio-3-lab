@@ -60,6 +60,47 @@ final class RadioModelsTests: XCTestCase {
         XCTAssertTrue(state.isTrackDisliked(state.currentTrack))
     }
 
+    func testThumbStatusReflectsLikedAndDislikedTracks() throws {
+        let baseState = try JSONDecoder().decode(RadioStreamState.self, from: Data(Self.fixture.utf8))
+        let likedTrack = try XCTUnwrap(baseState.currentTrack)
+        let dislikedTrack = RadioTrackRecord(
+            id: "track-down",
+            filename: "down.mp3",
+            title: "Down",
+            prompt: "harsh cymbals",
+            styleId: .synthwave,
+            announce: true,
+            createdAt: "2026-05-27T16:00:00.000Z",
+            rating: .down
+        )
+
+        XCTAssertEqual(baseState.thumbStatus(for: likedTrack), .up)
+        XCTAssertEqual(baseState.thumbStatus(for: dislikedTrack), .down)
+    }
+
+    func testFeedbackSummaryIncludesRatedTracksWhenPreferencesAreEmpty() throws {
+        var state = try JSONDecoder().decode(RadioStreamState.self, from: Data(Self.fixture.utf8))
+        state.selectedStyleId = "rob-d"
+        state.preferences = [:]
+        let likedTrack = RadioTrackRecord(
+            id: "track-rob-d",
+            filename: "rob_d_neon_arc.mp3",
+            title: "Rob D Neon Arc",
+            prompt: "rob d neon arc prompt",
+            styleId: "rob-d",
+            announce: true,
+            createdAt: "2026-05-27T16:00:00.000Z",
+            rating: .up
+        )
+        state.history = [likedTrack]
+
+        let feedback = state.feedbackSummary(for: "rob-d")
+
+        XCTAssertEqual(feedback.likes, ["rob d neon arc prompt"])
+        XCTAssertTrue(feedback.dislikes.isEmpty)
+        XCTAssertFalse(feedback.isEmpty)
+    }
+
     func testNextUpTrackUsesSelectedQueueAfterCurrentTrack() throws {
         var state = try JSONDecoder().decode(RadioStreamState.self, from: Data(Self.fixture.utf8))
         let current = try XCTUnwrap(state.currentTrack)
@@ -130,6 +171,14 @@ final class RadioModelsTests: XCTestCase {
         XCTAssertEqual(track.fileSizeText, "1.2 MB")
         XCTAssertTrue(track.createdDetailText(now: now).contains("2h old"))
         XCTAssertTrue(track.createdDetailText(now: now).contains("1.2 MB"))
+        XCTAssertTrue(track.queueCreatedDetailText.hasPrefix("Created "))
+        XCTAssertFalse(track.queueCreatedDetailText.contains(" • "))
+    }
+
+    func testFallbackTTSVoiceLabelsAreReadable() {
+        XCTAssertEqual(RadioTTSVoiceOption.fallbackLabel(for: "bm_daniel"), "Daniel")
+        XCTAssertEqual(RadioTTSVoiceOption.fallbackLabel(for: "aura-2-apollo-en"), "Apollo")
+        XCTAssertEqual(RadioTTSVoiceOption.options(for: .kokoroOnnx, currentVoice: "bm_daniel").first?.label, "Daniel")
     }
 
     private static let fixture = """

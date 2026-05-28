@@ -3,6 +3,7 @@ import SwiftUI
 enum AppTab: String, CaseIterable, Identifiable {
     case now
     case queue
+    case styles
     case memory
     case settings
 
@@ -12,6 +13,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         switch self {
         case .now: "Now"
         case .queue: "Queue"
+        case .styles: "Styles"
         case .memory: "Memory"
         case .settings: "Settings"
         }
@@ -21,6 +23,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         switch self {
         case .now: "play.circle.fill"
         case .queue: "music.note.list"
+        case .styles: "slider.horizontal.3"
         case .memory: "brain.head.profile"
         case .settings: "gearshape.fill"
         }
@@ -40,6 +43,8 @@ struct AppRootView: View {
                         NowPlayingView(model: model)
                     case .queue:
                         QueueView(model: model)
+                    case .styles:
+                        MusicStylesView(model: model)
                     case .memory:
                         MemoryView(model: model)
                     case .settings:

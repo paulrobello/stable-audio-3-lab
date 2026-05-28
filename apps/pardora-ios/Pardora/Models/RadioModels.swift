@@ -89,6 +89,19 @@ struct RadioStreamState: Codable, Equatable {
         preferences[style.rawValue]
     }
 
+    func feedbackSummary(for style: RadioStyleID) -> RadioFeedbackSummary {
+        let preference = preference(for: style)
+        let ratedTracks = history.filter { $0.styleId == style }
+        let ratedLikes = ratedTracks.filter { $0.rating == .up }.map(\.prompt)
+        let ratedDislikes = ratedTracks.filter { $0.rating == .down }.map(\.prompt)
+
+        return RadioFeedbackSummary(
+            likes: (preference?.likes ?? []).mergingUnique(ratedLikes),
+            dislikes: (preference?.dislikes ?? []).mergingUnique(ratedDislikes),
+            tasteProfile: preference?.tasteProfile
+        )
+    }
+
     func isTrackLiked(_ track: RadioTrackRecord?) -> Bool {
         guard let track else {
             return false
@@ -111,6 +124,18 @@ struct RadioStreamState: Codable, Equatable {
         }
 
         return preference(for: track.styleId)?.dislikes.contains(track.prompt) == true
+    }
+
+    func thumbStatus(for track: RadioTrackRecord?) -> RadioThumbStatus? {
+        if isTrackLiked(track) {
+            return .up
+        }
+
+        if isTrackDisliked(track) {
+            return .down
+        }
+
+        return nil
     }
 }
 
@@ -204,12 +229,26 @@ struct RadioTrackRecord: Codable, Equatable, Identifiable {
             .compactMap(\.self)
             .joined(separator: " • ")
     }
+
+    var queueCreatedDetailText: String {
+        "Created \(createdTimestampText)"
+    }
 }
 
 struct RadioPreference: Codable, Equatable {
     var likes: [String]
     var dislikes: [String]
     var tasteProfile: RadioTasteProfile?
+}
+
+struct RadioFeedbackSummary: Equatable {
+    var likes: [String]
+    var dislikes: [String]
+    var tasteProfile: RadioTasteProfile?
+
+    var isEmpty: Bool {
+        likes.isEmpty && dislikes.isEmpty && tasteProfile == nil
+    }
 }
 
 struct RadioTasteProfile: Codable, Equatable {
@@ -312,6 +351,33 @@ enum RadioRating: String, Codable {
     case down
 }
 
+enum RadioThumbStatus: Equatable {
+    case up
+    case down
+
+    var symbolName: String {
+        switch self {
+        case .up:
+            "hand.thumbsup.fill"
+        case .down:
+            "hand.thumbsdown.fill"
+        }
+    }
+
+    var accessibilityLabel: String {
+        switch self {
+        case .up:
+            "Thumbs up"
+        case .down:
+            "Thumbs down"
+        }
+    }
+
+    var isNegative: Bool {
+        self == .down
+    }
+}
+
 enum RadioTTSProvider: String, Codable, CaseIterable, Identifiable {
     case openai
     case elevenlabs
@@ -343,6 +409,33 @@ struct RadioTTSVoiceOption: Codable, Equatable, Identifiable {
     var id: String
     var label: String
     var description: String?
+
+    static func merged(_ options: [RadioTTSVoiceOption], currentVoice: String?) -> [RadioTTSVoiceOption] {
+        guard let currentVoice, !currentVoice.isEmpty, !options.contains(where: { $0.id == currentVoice }) else {
+            return options
+        }
+
+        return [RadioTTSVoiceOption(id: currentVoice, label: fallbackLabel(for: currentVoice), description: nil)] + options
+    }
+
+    static func fallbackLabel(for voiceID: String) -> String {
+        let trimmedVoiceID = voiceID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let knownPrefixes = ["aura-2-", "aura-", "af_", "am_", "bf_", "bm_"]
+        let name = knownPrefixes.reduce(trimmedVoiceID) { value, prefix in
+            value.hasPrefix(prefix) ? String(value.dropFirst(prefix.count)) : value
+        }
+        let words = name
+            .replacingOccurrences(of: "-en", with: "")
+            .split { $0 == "-" || $0 == "_" }
+
+        guard !words.isEmpty else {
+            return trimmedVoiceID
+        }
+
+        return words
+            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            .joined(separator: " ")
+    }
 
     static func options(for provider: RadioTTSProvider, currentVoice: String? = nil) -> [RadioTTSVoiceOption] {
         let options: [RadioTTSVoiceOption] = switch provider {
@@ -406,11 +499,7 @@ struct RadioTTSVoiceOption: Codable, Equatable, Identifiable {
             ]
         }
 
-        guard let currentVoice, !currentVoice.isEmpty, !options.contains(where: { $0.id == currentVoice }) else {
-            return options
-        }
-
-        return [RadioTTSVoiceOption(id: currentVoice, label: currentVoice, description: nil)] + options
+        return merged(options, currentVoice: currentVoice)
     }
 
     static func defaultVoice(for provider: RadioTTSProvider) -> String {
@@ -440,5 +529,12 @@ enum RadioPromptModelOptions {
 private extension Array where Element == String {
     func appending(_ value: String?) -> [String?] {
         map(Optional.some) + [value]
+    }
+
+    func mergingUnique(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        return (self + values)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
     }
 }

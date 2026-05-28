@@ -65,9 +65,6 @@ struct SettingsView: View {
                     }
                 }
                 .disabled(model.state == nil)
-                .onChange(of: model.state?.ttsProvider) {
-                    Task { await model.loadTTSVoiceOptions() }
-                }
 
                 Picker("TTS Voice", selection: ttsVoiceSelection) {
                     ForEach(model.ttsVoiceOptions) { voice in
@@ -93,6 +90,9 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
+        .task(id: ttsProviderTaskID) {
+            await model.loadTTSVoiceOptions()
+        }
     }
 
     private var promptModelSelection: Binding<String> {
@@ -100,6 +100,7 @@ struct SettingsView: View {
             get: { model.state?.promptModel ?? RadioPromptModelOptions.defaults[0] },
             set: { promptModel in
                 model.updatePromptModel(promptModel)
+                Task { await model.saveConfiguration() }
             }
         )
     }
@@ -113,6 +114,7 @@ struct SettingsView: View {
             get: { model.state?.announceEnabled == true },
             set: { enabled in
                 model.updateAnnouncementsEnabled(enabled)
+                Task { await model.saveConfiguration() }
             }
         )
     }
@@ -122,9 +124,16 @@ struct SettingsView: View {
             get: { model.state?.ttsProvider ?? .openai },
             set: { provider in
                 model.updateTTSProvider(provider)
-                Task { await model.loadTTSVoiceOptions() }
+                Task {
+                    await model.saveConfiguration()
+                    await model.loadTTSVoiceOptions()
+                }
             }
         )
+    }
+
+    private var ttsProviderTaskID: String {
+        model.state?.ttsProvider.rawValue ?? ""
     }
 
     private var ttsVoiceSelection: Binding<String> {
@@ -132,6 +141,7 @@ struct SettingsView: View {
             get: { model.state?.ttsVoice ?? RadioTTSVoiceOption.defaultVoice(for: model.state?.ttsProvider ?? .openai) },
             set: { voice in
                 model.updateTTSVoice(voice)
+                Task { await model.saveConfiguration() }
             }
         )
     }

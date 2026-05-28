@@ -25,6 +25,7 @@ final class RadioAppModel {
     private var networkMonitor: NWPathMonitor?
     private let networkQueue = DispatchQueue(label: "net.pardev.pardora.network-monitor")
     private var lastNetworkSignature: String?
+    private var remoteTTSVoiceOptions: (provider: RadioTTSProvider, voices: [RadioTTSVoiceOption])?
 
     init(
         serverOrigin: String = RadioEndpointResolver.defaultPublicOrigin,
@@ -66,6 +67,10 @@ final class RadioAppModel {
         }
 
         return publicStreamURL ?? localStreamURL
+    }
+
+    var availableMusicStyles: [RadioStyle] {
+        state?.availableStyles ?? RadioStyle.builtIns
     }
 
     var endpointSummary: String {
@@ -198,14 +203,7 @@ final class RadioAppModel {
         do {
             let response = try await (actionClient ?? client).postAction(payload)
             if response.ok {
-                if let state = response.state {
-                    applyStateOptions(state)
-                    self.state = state
-                    applyEndpointMode()
-                }
-                applyPromptModels(response.promptModels)
-                applyVoiceOptions(response.voices)
-                statusMessage = nil
+                applySuccessfulActionResponse(response)
             } else {
                 statusMessage = response.error ?? "Radio action failed."
             }
@@ -244,12 +242,92 @@ final class RadioAppModel {
         await post(["action": .string("configure"), "styleId": .string(style.rawValue)])
     }
 
+    func draftMusicStyle(request: String) async -> RadioStyleDraft? {
+        do {
+            let response = try await (actionClient ?? client).postAction([
+                "action": .string("draftStyle"),
+                "request": .string(request),
+            ])
+            guard response.ok else {
+                statusMessage = response.error ?? "Could not draft music style prompts."
+                return nil
+            }
+            applyPromptModels(response.promptModels)
+            statusMessage = nil
+            return response.styleDraft
+        } catch {
+            statusMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    func saveMusicStyle(
+        styleID: RadioStyleID?,
+        label: String,
+        seedPrompt: String,
+        negativePrompt: String
+    ) async -> RadioStyle? {
+        let trimmedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSeedPrompt = seedPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedNegativePrompt = negativePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedLabel.count >= 2, trimmedSeedPrompt.count >= 8 else {
+            statusMessage = "Enter a style name and prompt before saving."
+            return nil
+        }
+
+        var payload: RadioActionPayload = [
+            "action": .string(styleID == nil ? "createStyle" : "updateStyle"),
+            "label": .string(trimmedLabel),
+            "seedPrompt": .string(trimmedSeedPrompt),
+            "negativePrompt": .string(trimmedNegativePrompt),
+        ]
+        if let styleID {
+            payload["styleId"] = .string(styleID.rawValue)
+        }
+
+        do {
+            let response = try await (actionClient ?? client).postAction(payload)
+            guard response.ok else {
+                statusMessage = response.error ?? "Could not save music style."
+                return nil
+            }
+            applySuccessfulActionResponse(response)
+            return response.style
+        } catch {
+            statusMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    func deleteMusicStyle(_ style: RadioStyle) async -> Bool {
+        do {
+            let response = try await (actionClient ?? client).postAction([
+                "action": .string("deleteStyle"),
+                "styleId": .string(style.id.rawValue),
+            ])
+            guard response.ok else {
+                statusMessage = response.error ?? "Could not delete music style."
+                return false
+            }
+            applySuccessfulActionResponse(response)
+            return true
+        } catch {
+            statusMessage = error.localizedDescription
+            return false
+        }
+    }
+
     func updatePromptModel(_ promptModel: String) {
         state?.promptModel = promptModel
     }
 
     func updateAnnouncementsEnabled(_ enabled: Bool) {
         state?.announceEnabled = enabled
+    }
+
+    func changeAnnouncementsEnabled(_ enabled: Bool) async {
+        updateAnnouncementsEnabled(enabled)
+        await saveConfiguration()
     }
 
     func updateTTSProvider(_ provider: RadioTTSProvider) {
@@ -259,11 +337,23 @@ final class RadioAppModel {
 
         state?.ttsProvider = provider
         state?.ttsVoice = RadioTTSVoiceOption.defaultVoice(for: provider)
-        ttsVoiceOptions = RadioTTSVoiceOption.options(for: provider, currentVoice: state?.ttsVoice)
+        applyTTSVoiceOptions(for: provider, currentVoice: state?.ttsVoice)
     }
 
     func updateTTSVoice(_ voice: String) {
         state?.ttsVoice = voice
+        applyTTSVoiceOptions(for: state?.ttsProvider ?? .openai, currentVoice: voice)
+    }
+
+    func changeTTSProvider(_ provider: RadioTTSProvider) async {
+        updateTTSProvider(provider)
+        await saveConfiguration()
+        await loadTTSVoiceOptions()
+    }
+
+    func changeTTSVoice(_ voice: String) async {
+        updateTTSVoice(voice)
+        await saveConfiguration()
     }
 
     func loadTTSVoiceOptions() async {
@@ -271,11 +361,25 @@ final class RadioAppModel {
             return
         }
 
-        await post([
+        let provider = state.ttsProvider
+        let voice = state.ttsVoice
+        let payload: RadioActionPayload = [
             "action": .string("ttsVoices"),
-            "ttsProvider": .string(state.ttsProvider.rawValue),
-            "ttsVoice": .string(state.ttsVoice),
-        ])
+            "ttsProvider": .string(provider.rawValue),
+            "ttsVoice": .string(voice),
+        ]
+
+        do {
+            let response = try await (actionClient ?? client).postAction(payload)
+            if response.ok {
+                applyVoiceOptions(response.voices, provider: provider, currentVoice: voice)
+                statusMessage = nil
+            } else {
+                statusMessage = response.error ?? "Radio action failed."
+            }
+        } catch {
+            statusMessage = error.localizedDescription
+        }
     }
 
     func saveConfiguration() async {
@@ -354,8 +458,19 @@ final class RadioAppModel {
         statusMessage = nil
     }
 
+    private func applySuccessfulActionResponse(_ response: RadioActionResponse) {
+        if let state = response.state {
+            applyStateOptions(state)
+            self.state = state
+            applyEndpointMode()
+        }
+        applyPromptModels(response.promptModels)
+        applyVoiceOptions(response.voices)
+        statusMessage = nil
+    }
+
     private func applyStateOptions(_ state: RadioStreamState) {
-        ttsVoiceOptions = RadioTTSVoiceOption.options(for: state.ttsProvider, currentVoice: state.ttsVoice)
+        applyTTSVoiceOptions(for: state.ttsProvider, currentVoice: state.ttsVoice)
     }
 
     private func applyPromptModels(_ models: [String]?) {
@@ -363,11 +478,31 @@ final class RadioAppModel {
     }
 
     private func applyVoiceOptions(_ voices: [RadioTTSVoiceOption]?) {
+        applyVoiceOptions(voices, provider: state?.ttsProvider, currentVoice: state?.ttsVoice)
+    }
+
+    private func applyVoiceOptions(_ voices: [RadioTTSVoiceOption]?, provider: RadioTTSProvider?, currentVoice: String?) {
+        guard let provider else {
+            return
+        }
         guard let voices, !voices.isEmpty else {
             return
         }
 
-        ttsVoiceOptions = voices
+        let mergedVoices = RadioTTSVoiceOption.merged(voices, currentVoice: currentVoice)
+        remoteTTSVoiceOptions = (provider, mergedVoices)
+        if state?.ttsProvider == provider {
+            ttsVoiceOptions = mergedVoices
+        }
+    }
+
+    private func applyTTSVoiceOptions(for provider: RadioTTSProvider, currentVoice: String?) {
+        if let remoteTTSVoiceOptions, remoteTTSVoiceOptions.provider == provider {
+            ttsVoiceOptions = RadioTTSVoiceOption.merged(remoteTTSVoiceOptions.voices, currentVoice: currentVoice)
+            return
+        }
+
+        ttsVoiceOptions = RadioTTSVoiceOption.options(for: provider, currentVoice: currentVoice)
     }
 
     private func fetchFirstReachableState(origins: [String]) async -> (origin: String, state: RadioStreamState)? {

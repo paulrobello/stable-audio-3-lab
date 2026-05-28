@@ -118,11 +118,21 @@ struct RadioActionResponse: Decodable {
     var ok: Bool
     var state: RadioStreamState? = nil
     var error: String? = nil
+    var style: RadioStyle? = nil
+    var styleDraft: RadioStyleDraft? = nil
+    var deletedStyle: RadioStyle? = nil
     var deletedTrack: RadioTrackRecord? = nil
     var rejectedTrack: RadioTrackRecord? = nil
     var skippedTrack: RadioTrackRecord? = nil
     var promptModels: [String]? = nil
     var voices: [RadioTTSVoiceOption]? = nil
+}
+
+struct RadioStyleDraft: Codable, Equatable {
+    var label: String
+    var seedPrompt: String
+    var negativePrompt: String
+    var model: String?
 }
 
 enum RadioAPIError: Error, Equatable, LocalizedError {

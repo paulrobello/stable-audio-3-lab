@@ -85,6 +85,100 @@ final class RadioAppModelTests: XCTestCase {
         XCTAssertEqual(model.state?.selectedStyleId, .ambient)
     }
 
+    func testDraftMusicStylePostsRequestAndReturnsDraft() async {
+        let draft = RadioStyleDraft(
+            label: "Dungeon Synth",
+            seedPrompt: "moody dungeon synth instrumental, tape hiss",
+            negativePrompt: "modern EDM drops",
+            model: "codex"
+        )
+        let client = FakeRadioActionClient(response: RadioActionResponse(ok: true, styleDraft: draft))
+        let model = RadioAppModel(serverOrigin: "https://radio.pardev.net", actionClient: client)
+
+        let result = await model.draftMusicStyle(request: "dark fantasy cassette synth")
+
+        let payload = await client.lastPayload
+        XCTAssertEqual(payload?["action"], .string("draftStyle"))
+        XCTAssertEqual(payload?["request"], .string("dark fantasy cassette synth"))
+        XCTAssertEqual(result, draft)
+    }
+
+    func testSaveMusicStyleCreatesStyleAndAppliesReturnedState() async {
+        let style = RadioStyle(
+            id: "dungeon-synth",
+            label: "Dungeon Synth",
+            seedPrompt: "moody dungeon synth instrumental, tape hiss",
+            negativePrompt: "modern EDM drops"
+        )
+        var nextState = Self.stateWithLANURL
+        nextState.selectedStyleId = style.id
+        nextState.styles = [style]
+        let client = FakeRadioActionClient(response: RadioActionResponse(ok: true, state: nextState, style: style))
+        let model = RadioAppModel(serverOrigin: "https://radio.pardev.net", actionClient: client)
+
+        let result = await model.saveMusicStyle(
+            styleID: nil,
+            label: " Dungeon Synth ",
+            seedPrompt: " moody dungeon synth instrumental, tape hiss ",
+            negativePrompt: " modern EDM drops "
+        )
+
+        let payload = await client.lastPayload
+        XCTAssertEqual(payload?["action"], .string("createStyle"))
+        XCTAssertNil(payload?["styleId"])
+        XCTAssertEqual(payload?["label"], .string("Dungeon Synth"))
+        XCTAssertEqual(payload?["seedPrompt"], .string("moody dungeon synth instrumental, tape hiss"))
+        XCTAssertEqual(payload?["negativePrompt"], .string("modern EDM drops"))
+        XCTAssertEqual(result, style)
+        XCTAssertEqual(model.state?.selectedStyleId, "dungeon-synth")
+        XCTAssertEqual(model.availableMusicStyles, [style])
+    }
+
+    func testSaveMusicStyleUpdatesExistingStyle() async {
+        let style = RadioStyle(
+            id: .synthwave,
+            label: "Edited Synthwave",
+            seedPrompt: "brighter analog synthwave instrumental",
+            negativePrompt: "vocals"
+        )
+        let client = FakeRadioActionClient(response: RadioActionResponse(ok: true, style: style))
+        let model = RadioAppModel(serverOrigin: "https://radio.pardev.net", actionClient: client)
+
+        let result = await model.saveMusicStyle(
+            styleID: .synthwave,
+            label: "Edited Synthwave",
+            seedPrompt: "brighter analog synthwave instrumental",
+            negativePrompt: "vocals"
+        )
+
+        let payload = await client.lastPayload
+        XCTAssertEqual(payload?["action"], .string("updateStyle"))
+        XCTAssertEqual(payload?["styleId"], .string("synthwave"))
+        XCTAssertEqual(result, style)
+    }
+
+    func testDeleteMusicStylePostsDeleteAndAppliesReturnedState() async {
+        let style = RadioStyle(
+            id: "dungeon-synth",
+            label: "Dungeon Synth",
+            seedPrompt: "moody dungeon synth instrumental, tape hiss",
+            negativePrompt: "modern EDM drops"
+        )
+        var nextState = Self.stateWithLANURL
+        nextState.selectedStyleId = .synthwave
+        nextState.styles = RadioStyle.builtIns
+        let client = FakeRadioActionClient(response: RadioActionResponse(ok: true, state: nextState, deletedStyle: style))
+        let model = RadioAppModel(serverOrigin: "https://radio.pardev.net", actionClient: client)
+
+        let deleted = await model.deleteMusicStyle(style)
+
+        let payload = await client.lastPayload
+        XCTAssertTrue(deleted)
+        XCTAssertEqual(payload?["action"], .string("deleteStyle"))
+        XCTAssertEqual(payload?["styleId"], .string("dungeon-synth"))
+        XCTAssertEqual(model.state?.selectedStyleId, .synthwave)
+    }
+
     func testSaveConfigurationPostsEditedStationSettings() async {
         let client = FakeRadioActionClient()
         let model = RadioAppModel(serverOrigin: "https://radio.pardev.net", actionClient: client)
@@ -106,11 +200,25 @@ final class RadioAppModelTests: XCTestCase {
         XCTAssertEqual(payload?["ttsVoice"], .string("aura-2-apollo-en"))
     }
 
+    func testChangeAnnouncementsPersistsSelection() async {
+        let client = FakeRadioActionClient()
+        let model = RadioAppModel(serverOrigin: "https://radio.pardev.net", actionClient: client)
+        model.state = Self.stateWithLANURL
+
+        await model.changeAnnouncementsEnabled(false)
+
+        let payload = await client.lastPayload
+        XCTAssertEqual(payload?["action"], .string("configure"))
+        XCTAssertEqual(payload?["announceEnabled"], .bool(false))
+        XCTAssertEqual(model.state?.announceEnabled, false)
+    }
+
     func testLoadTTSVoiceOptionsPostsProviderAndAppliesReturnedVoices() async {
         var state = Self.stateWithLANURL
         state.ttsProvider = .elevenlabs
         state.ttsVoice = "Juniper"
         let voices = [
+            RadioTTSVoiceOption(id: "Juniper", label: "Juniper", description: nil),
             RadioTTSVoiceOption(id: "voice-alpha", label: "Alpha", description: "Account voice"),
             RadioTTSVoiceOption(id: "voice-beta", label: "Beta", description: nil),
         ]
@@ -125,6 +233,80 @@ final class RadioAppModelTests: XCTestCase {
         XCTAssertEqual(payload?["ttsProvider"], .string("elevenlabs"))
         XCTAssertEqual(payload?["ttsVoice"], .string("Juniper"))
         XCTAssertEqual(model.ttsVoiceOptions, voices)
+    }
+
+    func testRefreshPreservesLoadedTTSVoiceOptionsForCurrentProvider() async {
+        var state = Self.stateWithLANURL
+        state.ttsProvider = .elevenlabs
+        state.ttsVoice = "Juniper"
+        let voices = [
+            RadioTTSVoiceOption(id: "voice-alpha", label: "Alpha", description: "Account voice"),
+            RadioTTSVoiceOption(id: "voice-beta", label: "Beta", description: nil),
+        ]
+        let client = FakeRadioActionClient(response: RadioActionResponse(ok: true, voices: voices))
+        let model = RadioAppModel(
+            serverOrigin: "https://radio.pardev.net",
+            endpointMode: .custom,
+            transport: TTSRefreshRadioTransport(state: state),
+            actionClient: client
+        )
+        model.state = state
+
+        await model.loadTTSVoiceOptions()
+        await model.refresh()
+
+        XCTAssertEqual(model.ttsVoiceOptions, RadioTTSVoiceOption.merged(voices, currentVoice: "Juniper"))
+    }
+
+    func testChangeTTSProviderPersistsSelectionBeforeLoadingVoices() async {
+        let voices = [
+            RadioTTSVoiceOption(id: "aura-2-apollo-en", label: "Apollo", description: nil),
+        ]
+        let client = FakeRadioActionClient(response: RadioActionResponse(ok: true, voices: voices))
+        let model = RadioAppModel(serverOrigin: "https://radio.pardev.net", actionClient: client)
+        model.state = Self.stateWithLANURL
+
+        await model.changeTTSProvider(.deepgram)
+
+        let payloads = await client.payloads
+        XCTAssertEqual(payloads.count, 2)
+        XCTAssertEqual(payloads[0]["action"], .string("configure"))
+        XCTAssertEqual(payloads[0]["ttsProvider"], .string("deepgram"))
+        XCTAssertEqual(payloads[0]["ttsVoice"], .string("aura-2-thalia-en"))
+        XCTAssertEqual(payloads[1]["action"], .string("ttsVoices"))
+        XCTAssertEqual(payloads[1]["ttsProvider"], .string("deepgram"))
+        XCTAssertEqual(model.state?.ttsProvider, .deepgram)
+    }
+
+    func testChangeTTSVoicePersistsSelection() async {
+        var state = Self.stateWithLANURL
+        state.ttsProvider = .deepgram
+        state.ttsVoice = "aura-2-thalia-en"
+        let client = FakeRadioActionClient()
+        let model = RadioAppModel(serverOrigin: "https://radio.pardev.net", actionClient: client)
+        model.state = state
+
+        await model.changeTTSVoice("aura-2-apollo-en")
+
+        let payload = await client.lastPayload
+        XCTAssertEqual(payload?["action"], .string("configure"))
+        XCTAssertEqual(payload?["ttsProvider"], .string("deepgram"))
+        XCTAssertEqual(payload?["ttsVoice"], .string("aura-2-apollo-en"))
+        XCTAssertEqual(model.state?.ttsVoice, "aura-2-apollo-en")
+    }
+
+    func testModelExposesServerProvidedMusicStyles() async {
+        let transport = DynamicStylesRadioTransport()
+        let model = RadioAppModel(
+            serverOrigin: "http://localhost:3007",
+            endpointMode: .custom,
+            transport: transport
+        )
+
+        await model.refresh()
+
+        XCTAssertEqual(model.availableMusicStyles.map(\.label), ["Synthwave Night Drive", "Dungeon Synth"])
+        XCTAssertEqual(model.state?.selectedStyle?.label, "Dungeon Synth")
     }
 
     func testEndpointModeDefaultsToAuto() {
@@ -406,6 +588,74 @@ private actor QueueRefreshRadioTransport: RadioTransport {
             "needsQueueFill": \(queueAheadCount < 3),
             "streamUrl": "http://localhost:3007/api/radio?stream=1"
           }
+        }
+        """
+        let response = try XCTUnwrap(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil))
+        return (Data(envelope.utf8), response)
+    }
+}
+
+private actor DynamicStylesRadioTransport: RadioTransport {
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        let url = try XCTUnwrap(request.url)
+        let envelope = """
+        {
+          "ok": true,
+          "state": {
+            "selectedStyleId": "dungeon-synth",
+            "announceEnabled": true,
+            "promptModel": "llama3.1:8b",
+            "ttsProvider": "openai",
+            "ttsVoice": "nova",
+            "announcementPrefix": "Now playing: ",
+            "announcementSuffix": "",
+            "preferences": {},
+            "currentTrackByStyle": {},
+            "currentTrack": null,
+            "history": [],
+            "updatedAt": "2026-05-27T16:00:00.000Z",
+            "streamReady": true,
+            "queueAheadCount": 0,
+            "queueTarget": 3,
+            "needsQueueFill": false,
+            "streamUrl": "http://localhost:3007/api/radio?stream=1",
+            "styles": [
+              {
+                "id": "synthwave",
+                "label": "Synthwave Night Drive",
+                "seedPrompt": "instrumental synthwave, warm analog bass",
+                "negativePrompt": "vocals"
+              },
+              {
+                "id": "dungeon-synth",
+                "label": "Dungeon Synth",
+                "seedPrompt": "moody dungeon synth instrumental, tape hiss",
+                "negativePrompt": "modern EDM drops"
+              }
+            ]
+          }
+        }
+        """
+        let response = try XCTUnwrap(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil))
+        return (Data(envelope.utf8), response)
+    }
+}
+
+private actor TTSRefreshRadioTransport: RadioTransport {
+    let state: RadioStreamState
+
+    init(state: RadioStreamState) {
+        self.state = state
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        let url = try XCTUnwrap(request.url)
+        let stateData = try JSONEncoder().encode(state)
+        let stateJSON = try XCTUnwrap(String(data: stateData, encoding: .utf8))
+        let envelope = """
+        {
+          "ok": true,
+          "state": \(stateJSON)
         }
         """
         let response = try XCTUnwrap(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil))

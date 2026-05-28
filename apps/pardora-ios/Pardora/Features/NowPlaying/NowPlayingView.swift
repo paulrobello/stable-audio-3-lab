@@ -302,7 +302,7 @@ struct NowPlayingView: View {
     }
 
     private var selectableStyles: [RadioStyle] {
-        model.state?.availableStyles ?? RadioStyle.builtIns
+        model.availableMusicStyles
     }
 }
 

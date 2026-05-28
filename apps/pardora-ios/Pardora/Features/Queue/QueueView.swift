@@ -27,13 +27,14 @@ struct QueueView: View {
                         .tint(PardoraTheme.accent)
                     }
                 }
-                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                     if !isSelectionMode {
                         Button(role: .destructive) {
                             Task { await model.deleteTrack(track) }
                         } label: {
                             Label("Delete", systemImage: "trash")
                         }
+                        .tint(PardoraTheme.destructive)
                     }
                 }
             }
@@ -110,7 +111,7 @@ struct QueueView: View {
     private func queueRow(_ track: RadioTrackRecord) -> some View {
         let isSelected = selectedFilenames.contains(track.filename)
         let isCurrentTrack = track.filename == model.state?.currentTrack?.filename
-        let isLiked = model.state?.isTrackLiked(track) == true
+        let thumbStatus = model.state?.thumbStatus(for: track)
 
         return HStack(alignment: .center, spacing: 12) {
             if isSelectionMode {
@@ -128,11 +129,11 @@ struct QueueView: View {
                         .lineLimit(2)
                         .minimumScaleFactor(0.84)
 
-                    if isLiked {
-                        Image(systemName: "hand.thumbsup.fill")
+                    if let thumbStatus {
+                        Image(systemName: thumbStatus.symbolName)
                             .font(.caption.weight(.bold))
-                            .foregroundStyle(PardoraTheme.warning)
-                            .accessibilityLabel("Thumbs up")
+                            .foregroundStyle(thumbStatus.isNegative ? PardoraTheme.destructive : PardoraTheme.warning)
+                            .accessibilityLabel(thumbStatus.accessibilityLabel)
                     }
 
                     if isCurrentTrack {
@@ -149,10 +150,10 @@ struct QueueView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
 
-                Text(track.createdDetailText())
+                Text(track.queueCreatedDetailText)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
-                    .lineLimit(1)
+                    .lineLimit(2)
             }
 
             Spacer(minLength: 8)
@@ -169,16 +170,6 @@ struct QueueView: View {
                 .foregroundStyle(isCurrentTrack ? PardoraTheme.accent : .primary)
                 .disabled(isCurrentTrack)
                 .accessibilityLabel(isCurrentTrack ? "Now playing" : "Play \(track.title)")
-
-                Button(role: .destructive) {
-                    Task { await model.deleteTrack(track) }
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.body.weight(.semibold))
-                        .frame(width: 36, height: 36)
-                }
-                .buttonStyle(.borderless)
-                .accessibilityLabel("Delete \(track.title)")
             }
         }
         .padding(.vertical, 6)
