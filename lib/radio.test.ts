@@ -260,7 +260,7 @@ describe("radio station styles", () => {
     expect(messages.prompt).toContain("Return JSON only");
   });
 
-  it("asks station song prompts to end naturally with a fade out", () => {
+  it("asks station song prompts to play once through the full duration without restart cues", () => {
     const state = defaultRadioState("2026-05-26T12:00:00.000Z");
     const messages = buildRadioPromptGeneratorMessages(state, "synthwave", "llama3.1:8b");
     const fallback = createFallbackRadioPromptDraft(state, "synthwave", "llama3.1:8b", "2026-05-26T12:00:00.000Z");
@@ -270,12 +270,13 @@ describe("radio station styles", () => {
       negativePrompt: "vocals",
     }), state, "synthwave", "llama3.1:8b");
 
-    expect(messages.prompt).toContain("natural outro");
-    expect(messages.prompt).toContain("fade out");
-    expect(fallback.prompt).toContain("natural outro");
-    expect(fallback.prompt).toContain("fade out");
-    expect(parsed.prompt).toContain("natural outro");
-    expect(parsed.prompt).toContain("fade out");
+    for (const prompt of [messages.prompt, fallback.prompt, parsed.prompt]) {
+      expect(prompt).toContain("full requested duration");
+      expect(prompt).toContain("outro only at the end");
+      expect(prompt).toContain("do not restart");
+      expect(prompt).toContain("do not begin a second song");
+      expect(prompt.toLowerCase()).not.toContain("fade out");
+    }
   });
 
   it("adds entropy to fallback drafts so queued songs do not share the same title", () => {

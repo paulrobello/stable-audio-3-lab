@@ -180,7 +180,7 @@ const RADIO_QUEUE_TARGET = 3;
 const RADIO_HISTORY_LIMIT = 50;
 const DEFAULT_RADIO_SONG_LENGTH_MINUTES = 2;
 const DEFAULT_UNLIKED_TRACK_EXPIRATION_HOURS = 24;
-const RADIO_ENDING_GUIDANCE = "include a natural outro and gentle fade out; avoid abrupt endings";
+const RADIO_ENDING_GUIDANCE = "play as one complete song through the full requested duration, with an outro only at the end; do not restart and do not begin a second song";
 export const radioSongLengthMinuteOptions = [1, 2, 3, 4, 5, 6] as const;
 export const radioUnlikedTrackExpirationHourOptions = [1, 6, 12, 24, 48, 72, 168] as const;
 
@@ -1319,7 +1319,7 @@ function cleanShortText(value: string, fallback: string, maxLength: number) {
 function appendRadioEndingGuidance(value: string, maxLength: number) {
   const cleaned = value.replace(/\s+/g, " ").trim();
   const lower = cleaned.toLowerCase();
-  if (lower.includes("natural outro") && lower.includes("fade out")) return cleaned.slice(0, maxLength);
+  if (lower.includes("full requested duration") && lower.includes("do not restart")) return cleaned.slice(0, maxLength);
   const suffix = `, ${RADIO_ENDING_GUIDANCE}`;
   const baseLength = Math.max(0, maxLength - suffix.length);
   const base = cleaned.slice(0, baseLength).replace(/[,\s]+$/g, "");
