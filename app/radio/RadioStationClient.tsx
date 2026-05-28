@@ -109,6 +109,19 @@ export default function RadioStationClient({ initialState = null, initialPromptM
   }, [currentTrackKey, shouldPlayCurrentAnnouncement]);
 
   useEffect(() => {
+    if (!currentTrack || playbackPhase === "announcement") return;
+
+    const updateSharedElapsed = () => {
+      const elapsedSeconds = getSharedTrackElapsedSeconds(radioState?.currentTrackStartedAt, trackDurationSeconds);
+      if (elapsedSeconds !== undefined) setTrackElapsedSeconds(elapsedSeconds);
+    };
+
+    updateSharedElapsed();
+    const timer = window.setInterval(updateSharedElapsed, 1000);
+    return () => window.clearInterval(timer);
+  }, [currentTrack, currentTrackKey, playbackPhase, radioState?.currentTrackStartedAt, trackDurationSeconds]);
+
+  useEffect(() => {
     const visibleIds = new Set(selectedStyleQueue.map((track) => track.id));
     setSelectedQueueTrackIds((previous) => {
       const next = new Set([...previous].filter((trackId) => visibleIds.has(trackId)));
@@ -314,6 +327,23 @@ export default function RadioStationClient({ initialState = null, initialPromptM
     } catch (error) {
       if (ratedTrackKey) setOptimisticLike(null);
       setStatus(error instanceof Error ? error.message : "Could not save preference.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function rateLineupTrack(track: RadioTrackRecord, rating: "up" | "down") {
+    setBusy("rating");
+    setStatus(rating === "up" ? `Recording thumbs up for "${track.title}"...` : `Recording thumbs down for "${track.title}"...`);
+    try {
+      const json = await postRadio({ action: "rating", rating, filename: track.filename, styleId: track.styleId, phrase: track.prompt });
+      if (json.rejectedTrack) {
+        setStatus(json.state?.currentTrack ? `Removed "${json.rejectedTrack.title}" and skipped to "${json.state.currentTrack.title}".` : `Removed "${json.rejectedTrack.title}". Generate another station song to continue.`);
+      } else {
+        setStatus(`Preference saved for "${track.title}".`);
+      }
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not save queue preference.");
     } finally {
       setBusy(null);
     }
@@ -595,6 +625,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
 
   function handleAudioTimeUpdate(event: React.SyntheticEvent<HTMLAudioElement>) {
     if (playbackPhase === "announcement") return;
+    if (radioState?.currentTrackStartedAt) return;
     const elapsed = Math.max(0, readAudioCurrentTime(event.currentTarget) - streamElapsedAtTrackStartRef.current);
     setTrackElapsedSeconds(Math.min(elapsed, trackDurationSeconds));
   }
@@ -970,6 +1001,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
                   {selectedStyleQueue.map((track) => {
                     const isCurrentTrack = track.filename === currentTrack?.filename;
                     const trackLiked = isRadioTrackLiked(track, radioState);
+                    const trackDisliked = isRadioTrackDisliked(track, radioState);
                     const trackSelected = selectedQueueTrackIds.has(track.id);
                     return (
                       <div
@@ -997,12 +1029,32 @@ export default function RadioStationClient({ initialState = null, initialPromptM
                             </div>
                           </div>
                           <div className="flex shrink-0 items-center gap-2">
-                            {trackLiked && (
-                              <span className="inline-flex items-center gap-1 rounded-full border border-amber-200/30 bg-amber-200/12 px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-amber-100">
-                                <HandThumbUpIcon className="h-4 w-4" aria-hidden="true" />
-                                <span>Thumbs up</span>
-                              </span>
-                            )}
+                            <button
+                              type="button"
+                              onClick={() => void rateLineupTrack(track, "up")}
+                              disabled={busy === "rating" || busy === "delete"}
+                              aria-label={`Thumbs up ${track.title}`}
+                              aria-pressed={trackLiked}
+                              className={clsx(
+                                "touch-manipulation rounded-full border p-2 transition disabled:cursor-default disabled:opacity-45",
+                                trackLiked ? "border-amber-200/45 bg-amber-200/18 text-amber-100" : "border-white/15 bg-white/[0.07] text-white/65 hover:border-amber-200/35 hover:bg-amber-200/12 hover:text-amber-50",
+                              )}
+                            >
+                              <HandThumbUpIcon className="h-4 w-4" aria-hidden="true" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void rateLineupTrack(track, "down")}
+                              disabled={busy === "rating" || busy === "delete"}
+                              aria-label={`Thumbs down ${track.title}`}
+                              aria-pressed={trackDisliked}
+                              className={clsx(
+                                "touch-manipulation rounded-full border p-2 transition disabled:cursor-default disabled:opacity-45",
+                                trackDisliked ? "border-pink-200/45 bg-pink-400/18 text-pink-100" : "border-white/15 bg-white/[0.07] text-white/65 hover:border-pink-200/35 hover:bg-pink-400/12 hover:text-pink-50",
+                              )}
+                            >
+                              <HandThumbDownIcon className="h-4 w-4" aria-hidden="true" />
+                            </button>
                             <button
                               type="button"
                               onClick={() => void selectLineupTrack(track)}
@@ -1125,6 +1177,14 @@ function readAudioCurrentTime(audio: HTMLAudioElement | null) {
   return audio && Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
 }
 
+function getSharedTrackElapsedSeconds(startedAt: string | undefined, durationSeconds: number) {
+  if (!startedAt) return undefined;
+  const startedMs = Date.parse(startedAt);
+  if (!Number.isFinite(startedMs)) return undefined;
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startedMs) / 1000));
+  return Math.min(elapsedSeconds, durationSeconds);
+}
+
 function formatDuration(seconds: number) {
   const safeSeconds = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
   const minutes = Math.floor(safeSeconds / 60);
@@ -1241,6 +1301,12 @@ function isRadioTrackLiked(track: RadioTrackRecord | undefined, state: RadioStre
   if (!track) return false;
   if (track.rating === "up") return true;
   return state?.preferences[track.styleId]?.likes.includes(track.prompt) ?? false;
+}
+
+function isRadioTrackDisliked(track: RadioTrackRecord | undefined, state: RadioStreamState | null) {
+  if (!track) return false;
+  if (track.rating === "down") return true;
+  return state?.preferences[track.styleId]?.dislikes.includes(track.prompt) ?? false;
 }
 
 function hasRadioTrackFeedback(track: RadioTrackRecord, state: RadioStreamState | null) {

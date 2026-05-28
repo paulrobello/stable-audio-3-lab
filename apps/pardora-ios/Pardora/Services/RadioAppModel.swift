@@ -220,6 +220,16 @@ final class RadioAppModel {
         await post(["action": .string("rating"), "rating": .string("down")])
     }
 
+    func rateTrack(_ track: RadioTrackRecord, rating: RadioRating) async {
+        await post([
+            "action": .string("rating"),
+            "rating": .string(rating.rawValue),
+            "filename": .string(track.filename),
+            "styleId": .string(track.styleId.rawValue),
+            "phrase": .string(track.prompt),
+        ])
+    }
+
     func deleteMemoryFeedback(styleID: RadioStyleID, phrase: String, rating: RadioRating) async {
         await post([
             "action": .string("deleteFeedback"),

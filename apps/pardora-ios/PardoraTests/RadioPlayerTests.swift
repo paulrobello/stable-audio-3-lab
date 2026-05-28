@@ -96,6 +96,34 @@ final class RadioPlayerTests: XCTestCase {
         XCTAssertEqual(player.progress.fraction, 1)
     }
 
+    func testProgressUsesSharedStationClockWhenAvailable() {
+        var currentDate = Date(timeIntervalSince1970: 10)
+        let player = RadioPlayer(
+            audioSession: FakeRadioAudioSession(),
+            nowPlayingCenter: FakeRadioNowPlayingCenter(),
+            remoteCommandCenter: FakeRadioRemoteCommandCenter(),
+            liveActivityController: FakeRadioLiveActivityController(),
+            now: { currentDate }
+        )
+
+        player.load(
+            url: URL(string: "https://radio.pardev.net/api/radio?stream=1"),
+            metadata: .init(
+                trackID: "track-1",
+                title: "Public Track",
+                durationSeconds: 90,
+                trackStartedAt: Date(timeIntervalSince1970: 4)
+            )
+        )
+
+        XCTAssertEqual(player.progress.elapsedSeconds, 6)
+
+        currentDate = Date(timeIntervalSince1970: 12)
+        player.refreshProgress()
+
+        XCTAssertEqual(player.progress.elapsedSeconds, 8)
+    }
+
     func testAudioSessionFailureShowsVisibleStatus() {
         let player = RadioPlayer(
             audioSession: FakeRadioAudioSession(error: TestAudioError.denied),

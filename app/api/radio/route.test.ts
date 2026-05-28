@@ -2,7 +2,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { NextRequest } from "next/server";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET, POST } from "./route";
 import { createRadioTrackRecord, defaultRadioState } from "@/lib/radio";
 
@@ -34,6 +34,7 @@ describe("radio stream route", () => {
   });
 
   afterEach(async () => {
+    vi.useRealTimers();
     process.chdir(originalCwd);
     if (originalOpenAiApiKey === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = originalOpenAiApiKey;
@@ -659,6 +660,50 @@ printf '%s' '{"likedTraits":["wide neon pads"],"dislikedTraits":["thin supersaw 
     expect(saved.preferences?.ambient).toEqual({ likes: ["granular cloud drift"], dislikes: [] });
   });
 
+  it("records thumbs down for a queued track without rejecting the current track", async () => {
+    tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
+    process.chdir(tempCwd);
+    const stateFile = path.join(tempCwd, ".stable-audio-radio", "state.json");
+    await mkdir(path.dirname(stateFile), { recursive: true });
+    const current = createRadioTrackRecord({
+      filename: "current.mp3",
+      title: "Current",
+      prompt: "warm bass with wide neon pads",
+      styleId: "synthwave",
+      announce: false,
+    });
+    const queued = createRadioTrackRecord({
+      filename: "queued.mp3",
+      title: "Queued",
+      prompt: "thin brittle drums",
+      styleId: "synthwave",
+      announce: false,
+    });
+    await writeFile(stateFile, JSON.stringify({
+      ...defaultRadioState(),
+      currentTrack: current,
+      history: [current, queued],
+    }, null, 2));
+
+    const response = await POST(new NextRequest("http://localhost:3007/api/radio", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "rating", rating: "down", filename: queued.filename }),
+    }));
+    const json = await response.json() as { ok: boolean; rejectedTrack?: unknown };
+    const saved = JSON.parse(await readFile(stateFile, "utf8")) as {
+      currentTrack?: { filename?: string };
+      history?: { filename?: string }[];
+      preferences?: { synthwave?: { dislikes?: string[] } };
+    };
+
+    expect(json.ok).toBe(true);
+    expect(json.rejectedTrack).toBeUndefined();
+    expect(saved.currentTrack?.filename).toBe("current.mp3");
+    expect(saved.history?.map((track) => track.filename)).toEqual(["current.mp3", "queued.mp3"]);
+    expect(saved.preferences?.synthwave?.dislikes).toEqual(["thin brittle drums"]);
+  });
+
   it("deletes thumbs feedback from preferences and matching rated tracks", async () => {
     tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
     process.chdir(tempCwd);
@@ -742,6 +787,45 @@ printf '%s' '{"likedTraits":["wide neon pads"],"dislikedTraits":["thin supersaw 
     const second = await reader!.read();
 
     expect(second.value?.[0]).toBe("b".charCodeAt(0));
+    await reader!.cancel();
+  }, 5000);
+
+  it("joins an in-progress stream at the shared station clock offset", async () => {
+    tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
+    process.chdir(tempCwd);
+    const outputDir = path.join(tempCwd, "public", "outputs");
+    const stateFile = path.join(tempCwd, ".stable-audio-radio", "state.json");
+    await mkdir(outputDir, { recursive: true });
+    await mkdir(path.dirname(stateFile), { recursive: true });
+    await writeFile(path.join(outputDir, "current.mp3"), Buffer.concat([
+      Buffer.alloc(24_000, "a"),
+      Buffer.alloc(24_000, "b"),
+      Buffer.alloc(24_000, "c"),
+    ]));
+    const current = createRadioTrackRecord({
+      filename: "current.mp3",
+      title: "Current",
+      prompt: "current",
+      styleId: "synthwave",
+      announce: false,
+      durationSeconds: 3,
+    });
+    const state = {
+      ...defaultRadioState("2026-05-28T20:00:00.000Z"),
+      announceEnabled: false,
+      currentTrackStartedAt: "2026-05-28T20:00:00.000Z",
+      currentTrack: current,
+      history: [current],
+    };
+    await writeFile(stateFile, JSON.stringify(state, null, 2));
+
+    vi.useFakeTimers({ now: new Date("2026-05-28T20:00:01.200Z") });
+    const response = await GET(new NextRequest("http://localhost:3007/api/radio?stream=1"));
+    const reader = response.body?.getReader();
+    expect(reader).toBeTruthy();
+    const first = await reader!.read();
+
+    expect(first.value?.[0]).toBe("b".charCodeAt(0));
     await reader!.cancel();
   }, 5000);
 

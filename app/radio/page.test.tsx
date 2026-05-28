@@ -993,6 +993,70 @@ describe("radio page loading", () => {
     expect(screen.getAllByText("Thumbs up").length).toBeGreaterThan(0);
   });
 
+  it("rates radio queue rows with thumbs up and down actions", async () => {
+    const queuedTrack = {
+      ...currentTrack,
+      id: "track-rate-queue",
+      filename: "rate_queue_song.mp3",
+      title: "Rate Queue Song",
+      prompt: "rate queue prompt",
+    };
+    const stateWithQueuedTrack = {
+      ...radioState,
+      currentTrack,
+      selectedStyleId: "synthwave" as const,
+      history: [currentTrack, queuedTrack],
+      streamReady: true,
+      streamUrl: "/api/radio?stream=1",
+    };
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as { action?: string; rating?: string } : {};
+      if (body.action === "rating" && body.rating === "up") {
+        return {
+          json: async () => ({
+            ok: true,
+            state: {
+              ...stateWithQueuedTrack,
+              history: [currentTrack, { ...queuedTrack, rating: "up" }],
+              preferences: { synthwave: { likes: [queuedTrack.prompt], dislikes: [] } },
+            },
+          }),
+        };
+      }
+      if (body.action === "rating" && body.rating === "down") {
+        return {
+          json: async () => ({
+            ok: true,
+            state: {
+              ...stateWithQueuedTrack,
+              history: [currentTrack, { ...queuedTrack, rating: "down" }],
+              preferences: { synthwave: { likes: [], dislikes: [queuedTrack.prompt] } },
+            },
+          }),
+        };
+      }
+      return { json: async () => ({ ok: true, state: stateWithQueuedTrack, promptModels: ["qwen3:14b"], cleanedTracks: [] }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<RadioStationClient initialState={stateWithQueuedTrack} initialPromptModels={["qwen3:14b"]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Thumbs up Rate Queue Song" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/radio", expect.objectContaining({
+      body: expect.stringContaining('"phrase":"rate queue prompt"'),
+    })));
+    expect(fetchMock).toHaveBeenCalledWith("/api/radio", expect.objectContaining({
+      body: expect.stringContaining('"rating":"up"'),
+    }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Thumbs down Rate Queue Song" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/radio", expect.objectContaining({
+      body: expect.stringContaining('"rating":"down"'),
+    })));
+  });
+
   it("shows created time, age, and file size for radio queue items", () => {
     vi.useFakeTimers({ now: new Date("2026-05-26T14:05:00.000Z") });
     const queuedTrack = {

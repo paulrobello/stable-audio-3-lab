@@ -27,6 +27,28 @@ final class RadioAppModelTests: XCTestCase {
         XCTAssertEqual(payload?["rating"], .string("up"))
     }
 
+    func testRateTrackPostsQueueTrackPromptAndStyle() async {
+        let client = FakeRadioActionClient()
+        let model = RadioAppModel(serverOrigin: "https://radio.pardev.net", actionClient: client)
+        let track = RadioTrackRecord(
+            id: "queue-track",
+            filename: "queue-track.mp3",
+            title: "Queue Track",
+            prompt: "queue prompt",
+            styleId: .ambient,
+            announce: true,
+            createdAt: "2026-05-27T16:00:00.000Z"
+        )
+
+        await model.rateTrack(track, rating: .down)
+
+        let payload = await client.lastPayload
+        XCTAssertEqual(payload?["action"], .string("rating"))
+        XCTAssertEqual(payload?["rating"], .string("down"))
+        XCTAssertEqual(payload?["styleId"], .string("ambient"))
+        XCTAssertEqual(payload?["phrase"], .string("queue prompt"))
+    }
+
     func testSkipPostsSkipTrack() async {
         let client = FakeRadioActionClient()
         let model = RadioAppModel(serverOrigin: "https://radio.pardev.net", actionClient: client)

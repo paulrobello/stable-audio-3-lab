@@ -11,6 +11,7 @@ struct RadioStreamState: Codable, Equatable {
     var preferences: [String: RadioPreference]
     var currentTrackByStyle: [String: String]
     var currentTrack: RadioTrackRecord?
+    var currentTrackStartedAt: String?
     var history: [RadioTrackRecord]
     var updatedAt: String
     var streamReady: Bool

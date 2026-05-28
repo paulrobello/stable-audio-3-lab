@@ -39,6 +39,7 @@ import {
   recordRadioRating,
   selectRadioTrack,
   shouldGenerateRadioQueueTrack,
+  synchronizeRadioPlayback,
   updateRadioTasteProfile,
   updateRadioStyle,
   parseRadioStyleDraft,
@@ -657,6 +658,33 @@ describe("radio stream state", () => {
     expect(advanced.currentTrack?.filename).toBe("next_song.mp3");
     expect(advanced.history.map((track) => track.filename)).toEqual(["current_song.mp3", "next_song.mp3"]);
     expect(advanced.updatedAt).not.toBe(state.updatedAt);
+  });
+
+  it("advances shared playback from the station clock instead of a client stream", () => {
+    const startedAt = "2026-05-28T20:00:00.000Z";
+    const current = createRadioTrackRecord({
+      filename: "current_song.mp3",
+      title: "Current Song",
+      prompt: "warm bass",
+      styleId: "synthwave",
+      announce: false,
+      durationSeconds: 2,
+    });
+    const next = createRadioTrackRecord({
+      filename: "next_song.mp3",
+      title: "Next Song",
+      prompt: "wide pads",
+      styleId: "synthwave",
+      announce: false,
+      durationSeconds: 120,
+    });
+    const state = { ...defaultRadioState(startedAt), currentTrackStartedAt: startedAt, currentTrack: current, history: [current, next] };
+
+    const synchronized = synchronizeRadioPlayback(state, "2026-05-28T20:00:03.000Z");
+
+    expect(synchronized.currentTrack?.filename).toBe("next_song.mp3");
+    expect(synchronized.currentTrackStartedAt).toBe("2026-05-28T20:00:02.000Z");
+    expect(synchronized.history.map((track) => track.filename)).toEqual(["current_song.mp3", "next_song.mp3"]);
   });
 
   it("advances and counts queue tracks inside the current music style", () => {

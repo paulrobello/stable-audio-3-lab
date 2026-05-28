@@ -160,6 +160,28 @@ struct QueueView: View {
 
             if !isSelectionMode {
                 Button {
+                    Task { await model.rateTrack(track, rating: .up) }
+                } label: {
+                    Image(systemName: thumbStatus == .up ? "hand.thumbsup.fill" : "hand.thumbsup")
+                        .font(.body.weight(.semibold))
+                        .frame(width: 32, height: 36)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(thumbStatus == .up ? PardoraTheme.warning : .secondary)
+                .accessibilityLabel("Thumbs up \(track.title)")
+
+                Button {
+                    Task { await model.rateTrack(track, rating: .down) }
+                } label: {
+                    Image(systemName: thumbStatus == .down ? "hand.thumbsdown.fill" : "hand.thumbsdown")
+                        .font(.body.weight(.semibold))
+                        .frame(width: 32, height: 36)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(thumbStatus == .down ? PardoraTheme.destructive : .secondary)
+                .accessibilityLabel("Thumbs down \(track.title)")
+
+                Button {
                     Task { await model.selectTrack(track) }
                 } label: {
                     Image(systemName: isCurrentTrack ? "checkmark.circle.fill" : "play.fill")

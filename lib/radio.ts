@@ -107,6 +107,7 @@ export type RadioState = {
   currentTrackByStyle: RadioQueuePositions;
   currentDraft?: RadioPromptDraft;
   currentTrack?: RadioTrackRecord;
+  currentTrackStartedAt?: string;
   history: RadioTrackRecord[];
   updatedAt: string;
 };
@@ -319,6 +320,7 @@ export function normalizeRadioStyleUrlParam(value: unknown, customStyles: RadioS
 
 export function normalizeRadioState(input: Partial<RadioState> | undefined): RadioState {
   const parsed = input ?? {};
+  const defaults = defaultRadioState();
   const history = Array.isArray(parsed.history) ? parsed.history : [];
   const customStyles = normalizeCustomRadioStyles(parsed.customStyles);
   const deletedStyleIds = normalizeDeletedRadioStyleIds(parsed.deletedStyleIds);
@@ -327,8 +329,11 @@ export function normalizeRadioState(input: Partial<RadioState> | undefined): Rad
   if (parsed.currentTrack?.filename && parsed.currentTrack.styleId) {
     currentTrackByStyle[normalizeRadioStyleId(parsed.currentTrack.styleId, customStyles, deletedStyleIds)] ??= parsed.currentTrack.filename;
   }
+  const currentTrackStartedAt = parsed.currentTrack
+    ? normalizeRadioTimestamp(parsed.currentTrackStartedAt) ?? defaults.updatedAt
+    : undefined;
   return alignRadioStateToSelectedStyle({
-    ...defaultRadioState(),
+    ...defaults,
     ...parsed,
     selectedStyleId,
     songLengthMinutes: normalizeRadioSongLengthMinutes(parsed.songLengthMinutes),
@@ -339,6 +344,7 @@ export function normalizeRadioState(input: Partial<RadioState> | undefined): Rad
     deletedStyleIds,
     preferences: parsed.preferences ?? {},
     currentTrackByStyle,
+    currentTrackStartedAt,
     history,
   });
 }
@@ -550,10 +556,9 @@ export function getRadioStyle(styleId: RadioStyleId, customStyles: RadioStyle[] 
 
 export function selectRadioStyle(state: RadioState, styleIdInput: unknown): RadioState {
   const selectedStyleId = normalizeRadioStyleId(styleIdInput, state.customStyles, state.deletedStyleIds);
-  return {
-    ...alignRadioStateToSelectedStyle({ ...state, selectedStyleId }),
-    updatedAt: nextTimestamp(state.updatedAt),
-  };
+  const updatedAt = nextTimestamp(state.updatedAt);
+  const aligned = alignRadioStateToSelectedStyle({ ...state, selectedStyleId });
+  return setRadioPlaybackStartIfCurrentChanged({ ...aligned, updatedAt }, state.currentTrack, updatedAt);
 }
 
 export function recordRadioRating(state: RadioState, styleIdInput: unknown, phraseInput: unknown, ratingInput: unknown): RadioState {
@@ -864,7 +869,8 @@ export function registerRadioTrack(state: RadioState, track: RadioTrackRecord): 
     : [track];
   const currentTrack = findCurrentTrackForStyle({ ...state, history }, track.styleId) ?? track;
   const cappedHistory = capRadioHistory(history, currentTrack);
-  return {
+  const updatedAt = nextTimestamp(state.updatedAt);
+  return setRadioPlaybackStartIfCurrentChanged({
     ...state,
     selectedStyleId: track.styleId,
     currentTrack,
@@ -873,8 +879,8 @@ export function registerRadioTrack(state: RadioState, track: RadioTrackRecord): 
       [track.styleId]: currentTrack.filename,
     },
     history: cappedHistory,
-    updatedAt: nextTimestamp(state.updatedAt),
-  };
+    updatedAt,
+  }, state.currentTrack, updatedAt);
 }
 
 function findRadioQueueInsertIndex(history: RadioTrackRecord[], currentIndex: number, styleId: RadioStyleId) {
@@ -902,6 +908,7 @@ export function selectRadioTrack(state: RadioState, filenameInput: unknown): { s
   const filename = typeof filenameInput === "string" ? filenameInput.trim() : "";
   const selectedTrack = state.history.find((track) => track.filename === filename && track.filename.toLowerCase().endsWith(".mp3"));
   if (!selectedTrack) return { state };
+  const updatedAt = nextTimestamp(state.updatedAt);
   return {
     selectedTrack,
     state: {
@@ -912,7 +919,8 @@ export function selectRadioTrack(state: RadioState, filenameInput: unknown): { s
         ...state.currentTrackByStyle,
         [selectedTrack.styleId]: selectedTrack.filename,
       },
-      updatedAt: nextTimestamp(state.updatedAt),
+      currentTrackStartedAt: updatedAt,
+      updatedAt,
     },
   };
 }
@@ -929,6 +937,7 @@ export function rejectCurrentRadioTrack(state: RadioState): { state: RadioState;
   const currentTrackByStyle = { ...state.currentTrackByStyle };
   if (nextTrack) currentTrackByStyle[rejectedTrack.styleId] = nextTrack.filename;
   else delete currentTrackByStyle[rejectedTrack.styleId];
+  const updatedAt = nextTimestamp(state.updatedAt);
   return {
     rejectedTrack,
     state: {
@@ -936,17 +945,19 @@ export function rejectCurrentRadioTrack(state: RadioState): { state: RadioState;
       currentTrack: nextTrack,
       currentTrackByStyle,
       history: remainingHistory,
-      updatedAt: nextTimestamp(state.updatedAt),
+      currentTrackStartedAt: nextTrack ? updatedAt : undefined,
+      updatedAt,
     },
   };
 }
 
-export function advanceRadioCurrentTrack(state: RadioState): RadioState {
+export function advanceRadioCurrentTrack(state: RadioState, nowInput?: string): RadioState {
   if (!state.currentTrack) return state;
   const currentIndex = state.history.findIndex((track) => track.filename === state.currentTrack?.filename);
   const styleId = state.currentTrack.styleId;
   const nextTrack = state.history.slice(Math.max(currentIndex + 1, 0)).find((track) => track.styleId === styleId && isRadioMp3Track(track));
   if (!nextTrack) return state;
+  const updatedAt = normalizeRadioTimestamp(nowInput) ?? nextTimestamp(state.updatedAt);
   return {
     ...state,
     currentTrack: nextTrack,
@@ -954,8 +965,39 @@ export function advanceRadioCurrentTrack(state: RadioState): RadioState {
       ...state.currentTrackByStyle,
       [styleId]: nextTrack.filename,
     },
-    updatedAt: nextTimestamp(state.updatedAt),
+    currentTrackStartedAt: updatedAt,
+    updatedAt,
   };
+}
+
+export function synchronizeRadioPlayback(state: RadioState, nowInput = new Date().toISOString()): RadioState {
+  const nowMs = Date.parse(nowInput);
+  if (!Number.isFinite(nowMs) || !state.currentTrack) return state;
+  let nextState = state.currentTrackStartedAt ? state : { ...state, currentTrackStartedAt: nowInput };
+  let startedMs = Date.parse(nextState.currentTrackStartedAt ?? "");
+  if (!Number.isFinite(startedMs)) return { ...nextState, currentTrackStartedAt: nowInput };
+
+  while (nextState.currentTrack) {
+    const durationMs = radioTrackDurationSeconds(nextState, nextState.currentTrack) * 1000;
+    if (durationMs <= 0 || nowMs - startedMs < durationMs) break;
+    const advancedAt = new Date(startedMs + durationMs).toISOString();
+    const advanced = advanceRadioCurrentTrack(nextState, advancedAt);
+    if (advanced.currentTrack?.filename === nextState.currentTrack.filename) break;
+    nextState = advanced;
+    startedMs = Date.parse(nextState.currentTrackStartedAt ?? advancedAt);
+    if (!Number.isFinite(startedMs)) break;
+  }
+
+  return nextState;
+}
+
+export function getRadioPlaybackElapsedSeconds(state: RadioState, nowInput = new Date().toISOString()) {
+  if (!state.currentTrack || !state.currentTrackStartedAt) return 0;
+  const startedMs = Date.parse(state.currentTrackStartedAt);
+  const nowMs = Date.parse(nowInput);
+  if (!Number.isFinite(startedMs) || !Number.isFinite(nowMs) || nowMs <= startedMs) return 0;
+  const elapsedSeconds = Math.floor((nowMs - startedMs) / 1000);
+  return Math.min(elapsedSeconds, radioTrackDurationSeconds(state, state.currentTrack));
 }
 
 export function getRadioQueueAheadCount(state: RadioState) {
@@ -1007,7 +1049,8 @@ export function removeRadioTracksFromLineup(state: RadioState, tracks: RadioTrac
   const currentTrack = state.currentTrack && !filenames.has(state.currentTrack.filename)
     ? state.currentTrack
     : findCurrentTrackForStyle({ ...state, history, currentTrack: undefined }, state.selectedStyleId);
-  return {
+  const updatedAt = nextTimestamp(state.updatedAt);
+  return setRadioPlaybackStartIfCurrentChanged({
     ...alignRadioStateToSelectedStyle({
       ...state,
       currentTrack,
@@ -1016,8 +1059,8 @@ export function removeRadioTracksFromLineup(state: RadioState, tracks: RadioTrac
     }),
     currentTrack,
     history,
-    updatedAt: nextTimestamp(state.updatedAt),
-  };
+    updatedAt,
+  }, state.currentTrack, updatedAt);
 }
 
 export function buildRadioStreamState(state: RadioState): RadioStreamState {
@@ -1301,6 +1344,23 @@ function nextTimestamp(previous: string) {
   const now = Date.now();
   const previousMs = Date.parse(previous);
   return new Date(Number.isFinite(previousMs) && now <= previousMs ? previousMs + 1 : now).toISOString();
+}
+
+function normalizeRadioTimestamp(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : undefined;
+}
+
+function setRadioPlaybackStartIfCurrentChanged(state: RadioState, previousTrack: RadioTrackRecord | undefined, startedAt: string) {
+  if (!state.currentTrack) return { ...state, currentTrackStartedAt: undefined };
+  if (state.currentTrack.filename === previousTrack?.filename && state.currentTrackStartedAt) return state;
+  return { ...state, currentTrackStartedAt: startedAt };
+}
+
+function radioTrackDurationSeconds(state: RadioState, track: RadioTrackRecord) {
+  const duration = track.durationSeconds ?? state.songLengthMinutes * 60;
+  return Math.max(1, Math.round(Number.isFinite(duration) ? duration : DEFAULT_RADIO_SONG_LENGTH_MINUTES * 60));
 }
 
 function compactTimestamp(value: string) {

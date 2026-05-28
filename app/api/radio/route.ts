@@ -43,7 +43,9 @@ import {
   registerRadioTrack,
   selectRadioStyle,
   selectRadioTrack,
+  getRadioPlaybackElapsedSeconds,
   getRadioTtsVoiceOptions,
+  synchronizeRadioPlayback,
   updateRadioTasteProfile,
   updateRadioStyle,
   type RadioStyleDraft,
@@ -86,7 +88,7 @@ export async function GET(request: NextRequest) {
   try {
     const playlistFormat = normalizePlaylistFormat(request.nextUrl.searchParams.get("playlist"));
     if (playlistFormat) return buildRadioPlaylistRouteResponse(playlistFormat, request);
-    const state = await readRadioState();
+    const state = await readSynchronizedRadioState();
     if (request.nextUrl.searchParams.get("stream") === "1") {
       const forceIcyMetadata = request.nextUrl.searchParams.get("icy") === "1";
       return streamCurrentTrack(state, {
@@ -109,7 +111,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json() as Record<string, unknown>;
     const action = typeof body.action === "string" ? body.action : "";
-    const state = await readRadioState();
+    const state = await readSynchronizedRadioState();
 
     if (action === "createStyle") {
       const result = createRadioStyle(state, {
@@ -266,12 +268,17 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === "rating") {
-      const styleId = normalizeRadioStyleId(body.styleId ?? state.currentTrack?.styleId ?? state.selectedStyleId, state.customStyles, state.deletedStyleIds);
+      const ratedFilename = typeof body.filename === "string" ? body.filename.trim() : "";
+      const ratedTrack = ratedFilename && isSafeAudioFilename(ratedFilename)
+        ? state.history.find((track) => track.filename === ratedFilename)
+        : undefined;
+      const styleId = normalizeRadioStyleId(body.styleId ?? ratedTrack?.styleId ?? state.currentTrack?.styleId ?? state.selectedStyleId, state.customStyles, state.deletedStyleIds);
       const phrase = typeof body.phrase === "string" && body.phrase.trim()
         ? body.phrase
-        : state.currentTrack?.prompt ?? state.currentDraft?.prompt ?? "";
+        : ratedTrack?.prompt ?? state.currentTrack?.prompt ?? state.currentDraft?.prompt ?? "";
       const ratedState = recordRadioRating(state, styleId, phrase, body.rating);
-      const rejectResult = body.rating === "down" ? rejectCurrentRadioTrack(ratedState) : { state: ratedState, rejectedTrack: undefined };
+      const shouldRejectCurrentTrack = body.rating === "down" && (!ratedTrack || ratedTrack.filename === state.currentTrack?.filename);
+      const rejectResult = shouldRejectCurrentTrack ? rejectCurrentRadioTrack(ratedState) : { state: ratedState, rejectedTrack: undefined };
       if (rejectResult.rejectedTrack) await removeRejectedTrackAudio(rejectResult.rejectedTrack);
       const nextState = await distillRadioTasteIfPossible(rejectResult.state, styleId);
       await writeRadioState(nextState);
@@ -595,7 +602,7 @@ async function streamCurrentTrack(state: RadioState, options: { icyMetadataEnabl
       while (true) {
         if (activeAudio && activeFilename) {
           if (pendingTrack) {
-            const latestState = resolveStreamStyleState(await readRadioState(), options.styleId);
+            const latestState = resolveStreamStyleState(await readSynchronizedRadioState(), options.styleId);
             if (latestState.currentTrack?.filename !== pendingTrack.filename) {
               streamState = latestState;
               pendingFilenames = [];
@@ -645,7 +652,7 @@ async function streamCurrentTrack(state: RadioState, options: { icyMetadataEnabl
             pendingTrack = undefined;
           }
 
-          streamState = resolveStreamStyleState(await readRadioState(), options.styleId);
+          streamState = resolveStreamStyleState(await readSynchronizedRadioState(), options.styleId);
           if (completedTrackFilename && streamState.currentTrack?.filename === completedTrackFilename) {
             const advanced = advanceRadioCurrentTrack(streamState);
             if (advanced.currentTrack?.filename !== streamState.currentTrack?.filename) {
@@ -697,7 +704,11 @@ async function streamCurrentTrack(state: RadioState, options: { icyMetadataEnabl
           if (!segmentFiles.length) continue;
           activeAudio = await readRadioStreamSegment(segmentFiles.map((file) => file.filePath));
           activeFilename = pendingTrack?.filename ?? segmentFiles.at(-1)?.filename;
-          activeAudioOffset = 0;
+          const startsWithCurrentTrackAudio = segmentFiles[0]?.filename === pendingTrack?.filename;
+          const sharedOffset = startsWithCurrentTrackAudio && pendingTrack?.filename === streamState.currentTrack?.filename
+            ? Math.floor(getRadioPlaybackElapsedSeconds(streamState) * RADIO_STREAM_BYTES_PER_SECOND)
+            : 0;
+          activeAudioOffset = Math.min(sharedOffset, Math.max(0, activeAudio.length - 1));
           activeFileStarted = false;
           continue;
         } catch (error) {
@@ -943,6 +954,18 @@ async function readRadioState(): Promise<RadioState> {
   } catch {
     return defaultRadioState();
   }
+}
+
+async function readSynchronizedRadioState(): Promise<RadioState> {
+  const state = await readRadioState();
+  const synchronized = synchronizeRadioPlayback(state);
+  if (
+    synchronized.currentTrack?.filename !== state.currentTrack?.filename
+    || synchronized.currentTrackStartedAt !== state.currentTrackStartedAt
+  ) {
+    await writeRadioState(synchronized);
+  }
+  return synchronized;
 }
 
 async function writeRadioState(state: RadioState) {

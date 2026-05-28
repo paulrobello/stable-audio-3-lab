@@ -32,6 +32,7 @@ struct RadioPlaybackMetadata {
     var albumTitle: String?
     var queueText: String?
     var durationSeconds: Int?
+    var trackStartedAt: Date?
 
     init(
         trackID: String? = nil,
@@ -39,7 +40,8 @@ struct RadioPlaybackMetadata {
         artist: String = "Pardora",
         albumTitle: String? = nil,
         queueText: String? = nil,
-        durationSeconds: Int? = nil
+        durationSeconds: Int? = nil,
+        trackStartedAt: Date? = nil
     ) {
         self.trackID = trackID
         self.title = title
@@ -47,6 +49,7 @@ struct RadioPlaybackMetadata {
         self.albumTitle = albumTitle
         self.queueText = queueText
         self.durationSeconds = durationSeconds
+        self.trackStartedAt = trackStartedAt
     }
 
     init?(state: RadioStreamState?) {
@@ -60,6 +63,22 @@ struct RadioPlaybackMetadata {
         albumTitle = state.selectedStyleId.displayName
         queueText = "\(state.queueAheadCount)/\(state.queueTarget) ahead"
         durationSeconds = state.currentTrack?.durationSeconds
+        trackStartedAt = Self.parseISO8601Date(state.currentTrackStartedAt)
+    }
+
+    private static func parseISO8601Date(_ value: String?) -> Date? {
+        guard let value else {
+            return nil
+        }
+
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: value) {
+            return date
+        }
+
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: value)
     }
 }
 
@@ -237,7 +256,9 @@ final class RadioPlayer {
         }
 
         let elapsed: TimeInterval
-        if isPlaying, let progressAnchorDate {
+        if let sharedElapsed = sharedStationElapsedSeconds(for: metadata) {
+            elapsed = sharedElapsed
+        } else if isPlaying, let progressAnchorDate {
             elapsed = TimeInterval(progressAnchorElapsedSeconds) + now().timeIntervalSince(progressAnchorDate)
         } else {
             elapsed = TimeInterval(progressAnchorElapsedSeconds)
@@ -312,13 +333,23 @@ final class RadioPlayer {
         let nextTrackID = metadata.trackID ?? metadata.title
         guard activeTrackID != nextTrackID else {
             progress.durationSeconds = metadata.durationSeconds
+            refreshProgress()
             return
         }
 
         activeTrackID = nextTrackID
-        progressAnchorDate = isPlaying ? now() : nil
+        progressAnchorDate = metadata.trackStartedAt == nil && isPlaying ? now() : nil
         progressAnchorElapsedSeconds = 0
         progress = RadioPlaybackProgress(durationSeconds: metadata.durationSeconds)
+        refreshProgress()
+    }
+
+    private func sharedStationElapsedSeconds(for metadata: RadioPlaybackMetadata?) -> TimeInterval? {
+        guard let trackStartedAt = metadata?.trackStartedAt else {
+            return nil
+        }
+
+        return max(0, now().timeIntervalSince(trackStartedAt))
     }
 
     private func updateLiveActivity() {
