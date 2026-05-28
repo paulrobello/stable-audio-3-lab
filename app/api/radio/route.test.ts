@@ -260,6 +260,40 @@ printf '%s' '{"label":"Dark Orchestral Breaks","seedPrompt":"brooding cinematic 
     expect(deleteJson.state?.selectedStyleId).toBe("synthwave");
   });
 
+  it("updates and deletes built-in music styles through the style API", async () => {
+    tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
+    process.chdir(tempCwd);
+    process.env.RADIO_OLLAMA_MODELS_TIMEOUT_MS = "1";
+
+    const updateResponse = await POST(new NextRequest("http://localhost:3007/api/radio", {
+      method: "POST",
+      body: JSON.stringify({
+        action: "updateStyle",
+        styleId: "synthwave",
+        label: "Synthwave Noir",
+        seedPrompt: "darker synthwave instrumental with heavy analog bass and rain-gloss pads",
+        negativePrompt: "thin drums, vocals",
+      }),
+    }));
+    const updateJson = await updateResponse.json() as { ok: boolean; style?: { id?: string; label?: string }; state?: { styles?: Array<{ id?: string; label?: string }>; customStyles?: Array<{ id?: string }> } };
+
+    expect(updateJson.ok).toBe(true);
+    expect(updateJson.style).toMatchObject({ id: "synthwave", label: "Synthwave Noir" });
+    expect(updateJson.state?.customStyles?.map((style) => style.id)).toContain("synthwave");
+    expect(updateJson.state?.styles?.find((style) => style.id === "synthwave")?.label).toBe("Synthwave Noir");
+
+    const deleteResponse = await POST(new NextRequest("http://localhost:3007/api/radio", {
+      method: "POST",
+      body: JSON.stringify({ action: "deleteStyle", styleId: "ambient" }),
+    }));
+    const deleteJson = await deleteResponse.json() as { ok: boolean; deletedStyle?: { id?: string }; state?: { styles?: Array<{ id?: string }>; deletedStyleIds?: string[]; selectedStyleId?: string } };
+
+    expect(deleteJson.ok).toBe(true);
+    expect(deleteJson.deletedStyle?.id).toBe("ambient");
+    expect(deleteJson.state?.deletedStyleIds).toEqual(["ambient"]);
+    expect(deleteJson.state?.styles?.map((style) => style.id)).not.toContain("ambient");
+  });
+
   it("registers a starred library mp3 as a marked fallback track", async () => {
     tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
     process.chdir(tempCwd);

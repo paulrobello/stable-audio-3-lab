@@ -28,11 +28,17 @@ const radioState: RadioStreamState = {
   announcementPrefix: "Now playing: ",
   announcementSuffix: "",
   customStyles: [],
+  deletedStyleIds: [],
   styles: [{
     id: "synthwave",
     label: "Synthwave Night Drive",
     seedPrompt: "instrumental synthwave, warm analog bass, neon pads, clean punchy drums, 112 BPM, no vocals",
     negativePrompt: "muddy low end, harsh cymbals, distorted clipping, vocals",
+  }, {
+    id: "ambient",
+    label: "Ambient Signal Drift",
+    seedPrompt: "slow evolving ambient instrumental, wide pads, gentle arpeggios, spacious reverb, soft texture",
+    negativePrompt: "busy drums, abrupt transitions, harsh noise, vocals",
   }],
   preferences: {},
   currentTrackByStyle: {},
@@ -236,6 +242,58 @@ describe("radio page loading", () => {
     await waitFor(() => expect(screen.queryByRole("option", { name: "Dungeon Synth Tape" })).toBeNull());
   });
 
+  it("edits and deletes default music styles from the radio UI", async () => {
+    const editedStyle = {
+      ...radioState.styles[0],
+      label: "Synthwave Noir",
+      seedPrompt: "darker synthwave instrumental with heavy analog bass and rain-gloss pads",
+      negativePrompt: "thin drums, vocals",
+    };
+    const editedState = {
+      ...radioState,
+      customStyles: [editedStyle],
+      styles: [editedStyle, ...radioState.styles.slice(1)],
+    };
+    const deletedState = {
+      ...radioState,
+      selectedStyleId: "synthwave",
+      deletedStyleIds: ["ambient"],
+      styles: radioState.styles.filter((style) => style.id !== "ambient"),
+    };
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as { action?: string; styleId?: string } : {};
+      if (body.action === "updateStyle") {
+        return { json: async () => ({ ok: true, style: editedStyle, state: editedState }) };
+      }
+      if (body.action === "deleteStyle") {
+        return { json: async () => ({ ok: true, deletedStyle: radioState.styles.find((style) => style.id === body.styleId), state: deletedState }) };
+      }
+      return { json: async () => ({ ok: true, state: radioState, promptModels: ["qwen3:14b"], cleanedTracks: [] }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(<RadioStationClient initialState={radioState} initialPromptModels={["qwen3:14b"]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit Synthwave Night Drive" }));
+    fireEvent.change(screen.getByLabelText("Style name"), { target: { value: "Synthwave Noir" } });
+    fireEvent.change(screen.getByLabelText("Style prompt"), { target: { value: "darker synthwave instrumental with heavy analog bass and rain-gloss pads" } });
+    fireEvent.change(screen.getByLabelText("Style negative prompt"), { target: { value: "thin drums, vocals" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save music style" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/radio", expect.objectContaining({
+      body: expect.stringContaining('"styleId":"synthwave"'),
+    })));
+    await waitFor(() => expect(screen.getByRole("option", { name: "Synthwave Noir" })).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete Ambient Signal Drift" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/radio", expect.objectContaining({
+      body: expect.stringContaining('"styleId":"ambient"'),
+    })));
+    await waitFor(() => expect(screen.queryByRole("option", { name: "Ambient Signal Drift" })).toBeNull());
+  });
+
   it("plays a generated test voice sample from the selected TTS settings", async () => {
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       const body = typeof init?.body === "string" ? JSON.parse(init.body) as { action?: string } : {};
@@ -387,6 +445,29 @@ describe("radio page loading", () => {
 
     await waitFor(() => expect(container.querySelector("audio")?.getAttribute("src")).toBe("http://localhost:3000/api/radio?stream=1&skipAnnouncement=1"));
     expect(playMock).toHaveBeenCalled();
+  });
+
+  it("skips existing announcement audio when title announcements are disabled", async () => {
+    const announcedTrack = {
+      ...currentTrack,
+      announce: true,
+      announcementFilename: "radio_announce_synthwave_mobile_check.mp3",
+    };
+    const stateWithDisabledAnnouncements = {
+      ...radioState,
+      announceEnabled: false,
+      currentTrack: announcedTrack,
+      history: [announcedTrack],
+      streamReady: true,
+      streamUrl: "/api/radio?stream=1",
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      json: async () => ({ ok: true, state: stateWithDisabledAnnouncements, promptModels: ["qwen3:14b"] }),
+    }));
+
+    const { container } = render(<RadioStationClient initialState={stateWithDisabledAnnouncements} initialPromptModels={["qwen3:14b"]} />);
+
+    await waitFor(() => expect(container.querySelector("audio")?.getAttribute("src")).toBe("http://localhost:3000/api/radio?stream=1&skipAnnouncement=1"));
   });
 
   it("keeps one active audio player on the original source during same-track refreshes", async () => {

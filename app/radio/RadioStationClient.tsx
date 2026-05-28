@@ -41,7 +41,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
   const [selectedQueueTrackIds, setSelectedQueueTrackIds] = useState<Set<string>>(() => new Set());
   const [streamReloadKey, setStreamReloadKey] = useState(0);
   const [trackElapsedSeconds, setTrackElapsedSeconds] = useState(0);
-  const [playbackPhase, setPlaybackPhase] = useState<RadioPlaybackPhase>(() => initialState?.currentTrack?.announcementFilename ? "announcement" : "song");
+  const [playbackPhase, setPlaybackPhase] = useState<RadioPlaybackPhase>(() => initialState?.announceEnabled !== false && initialState?.currentTrack?.announcementFilename ? "announcement" : "song");
   const audioRef = useRef<HTMLAudioElement>(null);
   const testVoiceAudioRef = useRef<HTMLAudioElement>(null);
   const loadRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -49,7 +49,6 @@ export default function RadioStationClient({ initialState = null, initialPromptM
   const resumeAfterStreamReloadRef = useRef(false);
 
   const availableStyles = useMemo(() => radioState?.styles?.length ? radioState.styles : radioStyles, [radioState?.styles]);
-  const customStyleIds = useMemo(() => new Set((radioState?.customStyles ?? []).map((style) => style.id)), [radioState?.customStyles]);
   const selectedStyle = useMemo(() => availableStyles.find((style) => style.id === selectedStyleId) ?? availableStyles[0] ?? radioStyles[0], [availableStyles, selectedStyleId]);
   const promptModelOptions = useMemo(() => mergePromptModelOptions(promptModels, promptModel), [promptModels, promptModel]);
   const ttsVoiceOptions = useMemo(() => {
@@ -74,13 +73,15 @@ export default function RadioStationClient({ initialState = null, initialPromptM
   const publicPlaylistUrls = radioState?.publicPlaylistUrls;
   const lanPlaylistUrls = radioState?.lanPlaylistUrls;
   const stablePlayerStreamUrl = useStableRadioStreamUrl(currentTrack?.filename, browserOriginStreamUrl);
-  const announcementUrl = useBrowserOriginOutputUrl(currentTrack?.announcementFilename);
+  const currentTrackHasAnnouncement = !!currentTrack?.announcementFilename;
+  const shouldPlayCurrentAnnouncement = announceEnabled && currentTrackHasAnnouncement;
+  const announcementUrl = useBrowserOriginOutputUrl(shouldPlayCurrentAnnouncement ? currentTrack?.announcementFilename : undefined);
   const songStreamUrl = useMemo(
-    () => currentTrack?.announcementFilename ? appendSkipAnnouncementParam(stablePlayerStreamUrl) : stablePlayerStreamUrl,
-    [currentTrack?.announcementFilename, stablePlayerStreamUrl],
+    () => currentTrackHasAnnouncement ? appendSkipAnnouncementParam(stablePlayerStreamUrl) : stablePlayerStreamUrl,
+    [currentTrackHasAnnouncement, stablePlayerStreamUrl],
   );
   const reloadedSongStreamUrl = useMemo(() => appendStreamReloadParam(songStreamUrl, streamReloadKey), [songStreamUrl, streamReloadKey]);
-  const playerStreamUrl = playbackPhase === "announcement" && announcementUrl ? announcementUrl : reloadedSongStreamUrl;
+  const playerStreamUrl = shouldPlayCurrentAnnouncement && playbackPhase === "announcement" && announcementUrl ? announcementUrl : reloadedSongStreamUrl;
   const currentTrackKey = trackFeedbackKey(currentTrack);
   const currentTrackLiked = optimisticLike?.trackKey === currentTrackKey ? optimisticLike.liked : isRadioTrackLiked(currentTrack, radioState);
   const radioStats = useMemo<RadioStats | null>(() => radioState ? radioState.stats ?? buildRadioStats(radioState) : null, [radioState]);
@@ -103,9 +104,9 @@ export default function RadioStationClient({ initialState = null, initialPromptM
   useEffect(() => {
     setOptimisticLike(null);
     setTrackElapsedSeconds(0);
-    setPlaybackPhase(currentTrack?.announcementFilename ? "announcement" : "song");
+    setPlaybackPhase(shouldPlayCurrentAnnouncement ? "announcement" : "song");
     streamElapsedAtTrackStartRef.current = readAudioCurrentTime(audioRef.current);
-  }, [currentTrackKey, currentTrack?.announcementFilename]);
+  }, [currentTrackKey, shouldPlayCurrentAnnouncement]);
 
   useEffect(() => {
     const visibleIds = new Set(selectedStyleQueue.map((track) => track.id));
@@ -739,35 +740,30 @@ export default function RadioStationClient({ initialState = null, initialPromptM
             <div>
               <h2 className="text-lg font-semibold">Music style</h2>
               <div className="mt-3 grid gap-2">
-                {availableStyles.map((style) => {
-                  const isCustomStyle = customStyleIds.has(style.id);
-                  return (
-                    <div
-                      key={style.id}
-                      className={clsx(
-                        "rounded-2xl border p-3 transition",
-                        selectedStyleId === style.id ? "border-emerald-200/45 bg-emerald-200/15" : "border-white/10 bg-white/[0.04]",
-                      )}
-                    >
-                      <button type="button" onClick={() => changeStyle(style.id)} className="block w-full text-left">
-                        <div className="font-semibold text-white/88">{style.label}</div>
-                        <div className="mt-1 line-clamp-2 text-xs leading-5 text-white/45">{style.seedPrompt}</div>
+                {availableStyles.map((style) => (
+                  <div
+                    key={style.id}
+                    className={clsx(
+                      "rounded-2xl border p-3 transition",
+                      selectedStyleId === style.id ? "border-emerald-200/45 bg-emerald-200/15" : "border-white/10 bg-white/[0.04]",
+                    )}
+                  >
+                    <button type="button" onClick={() => changeStyle(style.id)} className="block w-full text-left">
+                      <div className="font-semibold text-white/88">{style.label}</div>
+                      <div className="mt-1 line-clamp-2 text-xs leading-5 text-white/45">{style.seedPrompt}</div>
+                    </button>
+                    <div className="mt-3 flex gap-2">
+                      <button type="button" onClick={() => editCustomStyle(style)} disabled={!!busy} aria-label={`Edit ${style.label}`} className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.06] px-3 py-2 text-xs font-bold text-white/72 hover:bg-white/[0.1] disabled:opacity-45">
+                        <PencilSquareIcon className="h-4 w-4" aria-hidden="true" />
+                        <span>Edit</span>
                       </button>
-                      {isCustomStyle ? (
-                        <div className="mt-3 flex gap-2">
-                          <button type="button" onClick={() => editCustomStyle(style)} disabled={!!busy} aria-label={`Edit ${style.label}`} className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.06] px-3 py-2 text-xs font-bold text-white/72 hover:bg-white/[0.1] disabled:opacity-45">
-                            <PencilSquareIcon className="h-4 w-4" aria-hidden="true" />
-                            <span>Edit</span>
-                          </button>
-                          <button type="button" onClick={() => void deleteCustomStyle(style)} disabled={!!busy} aria-label={`Delete ${style.label}`} className="inline-flex items-center gap-2 rounded-full border border-rose-200/20 bg-rose-400/10 px-3 py-2 text-xs font-bold text-rose-100/80 hover:bg-rose-400/18 disabled:opacity-45">
-                            <TrashIcon className="h-4 w-4" aria-hidden="true" />
-                            <span>Delete</span>
-                          </button>
-                        </div>
-                      ) : null}
+                      <button type="button" onClick={() => void deleteCustomStyle(style)} disabled={!!busy} aria-label={`Delete ${style.label}`} className="inline-flex items-center gap-2 rounded-full border border-rose-200/20 bg-rose-400/10 px-3 py-2 text-xs font-bold text-rose-100/80 hover:bg-rose-400/18 disabled:opacity-45">
+                        <TrashIcon className="h-4 w-4" aria-hidden="true" />
+                        <span>Delete</span>
+                      </button>
                     </div>
-                  );
-                })}
+                  </div>
+                ))}
               </div>
             </div>
 

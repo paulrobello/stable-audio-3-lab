@@ -23,6 +23,7 @@ import {
   makeUniqueRadioTrackTitle,
   normalizeRadioTtsConfig,
   normalizeRadioState,
+  parseRadioPromptDraft,
   getRadioTtsVoiceOptions,
   normalizeRadioRating,
   normalizeRadioStyleId,
@@ -75,7 +76,7 @@ describe("radio station styles", () => {
     expect(buildRadioPromptSeed(result!.state, result!.style.id)).toContain("Base direction: moody dungeon synth instrumental");
   });
 
-  it("updates and deletes custom music styles without mutating built-in presets", () => {
+  it("updates and deletes custom music styles", () => {
     const created = createRadioStyle(defaultRadioState(), {
       label: "Dungeon Synth",
       seedPrompt: "moody dungeon synth instrumental, tape hiss, simple medieval melody, no vocals",
@@ -90,12 +91,6 @@ describe("radio station styles", () => {
     });
     const deleted = deleteRadioStyle(updated!.state, created.style.id);
 
-    expect(updateRadioStyle(created.state, {
-      styleId: "synthwave",
-      label: "Edited Synthwave",
-      seedPrompt: "changed built-in",
-      negativePrompt: "none",
-    })).toBeUndefined();
     expect(updated?.style).toMatchObject({
       id: "dungeon-synth",
       label: "Dungeon Synth Tape",
@@ -105,6 +100,28 @@ describe("radio station styles", () => {
     expect(deleted?.deletedStyle.id).toBe("dungeon-synth");
     expect(deleted?.state.customStyles).toEqual([]);
     expect(deleted?.state.selectedStyleId).toBe("synthwave");
+  });
+
+  it("overrides and removes default music styles from the available style list", () => {
+    const updated = updateRadioStyle(defaultRadioState(), {
+      styleId: "synthwave",
+      label: "Edited Synthwave",
+      seedPrompt: "darker edited synthwave with heavier analog bass and wider pads",
+      negativePrompt: "thin drums, vocals",
+    });
+    const deleted = deleteRadioStyle(updated!.state, "ambient");
+    const normalized = normalizeRadioState({
+      selectedStyleId: "ambient",
+      customStyles: updated!.state.customStyles,
+      deletedStyleIds: deleted!.state.deletedStyleIds,
+    } as Parameters<typeof normalizeRadioState>[0]);
+
+    expect(updated?.style.id).toBe("synthwave");
+    expect(buildRadioPromptSeed(updated!.state, "synthwave")).toContain("Style: Edited Synthwave");
+    expect(deleted?.deletedStyle.id).toBe("ambient");
+    expect(deleted?.state.deletedStyleIds).toEqual(["ambient"]);
+    expect(buildRadioStreamState(deleted!.state).styles.map((style) => style.id)).not.toContain("ambient");
+    expect(normalized.selectedStyleId).toBe("synthwave");
   });
 
   it("builds and parses a Codex CLI style draft without direct artist imitation", () => {
@@ -241,6 +258,24 @@ describe("radio station styles", () => {
     expect(messages.prompt).toContain("Existing Synth Title");
     expect(messages.prompt).toContain("Do not reuse");
     expect(messages.prompt).toContain("Return JSON only");
+  });
+
+  it("asks station song prompts to end naturally with a fade out", () => {
+    const state = defaultRadioState("2026-05-26T12:00:00.000Z");
+    const messages = buildRadioPromptGeneratorMessages(state, "synthwave", "llama3.1:8b");
+    const fallback = createFallbackRadioPromptDraft(state, "synthwave", "llama3.1:8b", "2026-05-26T12:00:00.000Z");
+    const parsed = parseRadioPromptDraft(JSON.stringify({
+      title: "Neon Exit",
+      prompt: "instrumental synthwave with warm bass and gated drums",
+      negativePrompt: "vocals",
+    }), state, "synthwave", "llama3.1:8b");
+
+    expect(messages.prompt).toContain("natural outro");
+    expect(messages.prompt).toContain("fade out");
+    expect(fallback.prompt).toContain("natural outro");
+    expect(fallback.prompt).toContain("fade out");
+    expect(parsed.prompt).toContain("natural outro");
+    expect(parsed.prompt).toContain("fade out");
   });
 
   it("adds entropy to fallback drafts so queued songs do not share the same title", () => {

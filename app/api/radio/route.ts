@@ -92,7 +92,7 @@ export async function GET(request: NextRequest) {
         icyMetadataEnabled: forceIcyMetadata || request.headers.get("icy-metadata") === "1",
         metadataOnly: forceIcyMetadata || request.nextUrl.searchParams.get("metadataOnly") === "1",
         skipAnnouncement: request.nextUrl.searchParams.get("skipAnnouncement") === "1",
-        styleId: radioStyleQueryParam(request, state.customStyles),
+        styleId: radioStyleQueryParam(request, state),
       });
     }
     startRadioQueueMaintenance(state);
@@ -152,7 +152,7 @@ export async function POST(request: NextRequest) {
     if (action === "configure") {
       const nextState = selectRadioStyle({
         ...state,
-        selectedStyleId: normalizeRadioStyleId(body.styleId ?? state.selectedStyleId, state.customStyles),
+        selectedStyleId: normalizeRadioStyleId(body.styleId ?? state.selectedStyleId, state.customStyles, state.deletedStyleIds),
         promptModel: normalizeOllamaPromptModel(body.promptModel ?? state.promptModel),
         announceEnabled: typeof body.announceEnabled === "boolean" ? body.announceEnabled : state.announceEnabled,
         songLengthMinutes: normalizeRadioSongLengthMinutes(body.songLengthMinutes ?? state.songLengthMinutes),
@@ -193,7 +193,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === "draft") {
-      const styleId = normalizeRadioStyleId(body.styleId ?? state.selectedStyleId, state.customStyles);
+      const styleId = normalizeRadioStyleId(body.styleId ?? state.selectedStyleId, state.customStyles, state.deletedStyleIds);
       const promptModel = normalizeOllamaPromptModel(body.promptModel ?? state.promptModel);
       const draft = await draftWithOllama(state, styleId, promptModel);
       const nextState = { ...state, selectedStyleId: styleId, promptModel, currentDraft: draft, updatedAt: new Date().toISOString() };
@@ -204,7 +204,7 @@ export async function POST(request: NextRequest) {
     if (action === "track") {
       const filename = typeof body.filename === "string" ? body.filename : "";
       if (!isSafeAudioFilename(filename)) return NextResponse.json({ ok: false, error: "Invalid track filename" }, { status: 400 });
-      const styleId = normalizeRadioStyleId(body.styleId ?? state.selectedStyleId, state.customStyles);
+      const styleId = normalizeRadioStyleId(body.styleId ?? state.selectedStyleId, state.customStyles, state.deletedStyleIds);
       const promptProvider = normalizePromptProvider(body.promptProvider);
       const promptModel = normalizeOllamaPromptModel(body.promptModel ?? state.currentDraft?.promptModel ?? state.promptModel);
       const fileSizeBytes = await readAudioFileSizeBytes(filename);
@@ -265,7 +265,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === "rating") {
-      const styleId = normalizeRadioStyleId(body.styleId ?? state.currentTrack?.styleId ?? state.selectedStyleId, state.customStyles);
+      const styleId = normalizeRadioStyleId(body.styleId ?? state.currentTrack?.styleId ?? state.selectedStyleId, state.customStyles, state.deletedStyleIds);
       const phrase = typeof body.phrase === "string" && body.phrase.trim()
         ? body.phrase
         : state.currentTrack?.prompt ?? state.currentDraft?.prompt ?? "";
@@ -729,8 +729,12 @@ async function advanceStreamStateAfterTrack(track: RadioTrackRecord, styleId: Re
   return advanced;
 }
 
-function radioStyleQueryParam(request: NextRequest, customStyles: RadioState["customStyles"]) {
-  return normalizeRadioStyleUrlParam(request.nextUrl.searchParams.get("style") ?? request.nextUrl.searchParams.get("styleId"), customStyles);
+function radioStyleQueryParam(request: NextRequest, state: RadioState) {
+  return normalizeRadioStyleUrlParam(
+    request.nextUrl.searchParams.get("style") ?? request.nextUrl.searchParams.get("styleId"),
+    state.customStyles,
+    state.deletedStyleIds,
+  );
 }
 
 function resolveStreamStyleState(state: RadioState, styleId: ReturnType<typeof normalizeRadioStyleUrlParam>) {
