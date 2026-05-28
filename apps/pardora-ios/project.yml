@@ -3,6 +3,7 @@ options:
   bundleIdPrefix: net.pardev
   deploymentTarget:
     iOS: "17.0"
+    watchOS: "10.0"
 settings:
   base:
     DEVELOPMENT_TEAM: QMLVG482FY
@@ -18,9 +19,14 @@ targets:
       - target: PardoraLiveActivityExtension
         embed: true
       - sdk: ActivityKit.framework
+      - sdk: CarPlay.framework
+      - sdk: WatchConnectivity.framework
+      - target: PardoraWatchApp
+        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: net.pardev.pardora
+        CODE_SIGN_ENTITLEMENTS: Pardora/Pardora.entitlements
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Pardora/Resources/Info.plist
         MARKETING_VERSION: "0.1"
@@ -52,6 +58,26 @@ targets:
         NSSupportsLiveActivities: true
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
+  PardoraWatchApp:
+    type: application
+    platform: watchOS
+    sources:
+      - PardoraWatchApp
+    dependencies:
+      - sdk: WatchConnectivity.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.pardev.pardora.watchapp
+        GENERATE_INFOPLIST_FILE: YES
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "6.0"
+    info:
+      path: PardoraWatchApp/Info.plist
+      properties:
+        CFBundleDisplayName: Pardora
+        WKApplication: true
+        WKCompanionAppBundleIdentifier: net.pardev.pardora
   PardoraTests:
     type: bundle.unit-test
     platform: iOS

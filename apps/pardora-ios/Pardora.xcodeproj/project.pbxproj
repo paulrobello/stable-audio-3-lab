@@ -15,24 +15,31 @@
 		307DF81E9B2A6CFFB32EAC6F /* RadioAPIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B5E1918683A7065423DB90B /* RadioAPIClientTests.swift */; };
 		372E7419B9AAF560BC99E656 /* PardoraSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E450DA60541D6E4BC3DA859 /* PardoraSettings.swift */; };
 		379D754617397768AB7BB2A5 /* PardoraApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08372637BE5403229D4E0EF6 /* PardoraApp.swift */; };
+		3FF915DDCCAB5248F41BA996 /* WatchConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5F3B82256BCE9D9BAB951C5F /* WatchConnectivity.framework */; };
 		430F7B35AE418180545A7037 /* PardoraLiveActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFC009390CAA7F24CCF8AA64 /* PardoraLiveActivityWidget.swift */; };
 		47B5AFCB2A7C38288B4B591A /* AppRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23BD467777D391EB06DF855E /* AppRootView.swift */; };
 		4986FF208E3E8933EAAB9361 /* RadioAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F9FFA84DD252960323EA8D /* RadioAppModel.swift */; };
 		4CAF4D72A14DACD2A168ED12 /* RadioPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E4F9A7ABC4DB8DB6CCB028C /* RadioPlayer.swift */; };
 		5495061E41D686AF3D885E27 /* RadioModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A1D662F0C2BBA84572B9C4C /* RadioModels.swift */; };
+		5B66638AD01CED446F700C71 /* PardoraWatchConnectivityController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDE057B13C8130881270DEAC /* PardoraWatchConnectivityController.swift */; };
+		5C20998F45B9BF9CF7CFB199 /* CarPlay.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0ACC392ECEE260708E838D16 /* CarPlay.framework */; };
 		5CCCB9F64DB087F8F9D9626E /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D64136BBA73EB7D1753A8F07 /* WidgetKit.framework */; };
 		5EDFFBCBE3E866A5292595D6 /* MemoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83BBE6D955A979784C28F72E /* MemoryView.swift */; };
+		6195CD62616E67D7EFFEC8EB /* PardoraWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 296858FF034C122EE8F4B7A5 /* PardoraWatchApp.swift */; };
 		647F72C22A24E8D1C93E0F1B /* PardoraActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 334FC8DBEACABE845F084D81 /* PardoraActivityAttributes.swift */; };
 		6A97435FACB40B638FAA62D8 /* PardoraActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 334FC8DBEACABE845F084D81 /* PardoraActivityAttributes.swift */; };
 		7DA669897911A68CF9C1000B /* PardoraLiveActivityController.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACD53D2DF7897C7027C23F76 /* PardoraLiveActivityController.swift */; };
 		8C0FD5E9AF8FDA46891AD166 /* NowPlayingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6D4FDA64E77E467D2980C9E /* NowPlayingView.swift */; };
+		8F2D00954A84BD5C06A5C745 /* PardoraWatchApp.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 68D981282F70CFA741A3BC28 /* PardoraWatchApp.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		904F22FD8477C1451A6EA553 /* RadioAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761670DD56C97F39DE70353F /* RadioAPIClient.swift */; };
 		942AD844711B208DFE8E68BA /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32D4A2488E0485950AC9CD79 /* SettingsView.swift */; };
+		9475A6CF11EA295435B25306 /* WatchConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5F3B82256BCE9D9BAB951C5F /* WatchConnectivity.framework */; };
 		B2B32DC8D049012575791396 /* PardoraLiveActivityExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 7E5813739692E69C2EC047EA /* PardoraLiveActivityExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		BAE2F32085F983044470542C /* RadioAppModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB8B977B5C0D7C55362C7DE9 /* RadioAppModelTests.swift */; };
 		D0F82EE21A6A3A2874D1728D /* PardoraTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10A9066296E26D967D523B2D /* PardoraTheme.swift */; };
 		D570AE90FF8C3C9372D8FA56 /* RadioModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4AC7390FC2C0078F36FF56A /* RadioModelsTests.swift */; };
 		D8EDCA4DD638AB42721EFEEA /* QueueView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6EDA14FBD4B994CBE875BFD /* QueueView.swift */; };
+		DBDA7CADB01D89C2925A1F89 /* PardoraCarPlaySceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90B726832AC6E3B7E9CD4E79 /* PardoraCarPlaySceneDelegate.swift */; };
 		FF90AAAC1DAA96CBB29E9578 /* ActivityKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 12FA69A23ACF3AB892200908 /* ActivityKit.framework */; };
 /* End PBXBuildFile section */
 
@@ -43,6 +50,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = 54DA2882E75AEC97F34A5052;
 			remoteInfo = PardoraLiveActivityExtension;
+		};
+		91FD6EB44720B29189D3DE73 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C273EEB3DD4A5620A8B590ED /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 715CA20231871F3F8207C708;
+			remoteInfo = PardoraWatchApp;
 		};
 		E185EE90AE1A3E0E8244AED5 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -65,25 +79,43 @@
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		BC8B91ECB85BAA6975D69E92 /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				8F2D00954A84BD5C06A5C745 /* PardoraWatchApp.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		08372637BE5403229D4E0EF6 /* PardoraApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PardoraApp.swift; sourceTree = "<group>"; };
+		0ACC392ECEE260708E838D16 /* CarPlay.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CarPlay.framework; path = System/Library/Frameworks/CarPlay.framework; sourceTree = SDKROOT; };
 		10A9066296E26D967D523B2D /* PardoraTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PardoraTheme.swift; sourceTree = "<group>"; };
+		11ECEF9EA904A4CB84929D74 /* Pardora.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Pardora.entitlements; sourceTree = "<group>"; };
 		12FA69A23ACF3AB892200908 /* ActivityKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ActivityKit.framework; path = System/Library/Frameworks/ActivityKit.framework; sourceTree = SDKROOT; };
 		18E62E6B7064E4E822433F6E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		23BD467777D391EB06DF855E /* AppRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRootView.swift; sourceTree = "<group>"; };
+		296858FF034C122EE8F4B7A5 /* PardoraWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PardoraWatchApp.swift; sourceTree = "<group>"; };
 		2CC3EFBB608E4ADC4B9F6EE1 /* RadioEndpointResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadioEndpointResolver.swift; sourceTree = "<group>"; };
 		2E4F9A7ABC4DB8DB6CCB028C /* RadioPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadioPlayer.swift; sourceTree = "<group>"; };
 		32D4A2488E0485950AC9CD79 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		334FC8DBEACABE845F084D81 /* PardoraActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PardoraActivityAttributes.swift; sourceTree = "<group>"; };
 		4B5E1918683A7065423DB90B /* RadioAPIClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadioAPIClientTests.swift; sourceTree = "<group>"; };
 		4E450DA60541D6E4BC3DA859 /* PardoraSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PardoraSettings.swift; sourceTree = "<group>"; };
+		5F3B82256BCE9D9BAB951C5F /* WatchConnectivity.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WatchConnectivity.framework; path = System/Library/Frameworks/WatchConnectivity.framework; sourceTree = SDKROOT; };
+		68D981282F70CFA741A3BC28 /* PardoraWatchApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PardoraWatchApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		761670DD56C97F39DE70353F /* RadioAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadioAPIClient.swift; sourceTree = "<group>"; };
 		7E5813739692E69C2EC047EA /* PardoraLiveActivityExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = PardoraLiveActivityExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		83BBE6D955A979784C28F72E /* MemoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryView.swift; sourceTree = "<group>"; };
 		8A1D662F0C2BBA84572B9C4C /* RadioModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadioModels.swift; sourceTree = "<group>"; };
 		8BC69BD71066C090C23B7A11 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		8FDA9E18F67F7FD4E1A5E61B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		90B726832AC6E3B7E9CD4E79 /* PardoraCarPlaySceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PardoraCarPlaySceneDelegate.swift; sourceTree = "<group>"; };
 		AB4A92B39E4FB984D3698E01 /* CloudflareOneApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudflareOneApp.swift; sourceTree = "<group>"; };
 		ACD53D2DF7897C7027C23F76 /* PardoraLiveActivityController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PardoraLiveActivityController.swift; sourceTree = "<group>"; };
 		C6D7D6F3683D5AEE9501ADE4 /* PardoraTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = PardoraTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -96,6 +128,7 @@
 		F2F5C2BFF5B46765B4872567 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		F6D4FDA64E77E467D2980C9E /* NowPlayingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingView.swift; sourceTree = "<group>"; };
 		FB500BF222D3876F0A672183 /* RadioPlayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadioPlayerTests.swift; sourceTree = "<group>"; };
+		FDE057B13C8130881270DEAC /* PardoraWatchConnectivityController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PardoraWatchConnectivityController.swift; sourceTree = "<group>"; };
 		FFC009390CAA7F24CCF8AA64 /* PardoraLiveActivityWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PardoraLiveActivityWidget.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -109,11 +142,21 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		4B6D150D35BAC746352257E9 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9475A6CF11EA295435B25306 /* WatchConnectivity.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		83A8424DA5BCD5587EBC9D1A /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				1254C67E846F54FAE28AD356 /* ActivityKit.framework in Frameworks */,
+				5C20998F45B9BF9CF7CFB199 /* CarPlay.framework in Frameworks */,
+				3FF915DDCCAB5248F41BA996 /* WatchConnectivity.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -126,6 +169,15 @@
 				8A1D662F0C2BBA84572B9C4C /* RadioModels.swift */,
 			);
 			path = Models;
+			sourceTree = "<group>";
+		};
+		16CFBE0C53E191540C0CE36E /* PardoraWatchApp */ = {
+			isa = PBXGroup;
+			children = (
+				8FDA9E18F67F7FD4E1A5E61B /* Info.plist */,
+				296858FF034C122EE8F4B7A5 /* PardoraWatchApp.swift */,
+			);
+			path = PardoraWatchApp;
 			sourceTree = "<group>";
 		};
 		23C0655F7E23AD39ECA7FC6E /* Memory */ = {
@@ -147,7 +199,9 @@
 		4D6154D6B5C0E0335B6E0157 /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				90B726832AC6E3B7E9CD4E79 /* PardoraCarPlaySceneDelegate.swift */,
 				ACD53D2DF7897C7027C23F76 /* PardoraLiveActivityController.swift */,
+				FDE057B13C8130881270DEAC /* PardoraWatchConnectivityController.swift */,
 				761670DD56C97F39DE70353F /* RadioAPIClient.swift */,
 				E5F9FFA84DD252960323EA8D /* RadioAppModel.swift */,
 				2CC3EFBB608E4ADC4B9F6EE1 /* RadioEndpointResolver.swift */,
@@ -161,6 +215,7 @@
 			children = (
 				23BD467777D391EB06DF855E /* AppRootView.swift */,
 				18E62E6B7064E4E822433F6E /* Assets.xcassets */,
+				11ECEF9EA904A4CB84929D74 /* Pardora.entitlements */,
 				08372637BE5403229D4E0EF6 /* PardoraApp.swift */,
 				7DD818E4E8045DA992511D72 /* Features */,
 				01764A1295B2E8A91D37BB4C /* Models */,
@@ -226,6 +281,7 @@
 				E28AB0E994B58696348C0B61 /* Pardora.app */,
 				7E5813739692E69C2EC047EA /* PardoraLiveActivityExtension.appex */,
 				C6D7D6F3683D5AEE9501ADE4 /* PardoraTests.xctest */,
+				68D981282F70CFA741A3BC28 /* PardoraWatchApp.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -236,6 +292,7 @@
 				61D594EB4DFA14B38B05058C /* Pardora */,
 				EC65D7B751D3408C481B66FF /* PardoraLiveActivityExtension */,
 				BD52DF1A0DFD6D13243BB1A1 /* PardoraTests */,
+				16CFBE0C53E191540C0CE36E /* PardoraWatchApp */,
 				FBE59764A6807DCFA130AF61 /* Frameworks */,
 				C447ABB8623BEB97E2191F62 /* Products */,
 			);
@@ -262,6 +319,8 @@
 			isa = PBXGroup;
 			children = (
 				12FA69A23ACF3AB892200908 /* ActivityKit.framework */,
+				0ACC392ECEE260708E838D16 /* CarPlay.framework */,
+				5F3B82256BCE9D9BAB951C5F /* WatchConnectivity.framework */,
 				D64136BBA73EB7D1753A8F07 /* WidgetKit.framework */,
 			);
 			name = Frameworks;
@@ -288,6 +347,24 @@
 			productReference = 7E5813739692E69C2EC047EA /* PardoraLiveActivityExtension.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		715CA20231871F3F8207C708 /* PardoraWatchApp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B9E672832443743AFCDF8754 /* Build configuration list for PBXNativeTarget "PardoraWatchApp" */;
+			buildPhases = (
+				648AB599EE3AD90EF223B309 /* Sources */,
+				4B6D150D35BAC746352257E9 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = PardoraWatchApp;
+			packageProductDependencies = (
+			);
+			productName = PardoraWatchApp;
+			productReference = 68D981282F70CFA741A3BC28 /* PardoraWatchApp.app */;
+			productType = "com.apple.product-type.application";
+		};
 		937F220EB69D3169E0A3D67B /* Pardora */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 66E83506AB05A7B350B586A0 /* Build configuration list for PBXNativeTarget "Pardora" */;
@@ -296,11 +373,13 @@
 				290B833334EC946720A2EF09 /* Resources */,
 				83A8424DA5BCD5587EBC9D1A /* Frameworks */,
 				2FC37FD78AEFFDAE9A6FAEC1 /* Embed Foundation Extensions */,
+				BC8B91ECB85BAA6975D69E92 /* Embed Watch Content */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				2B84EFA68075CEDFE319D50B /* PBXTargetDependency */,
+				1D22F65428894FB8D88907CE /* PBXTargetDependency */,
 			);
 			name = Pardora;
 			packageProductDependencies = (
@@ -340,6 +419,10 @@
 						DevelopmentTeam = QMLVG482FY;
 						ProvisioningStyle = Automatic;
 					};
+					715CA20231871F3F8207C708 = {
+						DevelopmentTeam = QMLVG482FY;
+						ProvisioningStyle = Automatic;
+					};
 					937F220EB69D3169E0A3D67B = {
 						DevelopmentTeam = QMLVG482FY;
 						ProvisioningStyle = Automatic;
@@ -367,6 +450,7 @@
 				937F220EB69D3169E0A3D67B /* Pardora */,
 				54DA2882E75AEC97F34A5052 /* PardoraLiveActivityExtension */,
 				F6687AE67DC8EA90094C4F08 /* PardoraTests */,
+				715CA20231871F3F8207C708 /* PardoraWatchApp */,
 			);
 		};
 /* End PBXProject section */
@@ -383,6 +467,14 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		648AB599EE3AD90EF223B309 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6195CD62616E67D7EFFEC8EB /* PardoraWatchApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		8DD2C5727771BC6BC5E9BFEC /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -402,9 +494,11 @@
 				8C0FD5E9AF8FDA46891AD166 /* NowPlayingView.swift in Sources */,
 				647F72C22A24E8D1C93E0F1B /* PardoraActivityAttributes.swift in Sources */,
 				379D754617397768AB7BB2A5 /* PardoraApp.swift in Sources */,
+				DBDA7CADB01D89C2925A1F89 /* PardoraCarPlaySceneDelegate.swift in Sources */,
 				7DA669897911A68CF9C1000B /* PardoraLiveActivityController.swift in Sources */,
 				372E7419B9AAF560BC99E656 /* PardoraSettings.swift in Sources */,
 				D0F82EE21A6A3A2874D1728D /* PardoraTheme.swift in Sources */,
+				5B66638AD01CED446F700C71 /* PardoraWatchConnectivityController.swift in Sources */,
 				D8EDCA4DD638AB42721EFEEA /* QueueView.swift in Sources */,
 				904F22FD8477C1451A6EA553 /* RadioAPIClient.swift in Sources */,
 				4986FF208E3E8933EAAB9361 /* RadioAppModel.swift in Sources */,
@@ -429,6 +523,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		1D22F65428894FB8D88907CE /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 715CA20231871F3F8207C708 /* PardoraWatchApp */;
+			targetProxy = 91FD6EB44720B29189D3DE73 /* PBXContainerItemProxy */;
+		};
 		2B84EFA68075CEDFE319D50B /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 54DA2882E75AEC97F34A5052 /* PardoraLiveActivityExtension */;
@@ -442,10 +541,43 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		165720472B4A56F522EA48B0 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PardoraWatchApp/Info.plist;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = net.pardev.pardora.watchapp;
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 4;
+			};
+			name = Release;
+		};
+		303905A95404361D840A9C94 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PardoraWatchApp/Info.plist;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = net.pardev.pardora.watchapp;
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 4;
+			};
+			name = Debug;
+		};
 		4A6424566FECE0B21AEFE944 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Pardora/Pardora.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -530,10 +662,10 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 6.0;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
 			};
 			name = Release;
 		};
@@ -635,10 +767,10 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 6.0;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
 			};
 			name = Debug;
 		};
@@ -646,6 +778,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Pardora/Pardora.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -705,6 +838,15 @@
 			buildConfigurations = (
 				EF07249D4DCBF0EC0B97939F /* Debug */,
 				8FDBEAE81B89336398BCC569 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		B9E672832443743AFCDF8754 /* Build configuration list for PBXNativeTarget "PardoraWatchApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				303905A95404361D840A9C94 /* Debug */,
+				165720472B4A56F522EA48B0 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
