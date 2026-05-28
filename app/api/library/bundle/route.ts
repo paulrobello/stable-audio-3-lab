@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import path from "node:path";
-import { readdir, readFile } from "node:fs/promises";
-import { buildAnalysisSummary, buildAnalysisSummaryFilename, buildBatchBundleFilename, buildBatchManifest, buildBundleFilename, buildRenderScreenshotFilename, buildRenderScreenshotSvg, buildStoredZip, isSafeAudioFilename, isSafeBatchRunId, metadataFilenameForAudio, metadataPathForAudio, readBatchRunId } from "@/lib/library";
+import { readdir } from "node:fs/promises";
+import { buildAnalysisSummary, buildAnalysisSummaryFilename, buildBatchBundleFilename, buildBatchManifest, buildBundleFilename, buildRenderScreenshotFilename, buildRenderScreenshotSvg, buildStoredZip, isSafeAudioFilename, isSafeBatchRunId, metadataFilenameForAudio, metadataPathForAudio, outputPathForAudio, readBatchRunId } from "@/lib/library";
 
 export const runtime = "nodejs";
 
 const outputDir = () => path.join(process.cwd(), "public", "outputs");
+
+async function readRuntimeFile(filePath: string) {
+  const { readFile } = await import("node:fs/promises");
+  return readFile(filePath);
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -17,12 +22,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ ok: false, error: "Invalid filename" }, { status: 400 });
     }
 
-    const audioPath = path.join(outputDir(), filename);
-    const audio = await readFile(audioPath);
+    const audioPath = outputPathForAudio(outputDir(), filename);
+    const audio = await readRuntimeFile(audioPath);
     let metadata: Buffer;
     let parsedMetadata: unknown;
     try {
-      metadata = await readFile(metadataPathForAudio(audioPath));
+      metadata = await readRuntimeFile(metadataPathForAudio(audioPath));
       parsedMetadata = JSON.parse(metadata.toString("utf8"));
     } catch {
       metadata = Buffer.from(JSON.stringify({ filename, audioUrl: `/outputs/${filename}` }, null, 2));
@@ -61,12 +66,12 @@ async function buildBatchBundleResponse(batchRunId: string) {
   const matched: { filename: string; metadata: unknown; audio: Buffer; metadataBuffer: Buffer }[] = [];
 
   for (const filename of names) {
-    const audioPath = path.join(dir, filename);
+    const audioPath = outputPathForAudio(dir, filename);
     try {
-      const metadataBuffer = await readFile(metadataPathForAudio(audioPath));
+      const metadataBuffer = await readRuntimeFile(metadataPathForAudio(audioPath));
       const metadata = JSON.parse(metadataBuffer.toString("utf8"));
       if (readBatchRunId(metadata) !== batchRunId) continue;
-      matched.push({ filename, metadata, audio: await readFile(audioPath), metadataBuffer });
+      matched.push({ filename, metadata, audio: await readRuntimeFile(audioPath), metadataBuffer });
     } catch {
       // Skip older files with no metadata or malformed sidecars.
     }

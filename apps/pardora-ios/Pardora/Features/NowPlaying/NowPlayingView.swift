@@ -153,18 +153,18 @@ struct NowPlayingView: View {
         Menu {
             ForEach(selectableStyles) { style in
                 Button {
-                    Task { await model.selectMusicStyle(style) }
+                    Task { await model.selectMusicStyle(style.id) }
                 } label: {
-                    if model.state?.selectedStyleId == style {
-                        Label(style.displayName, systemImage: "checkmark")
+                    if model.state?.selectedStyleId == style.id {
+                        Label(style.label, systemImage: "checkmark")
                     } else {
-                        Text(style.displayName)
+                        Text(style.label)
                     }
                 }
             }
         } label: {
             HStack(spacing: 6) {
-                Text(model.state?.selectedStyleId.displayName ?? "Radio stream")
+                Text(model.state?.selectedStyle?.label ?? "Radio stream")
                     .font(.callout.weight(.semibold))
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -180,7 +180,7 @@ struct NowPlayingView: View {
         }
         .disabled(model.state == nil)
         .accessibilityLabel("Music Style")
-        .accessibilityValue(model.state?.selectedStyleId.displayName ?? "Unavailable")
+        .accessibilityValue(model.state?.selectedStyle?.label ?? "Unavailable")
     }
 
     private var visiblePlaybackStatus: String? {
@@ -301,14 +301,8 @@ struct NowPlayingView: View {
         model.state?.isTrackDisliked(model.state?.currentTrack) == true
     }
 
-    private var selectableStyles: [RadioStyleID] {
-        guard let selectedStyle = model.state?.selectedStyleId,
-              !RadioStyleID.allCases.contains(selectedStyle)
-        else {
-            return RadioStyleID.allCases
-        }
-
-        return [selectedStyle] + RadioStyleID.allCases
+    private var selectableStyles: [RadioStyle] {
+        model.state?.availableStyles ?? RadioStyle.builtIns
     }
 }
 

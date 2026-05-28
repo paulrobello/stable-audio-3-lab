@@ -26,6 +26,29 @@ final class RadioAPIClientTests: XCTestCase {
         XCTAssertEqual(envelope.promptModels, ["qwen3:14b", "gemma3:12b"])
     }
 
+    func testCloudflareAccessRedirectIsReportedAsWebLoginPage() async throws {
+        let transport = MockRadioTransport { request in
+            let response = try XCTUnwrap(HTTPURLResponse(
+                url: request.url!,
+                statusCode: 302,
+                httpVersion: nil,
+                headerFields: [
+                    "location": "https://probello.cloudflareaccess.com/cdn-cgi/access/login/radio.pardev.net",
+                    "www-authenticate": "Cloudflare-Access",
+                ]
+            ))
+            return (Data(), response)
+        }
+        let client = RadioAPIClient(baseURL: URL(string: "https://radio.pardev.net")!, transport: transport)
+
+        do {
+            _ = try await client.fetchEnvelope()
+            XCTFail("Expected Cloudflare Access redirect to fail as a web login page.")
+        } catch {
+            XCTAssertEqual(error as? RadioAPIError, .webLoginPage)
+        }
+    }
+
     func testPostActionSendsBooleanJSONBody() async throws {
         let transport = MockRadioTransport { request in
             XCTAssertEqual(request.httpMethod, "POST")

@@ -198,6 +198,26 @@ final class RadioAppModelTests: XCTestCase {
         XCTAssertNil(model.statusMessage)
     }
 
+    func testAutoRefreshPreservesCloudflareAccessMessageWhenFallbacksFail() async {
+        let transport = CloudflareOnlyRadioTransport()
+        let model = RadioAppModel(
+            serverOrigin: "https://radio.pardev.net",
+            endpointMode: .auto,
+            transport: transport,
+            localIPv4Addresses: { [] }
+        )
+
+        await model.refresh()
+
+        let requestedURLs = await transport.requestedURLs
+        XCTAssertEqual(requestedURLs, [
+            "https://radio.pardev.net/api/radio",
+            "http://localhost:3007/api/radio",
+        ])
+        XCTAssertNil(model.state)
+        XCTAssertEqual(model.statusMessage, RadioAppModel.cloudflareVPNMessage)
+    }
+
     func testAutoRefreshDiscoversLANOriginBeforeStateExists() async {
         let transport = LANDiscoveryRadioTransport()
         let model = RadioAppModel(
@@ -466,6 +486,22 @@ private actor FallbackRadioTransport: RadioTransport {
       }
     }
     """
+}
+
+private actor CloudflareOnlyRadioTransport: RadioTransport {
+    var requestedURLs: [String] = []
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        let url = try XCTUnwrap(request.url)
+        requestedURLs.append(url.absoluteString)
+
+        guard url.host == "radio.pardev.net" else {
+            throw URLError(.cannotConnectToHost)
+        }
+
+        let response = try XCTUnwrap(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil))
+        return (Data("<html>Cloudflare Access</html>".utf8), response)
+    }
 }
 
 private actor LANDiscoveryRadioTransport: RadioTransport {

@@ -27,6 +27,13 @@ const radioState: RadioStreamState = {
   ttsVoice: "nova",
   announcementPrefix: "Now playing: ",
   announcementSuffix: "",
+  customStyles: [],
+  styles: [{
+    id: "synthwave",
+    label: "Synthwave Night Drive",
+    seedPrompt: "instrumental synthwave, warm analog bass, neon pads, clean punchy drums, 112 BPM, no vocals",
+    negativePrompt: "muddy low end, harsh cymbals, distorted clipping, vocals",
+  }],
   preferences: {},
   currentTrackByStyle: {},
   history: [],
@@ -76,6 +83,54 @@ describe("radio page loading", () => {
     expect(screen.getByText("http://192.168.1.207:3007/radio.pls")).toBeTruthy();
     expect(screen.getByRole("option", { name: "qwen3:14b" })).toBeTruthy();
     expect(screen.getByRole("option", { name: "Kokoro" })).toBeTruthy();
+  });
+
+  it("creates custom music styles from the radio UI", async () => {
+    const customState: RadioStreamState = {
+      ...radioState,
+      selectedStyleId: "dungeon-synth",
+      customStyles: [{
+        id: "dungeon-synth",
+        label: "Dungeon Synth",
+        seedPrompt: "moody dungeon synth instrumental, tape hiss, simple medieval melody, no vocals",
+        negativePrompt: "modern EDM drops, bright pop drums",
+      }],
+      styles: [{
+        id: "synthwave",
+        label: "Synthwave Night Drive",
+        seedPrompt: "instrumental synthwave, warm analog bass, neon pads, clean punchy drums, 112 BPM, no vocals",
+        negativePrompt: "muddy low end, harsh cymbals, distorted clipping, vocals",
+      }, {
+        id: "dungeon-synth",
+        label: "Dungeon Synth",
+        seedPrompt: "moody dungeon synth instrumental, tape hiss, simple medieval melody, no vocals",
+        negativePrompt: "modern EDM drops, bright pop drums",
+      }],
+    };
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as { action?: string } : {};
+      if (body.action === "createStyle") {
+        return { json: async () => ({ ok: true, style: customState.customStyles?.[0], state: customState }) };
+      }
+      return { json: async () => ({ ok: true, state: radioState, promptModels: ["qwen3:14b"], cleanedTracks: [] }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<RadioStationClient initialState={radioState} initialPromptModels={["qwen3:14b"]} />);
+
+    fireEvent.change(screen.getByLabelText("Style name"), { target: { value: "Dungeon Synth" } });
+    fireEvent.change(screen.getByLabelText("Style prompt"), { target: { value: "moody dungeon synth instrumental, tape hiss, simple medieval melody, no vocals" } });
+    fireEvent.change(screen.getByLabelText("Style negative prompt"), { target: { value: "modern EDM drops, bright pop drums" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create music style" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/radio", expect.objectContaining({
+      body: expect.stringContaining('"action":"createStyle"'),
+    })));
+    expect(fetchMock).toHaveBeenCalledWith("/api/radio", expect.objectContaining({
+      body: expect.stringContaining('"label":"Dungeon Synth"'),
+    }));
+    await waitFor(() => expect(screen.getByRole("option", { name: "Dungeon Synth" })).toBeTruthy());
+    expect(screen.getByText("moody dungeon synth instrumental, tape hiss, simple medieval melody, no vocals")).toBeTruthy();
   });
 
   it("plays a generated test voice sample from the selected TTS settings", async () => {

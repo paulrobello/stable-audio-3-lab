@@ -12,6 +12,7 @@ import {
   buildRadioStreamState,
   buildRadioTrackPlaybackFilenames,
   createFallbackRadioPromptDraft,
+  createRadioStyle,
   createRadioTrackRecord,
   defaultRadioState,
   findDuplicateRadioTitleTracks,
@@ -56,6 +57,18 @@ describe("radio station styles", () => {
   it("falls back to synthwave for unknown style ids", () => {
     expect(normalizeRadioStyleId("ambient")).toBe("ambient");
     expect(normalizeRadioStyleId("missing")).toBe("synthwave");
+  });
+
+  it("adds custom music styles to prompt seeds", () => {
+    const result = createRadioStyle(defaultRadioState(), {
+      label: "Dungeon Synth",
+      seedPrompt: "moody dungeon synth instrumental, tape hiss, simple medieval melody, no vocals",
+      negativePrompt: "modern EDM drops, bright pop drums",
+    });
+
+    expect(result?.style.id).toBe("dungeon-synth");
+    expect(buildRadioPromptSeed(result!.state, result!.style.id)).toContain("Style: Dungeon Synth");
+    expect(buildRadioPromptSeed(result!.state, result!.style.id)).toContain("Base direction: moody dungeon synth instrumental");
   });
 
   it("builds a station prompt seed from selected style and feedback", () => {

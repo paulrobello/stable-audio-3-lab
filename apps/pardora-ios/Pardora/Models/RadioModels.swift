@@ -21,6 +21,7 @@ struct RadioStreamState: Codable, Equatable {
     var lanStreamUrl: String?
     var publicPlaylistUrls: RadioPlaylistUrls?
     var lanPlaylistUrls: RadioPlaylistUrls?
+    var styles: [RadioStyle]?
 
     var streamURL: URL? {
         if let streamUrl, let url = URL(string: streamUrl) {
@@ -36,6 +37,19 @@ struct RadioStreamState: Codable, Equatable {
 
     var selectedQueue: [RadioTrackRecord] {
         history.filter { $0.styleId == selectedStyleId }
+    }
+
+    var availableStyles: [RadioStyle] {
+        let baseStyles = styles?.isEmpty == false ? styles ?? [] : RadioStyle.builtIns
+        guard !baseStyles.contains(where: { $0.id == selectedStyleId }) else {
+            return baseStyles
+        }
+
+        return [RadioStyle(id: selectedStyleId, label: selectedStyleId.displayName, seedPrompt: selectedStyleId.seedPrompt, negativePrompt: nil)] + baseStyles
+    }
+
+    var selectedStyle: RadioStyle? {
+        availableStyles.first { $0.id == selectedStyleId }
     }
 
     var queueStatusText: String {
@@ -213,6 +227,21 @@ struct RadioTasteProfile: Codable, Equatable {
 struct RadioPlaylistUrls: Codable, Equatable {
     var m3u: String?
     var pls: String?
+}
+
+struct RadioStyle: Codable, Equatable, Identifiable {
+    var id: RadioStyleID
+    var label: String
+    var seedPrompt: String
+    var negativePrompt: String?
+
+    static let builtIns: [RadioStyle] = [
+        RadioStyle(id: .synthwave, label: "Synthwave Night Drive", seedPrompt: "Warm analog bass, neon pads, clean punchy drums, no vocals.", negativePrompt: "Muddy low end, harsh cymbals, vocals."),
+        RadioStyle(id: .ambient, label: "Ambient Signal Drift", seedPrompt: "Slow evolving pads, gentle arpeggios, spacious reverb.", negativePrompt: "Busy drums, abrupt transitions, vocals."),
+        RadioStyle(id: .cinematic, label: "Cinematic Trailer Pulse", seedPrompt: "Pulsing low strings, restrained brass, deep percussion.", negativePrompt: "Cartoon sounds, thin drums, vocals."),
+        RadioStyle(id: .lofi, label: "Lofi Study Loop", seedPrompt: "Dusty drums, mellow Rhodes chords, warm tape saturation.", negativePrompt: "Bright hats, harsh clipping, vocals."),
+        RadioStyle(id: .experimental, label: "Experimental Machine Folk", seedPrompt: "Organic plucks, glitchy tape loops, subtle modular pulses.", negativePrompt: "Random noise wall, abrasive clipping, vocals.")
+    ]
 }
 
 struct RadioStyleID: RawRepresentable, Codable, Hashable, Identifiable, CaseIterable, ExpressibleByStringLiteral {

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import path from "node:path";
+import type { ChildProcessWithoutNullStreams, SpawnOptions } from "node:child_process";
 import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
-import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { homedir, networkInterfaces } from "node:os";
 import {
@@ -17,6 +17,7 @@ import {
   buildRadioAnnouncementFilename,
   buildRadioTrackPlaybackFilenames,
   createFallbackRadioPromptDraft,
+  createRadioStyle,
   createRadioTrackRecord,
   defaultRadioState,
   findDuplicateRadioTitleTracks,
@@ -86,7 +87,7 @@ export async function GET(request: NextRequest) {
         icyMetadataEnabled: forceIcyMetadata || request.headers.get("icy-metadata") === "1",
         metadataOnly: forceIcyMetadata || request.nextUrl.searchParams.get("metadataOnly") === "1",
         skipAnnouncement: request.nextUrl.searchParams.get("skipAnnouncement") === "1",
-        styleId: radioStyleQueryParam(request),
+        styleId: radioStyleQueryParam(request, state.customStyles),
       });
     }
     startRadioQueueMaintenance(state);
@@ -103,10 +104,22 @@ export async function POST(request: NextRequest) {
     const action = typeof body.action === "string" ? body.action : "";
     const state = await readRadioState();
 
+    if (action === "createStyle") {
+      const result = createRadioStyle(state, {
+        label: body.label,
+        seedPrompt: body.seedPrompt,
+        negativePrompt: body.negativePrompt,
+      });
+      if (!result) return NextResponse.json({ ok: false, error: "Style name and prompt are required" }, { status: 400 });
+      await writeRadioState(result.state);
+      startRadioQueueMaintenance(result.state);
+      return NextResponse.json({ ok: true, style: result.style, state: await buildRadioResponseState(result.state, request) });
+    }
+
     if (action === "configure") {
       const nextState = selectRadioStyle({
         ...state,
-        selectedStyleId: normalizeRadioStyleId(body.styleId ?? state.selectedStyleId),
+        selectedStyleId: normalizeRadioStyleId(body.styleId ?? state.selectedStyleId, state.customStyles),
         promptModel: normalizeOllamaPromptModel(body.promptModel ?? state.promptModel),
         announceEnabled: typeof body.announceEnabled === "boolean" ? body.announceEnabled : state.announceEnabled,
         songLengthMinutes: normalizeRadioSongLengthMinutes(body.songLengthMinutes ?? state.songLengthMinutes),
@@ -147,7 +160,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === "draft") {
-      const styleId = normalizeRadioStyleId(body.styleId ?? state.selectedStyleId);
+      const styleId = normalizeRadioStyleId(body.styleId ?? state.selectedStyleId, state.customStyles);
       const promptModel = normalizeOllamaPromptModel(body.promptModel ?? state.promptModel);
       const draft = await draftWithOllama(state, styleId, promptModel);
       const nextState = { ...state, selectedStyleId: styleId, promptModel, currentDraft: draft, updatedAt: new Date().toISOString() };
@@ -158,7 +171,7 @@ export async function POST(request: NextRequest) {
     if (action === "track") {
       const filename = typeof body.filename === "string" ? body.filename : "";
       if (!isSafeAudioFilename(filename)) return NextResponse.json({ ok: false, error: "Invalid track filename" }, { status: 400 });
-      const styleId = normalizeRadioStyleId(body.styleId ?? state.selectedStyleId);
+      const styleId = normalizeRadioStyleId(body.styleId ?? state.selectedStyleId, state.customStyles);
       const promptProvider = normalizePromptProvider(body.promptProvider);
       const promptModel = normalizeOllamaPromptModel(body.promptModel ?? state.currentDraft?.promptModel ?? state.promptModel);
       const fileSizeBytes = await readAudioFileSizeBytes(filename);
@@ -219,7 +232,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === "rating") {
-      const styleId = normalizeRadioStyleId(body.styleId ?? state.currentTrack?.styleId ?? state.selectedStyleId);
+      const styleId = normalizeRadioStyleId(body.styleId ?? state.currentTrack?.styleId ?? state.selectedStyleId, state.customStyles);
       const phrase = typeof body.phrase === "string" && body.phrase.trim()
         ? body.phrase
         : state.currentTrack?.prompt ?? state.currentDraft?.prompt ?? "";
@@ -468,9 +481,9 @@ async function generateAndRegisterRadioTrack(state: RadioState, draft: Awaited<R
   return nextState;
 }
 
-function runStableAudioGeneratorProcess(command: string, args: string[], timeoutMs: number): Promise<{ code: number | null; stdout: string; stderr: string }> {
+async function runStableAudioGeneratorProcess(command: string, args: string[], timeoutMs: number): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  const child = await spawnRuntimeProcess(command, args, { env: { ...process.env }, cwd: process.cwd() });
   return new Promise((resolve) => {
-    const child = spawn(command, args, { env: { ...process.env }, cwd: process.cwd() });
     let stdout = "";
     let stderr = "";
     const timer = setTimeout(() => {
@@ -683,8 +696,8 @@ async function advanceStreamStateAfterTrack(track: RadioTrackRecord, styleId: Re
   return advanced;
 }
 
-function radioStyleQueryParam(request: NextRequest) {
-  return normalizeRadioStyleUrlParam(request.nextUrl.searchParams.get("style") ?? request.nextUrl.searchParams.get("styleId"));
+function radioStyleQueryParam(request: NextRequest, customStyles: RadioState["customStyles"]) {
+  return normalizeRadioStyleUrlParam(request.nextUrl.searchParams.get("style") ?? request.nextUrl.searchParams.get("styleId"), customStyles);
 }
 
 function resolveStreamStyleState(state: RadioState, styleId: ReturnType<typeof normalizeRadioStyleUrlParam>) {
@@ -718,7 +731,7 @@ async function runCodexTasteDistillation(state: RadioState, styleId: ReturnType<
   }
 }
 
-function runCodexCli(prompt: string, outputPath: string, model: string) {
+async function runCodexCli(prompt: string, outputPath: string, model: string) {
   const codexBin = process.env.RADIO_CODEX_BIN || "codex";
   const timeoutMs = Number(process.env.RADIO_CODEX_TASTE_TIMEOUT_MS || 120000);
   const args = [
@@ -737,9 +750,9 @@ function runCodexCli(prompt: string, outputPath: string, model: string) {
     outputPath,
     "-",
   ];
+  const child = await spawnRuntimeProcess(codexBin, args, { cwd: process.cwd(), stdio: ["pipe", "ignore", "pipe"] });
 
   return new Promise<void>((resolve, reject) => {
-    const child = spawn(codexBin, args, { cwd: process.cwd(), stdio: ["pipe", "ignore", "pipe"] });
     const stderr: Buffer[] = [];
     let timedOut = false;
     const timeout = setTimeout(() => {
@@ -763,6 +776,11 @@ function runCodexCli(prompt: string, outputPath: string, model: string) {
     });
     child.stdin.end(prompt);
   });
+}
+
+async function spawnRuntimeProcess(command: string, args: string[], options?: SpawnOptions): Promise<ChildProcessWithoutNullStreams> {
+  const { spawn } = await import("node:child_process");
+  return spawn(command, args, options ?? {}) as ChildProcessWithoutNullStreams;
 }
 
 function parseCodexTasteProfile(value: string): RadioTasteProfileInput | undefined {
@@ -1106,10 +1124,10 @@ async function ensureMp3File(filePath: string) {
   }
 }
 
-function transcodeToRadioMp3(bytes: Uint8Array) {
+async function transcodeToRadioMp3(bytes: Uint8Array) {
   const ffmpeg = process.env.FFMPEG_PATH || "ffmpeg";
+  const child = await spawnRuntimeProcess(ffmpeg, ["-hide_banner", "-loglevel", "error", "-i", "pipe:0", "-vn", "-ar", "44100", "-ac", "2", "-codec:a", "libmp3lame", "-b:a", "128k", "-f", "mp3", "pipe:1"]);
   return new Promise<Buffer>((resolve, reject) => {
-    const child = spawn(ffmpeg, ["-hide_banner", "-loglevel", "error", "-i", "pipe:0", "-vn", "-ar", "44100", "-ac", "2", "-codec:a", "libmp3lame", "-b:a", "128k", "-f", "mp3", "pipe:1"]);
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
@@ -1123,33 +1141,33 @@ function transcodeToRadioMp3(bytes: Uint8Array) {
   });
 }
 
-function transcodeFilesToRadioMp3(filePaths: string[]) {
+async function transcodeFilesToRadioMp3(filePaths: string[]) {
   const ffmpeg = process.env.FFMPEG_PATH || "ffmpeg";
   const inputArgs = filePaths.flatMap((filePath) => ["-i", filePath]);
   const concatInputs = filePaths.map((_, index) => `[${index}:a]`).join("");
+  const child = await spawnRuntimeProcess(ffmpeg, [
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    ...inputArgs,
+    "-filter_complex",
+    `${concatInputs}concat=n=${filePaths.length}:v=0:a=1[a]`,
+    "-map",
+    "[a]",
+    "-vn",
+    "-ar",
+    "44100",
+    "-ac",
+    "2",
+    "-codec:a",
+    "libmp3lame",
+    "-b:a",
+    "128k",
+    "-f",
+    "mp3",
+    "pipe:1",
+  ]);
   return new Promise<Buffer>((resolve, reject) => {
-    const child = spawn(ffmpeg, [
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      ...inputArgs,
-      "-filter_complex",
-      `${concatInputs}concat=n=${filePaths.length}:v=0:a=1[a]`,
-      "-map",
-      "[a]",
-      "-vn",
-      "-ar",
-      "44100",
-      "-ac",
-      "2",
-      "-codec:a",
-      "libmp3lame",
-      "-b:a",
-      "128k",
-      "-f",
-      "mp3",
-      "pipe:1",
-    ]);
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));

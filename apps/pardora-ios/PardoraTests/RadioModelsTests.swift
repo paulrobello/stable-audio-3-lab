@@ -20,6 +20,32 @@ final class RadioModelsTests: XCTestCase {
         XCTAssertEqual(state.selectedStyleId.displayName, "Future Style")
     }
 
+    func testDecodesServerProvidedMusicStyles() throws {
+        let json = Self.fixture
+            .replacingOccurrences(of: "\"selectedStyleId\": \"synthwave\"", with: "\"selectedStyleId\": \"dungeon-synth\"")
+            .replacingOccurrences(of: "\"preferences\": {", with: """
+            "styles": [
+              {
+                "id": "synthwave",
+                "label": "Synthwave Night Drive",
+                "seedPrompt": "instrumental synthwave, warm analog bass",
+                "negativePrompt": "vocals"
+              },
+              {
+                "id": "dungeon-synth",
+                "label": "Dungeon Synth",
+                "seedPrompt": "moody dungeon synth instrumental, tape hiss",
+                "negativePrompt": "modern EDM drops"
+              }
+            ],
+            "preferences": {
+            """)
+        let state = try JSONDecoder().decode(RadioStreamState.self, from: Data(json.utf8))
+
+        XCTAssertEqual(state.availableStyles.map(\.label), ["Synthwave Night Drive", "Dungeon Synth"])
+        XCTAssertEqual(state.selectedStyle?.label, "Dungeon Synth")
+    }
+
     func testTrackFeedbackFallsBackToStylePreferences() throws {
         var state = try JSONDecoder().decode(RadioStreamState.self, from: Data(Self.fixture.utf8))
         state.currentTrack?.rating = nil

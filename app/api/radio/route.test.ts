@@ -139,6 +139,39 @@ describe("radio stream route", () => {
     });
   });
 
+  it("creates custom music styles and exposes them in radio state responses", async () => {
+    tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
+    process.chdir(tempCwd);
+    process.env.RADIO_OLLAMA_MODELS_TIMEOUT_MS = "1";
+
+    const response = await POST(new NextRequest("http://localhost:3007/api/radio", {
+      method: "POST",
+      body: JSON.stringify({
+        action: "createStyle",
+        label: "Dungeon Synth",
+        seedPrompt: "moody dungeon synth instrumental, tape hiss, simple medieval melody, no vocals",
+        negativePrompt: "modern EDM drops, bright pop drums",
+      }),
+    }));
+    const json = await response.json() as {
+      ok: boolean;
+      style?: { id?: string; label?: string; seedPrompt?: string };
+      state?: { selectedStyleId?: string; customStyles?: Array<{ id?: string }>; styles?: Array<{ id?: string; label?: string }> };
+    };
+
+    expect(response.status).toBe(200);
+    expect(json.ok).toBe(true);
+    expect(json.style?.id).toBe("dungeon-synth");
+    expect(json.state?.selectedStyleId).toBe("dungeon-synth");
+    expect(json.state?.customStyles?.map((style) => style.id)).toContain("dungeon-synth");
+    expect(json.state?.styles?.map((style) => style.label)).toContain("Dungeon Synth");
+
+    const saved = JSON.parse(await readFile(path.join(tempCwd, ".stable-audio-radio", "state.json"), "utf8")) as {
+      customStyles?: Array<{ id?: string; label?: string }>;
+    };
+    expect(saved.customStyles).toEqual([expect.objectContaining({ id: "dungeon-synth", label: "Dungeon Synth" })]);
+  });
+
   it("registers a starred library mp3 as a marked fallback track", async () => {
     tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
     process.chdir(tempCwd);

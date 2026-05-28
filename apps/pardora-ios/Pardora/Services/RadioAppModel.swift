@@ -14,7 +14,7 @@ final class RadioAppModel {
     var promptModels = RadioPromptModelOptions.defaults
     var ttsVoiceOptions = RadioTTSVoiceOption.options(for: .openai, currentVoice: "nova")
 
-    static let cloudflareVPNMessage = "Public radio endpoint returned a web login page. If you are remote, enable Cloudflare VPN/WARP, then try again."
+    static let cloudflareVPNMessage = "Cloudflare Access blocked this request. Check that Cloudflare One/WARP is routing Pardora from an allowed IP, then try again."
     static let testingConnectionMessage = "Testing radio connection..."
     static let scanningLANMessage = "Scanning local Wi-Fi for Pardora..."
 
@@ -144,6 +144,7 @@ final class RadioAppModel {
         defer { isRefreshing = false }
 
         var lastError: Error?
+        var cloudflareAccessError: Error?
         for origin in refreshCandidateOrigins {
             guard let baseURL = URL(string: origin) else {
                 lastError = RadioAPIError.server("Enter a valid radio server URL.")
@@ -160,6 +161,9 @@ final class RadioAppModel {
                 setState(state, origin: origin, promptModels: response.promptModels)
                 return
             } catch {
+                if error as? RadioAPIError == .webLoginPage {
+                    cloudflareAccessError = error
+                }
                 lastError = error
             }
         }
@@ -175,7 +179,7 @@ final class RadioAppModel {
         }
 
         if showStatus {
-            statusMessage = statusMessage(for: lastError)
+            statusMessage = statusMessage(for: cloudflareAccessError ?? lastError)
         }
     }
 
@@ -422,7 +426,7 @@ final class RadioAppModel {
     }
 
     private func statusMessage(for error: Error?) -> String {
-        if endpointMode == .publicInternet, error as? RadioAPIError == .webLoginPage {
+        if error as? RadioAPIError == .webLoginPage {
             return Self.cloudflareVPNMessage
         }
 

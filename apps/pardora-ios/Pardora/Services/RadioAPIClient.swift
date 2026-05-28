@@ -74,7 +74,13 @@ struct RadioAPIClient: RadioActionClient {
         }
 
         let (data, response) = try await transport.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+        guard let http = response as? HTTPURLResponse else {
+            throw RadioAPIError.transport
+        }
+        if Self.isCloudflareAccessChallenge(response: http) {
+            throw RadioAPIError.webLoginPage
+        }
+        guard (200..<300).contains(http.statusCode) else {
             throw RadioAPIError.transport
         }
         if Self.isHTMLResponse(data: data, response: http) {
@@ -90,6 +96,14 @@ struct RadioAPIClient: RadioActionClient {
         }
 
         return data.first(where: { !$0.isASCIIWhitespace }) == Character("<").asciiValue
+    }
+
+    private static func isCloudflareAccessChallenge(response: HTTPURLResponse) -> Bool {
+        if response.value(forHTTPHeaderField: "www-authenticate")?.localizedCaseInsensitiveContains("Cloudflare-Access") == true {
+            return true
+        }
+
+        return response.value(forHTTPHeaderField: "location")?.localizedCaseInsensitiveContains("/cdn-cgi/access/login/") == true
     }
 }
 

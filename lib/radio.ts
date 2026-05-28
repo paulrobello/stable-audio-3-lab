@@ -1,8 +1,15 @@
-export type RadioStyleId = (typeof radioStyles)[number]["id"];
+export type RadioStyleId = string;
 export type RadioRating = "up" | "down";
 export type RadioPromptProvider = "ollama" | "fallback";
 export type RadioTrackSource = "generated" | "library-fallback";
 export type RadioTtsProvider = "openai" | "elevenlabs" | "deepgram" | "gemini" | "kokoro-onnx";
+
+export type RadioStyle = {
+  id: RadioStyleId;
+  label: string;
+  seedPrompt: string;
+  negativePrompt: string;
+};
 
 export type RadioTtsConfig = {
   ttsProvider: RadioTtsProvider;
@@ -90,6 +97,7 @@ export type RadioState = {
   ttsVoice: string;
   announcementPrefix: string;
   announcementSuffix: string;
+  customStyles: RadioStyle[];
   preferences: Partial<Record<RadioStyleId, RadioPreference>>;
   currentTrackByStyle: RadioQueuePositions;
   currentDraft?: RadioPromptDraft;
@@ -99,6 +107,7 @@ export type RadioState = {
 };
 
 export type RadioStreamState = RadioState & {
+  styles: RadioStyle[];
   streamReady: boolean;
   queueAheadCount: number;
   queueTarget: number;
@@ -122,7 +131,7 @@ export const radioOllamaModels = [
   "gemma3:27b",
 ] as const;
 
-export const radioStyles = [
+export const radioStyles: RadioStyle[] = [
   {
     id: "synthwave",
     label: "Synthwave Night Drive",
@@ -153,7 +162,7 @@ export const radioStyles = [
     seedPrompt: "experimental instrumental, organic plucks, glitchy tape loops, subtle modular synth pulses, intimate mix",
     negativePrompt: "random noise wall, novelty sounds, abrasive clipping, vocals",
   },
-] as const;
+];
 
 const DEFAULT_PROMPT_MODEL = radioOllamaModels[0];
 const DEFAULT_TTS_PROVIDER: RadioTtsProvider = "openai";
@@ -273,6 +282,7 @@ export function defaultRadioState(now = new Date().toISOString()): RadioState {
     ttsVoice: DEFAULT_TTS_VOICE,
     announcementPrefix: DEFAULT_ANNOUNCEMENT_PREFIX,
     announcementSuffix: DEFAULT_ANNOUNCEMENT_SUFFIX,
+    customStyles: [],
     preferences: {},
     currentTrackByStyle: {},
     history: [],
@@ -280,21 +290,31 @@ export function defaultRadioState(now = new Date().toISOString()): RadioState {
   };
 }
 
-export function normalizeRadioStyleId(value: unknown): RadioStyleId {
-  return radioStyles.some((style) => style.id === value) ? value as RadioStyleId : "synthwave";
+export function getAvailableRadioStyles(stateOrCustomStyles?: Pick<RadioState, "customStyles"> | RadioStyle[]): RadioStyle[] {
+  const customStyles = Array.isArray(stateOrCustomStyles) ? stateOrCustomStyles : stateOrCustomStyles?.customStyles ?? [];
+  const builtInIds = new Set(radioStyles.map((style) => style.id));
+  return [
+    ...radioStyles,
+    ...customStyles.filter((style) => style.id && !builtInIds.has(style.id)),
+  ];
 }
 
-export function normalizeRadioStyleUrlParam(value: unknown): RadioStyleId | undefined {
-  return radioStyles.some((style) => style.id === value) ? value as RadioStyleId : undefined;
+export function normalizeRadioStyleId(value: unknown, customStyles: RadioStyle[] = []): RadioStyleId {
+  return getAvailableRadioStyles(customStyles).some((style) => style.id === value) ? value as RadioStyleId : "synthwave";
+}
+
+export function normalizeRadioStyleUrlParam(value: unknown, customStyles: RadioStyle[] = []): RadioStyleId | undefined {
+  return getAvailableRadioStyles(customStyles).some((style) => style.id === value) ? value as RadioStyleId : undefined;
 }
 
 export function normalizeRadioState(input: Partial<RadioState> | undefined): RadioState {
   const parsed = input ?? {};
   const history = Array.isArray(parsed.history) ? parsed.history : [];
-  const selectedStyleId = normalizeRadioStyleId(parsed.selectedStyleId);
-  const currentTrackByStyle = normalizeRadioQueuePositions(parsed.currentTrackByStyle, history);
+  const customStyles = normalizeCustomRadioStyles(parsed.customStyles);
+  const selectedStyleId = normalizeRadioStyleId(parsed.selectedStyleId, customStyles);
+  const currentTrackByStyle = normalizeRadioQueuePositions(parsed.currentTrackByStyle, history, customStyles);
   if (parsed.currentTrack?.filename && parsed.currentTrack.styleId) {
-    currentTrackByStyle[normalizeRadioStyleId(parsed.currentTrack.styleId)] ??= parsed.currentTrack.filename;
+    currentTrackByStyle[normalizeRadioStyleId(parsed.currentTrack.styleId, customStyles)] ??= parsed.currentTrack.filename;
   }
   return alignRadioStateToSelectedStyle({
     ...defaultRadioState(),
@@ -304,10 +324,36 @@ export function normalizeRadioState(input: Partial<RadioState> | undefined): Rad
     unlikedTrackExpirationHours: normalizeRadioUnlikedTrackExpirationHours(parsed.unlikedTrackExpirationHours),
     promptModel: normalizeOllamaPromptModel(parsed.promptModel),
     ...normalizeRadioTtsConfig(parsed as Record<string, unknown>),
+    customStyles,
     preferences: parsed.preferences ?? {},
     currentTrackByStyle,
     history,
   });
+}
+
+export function createRadioStyle(
+  state: RadioState,
+  input: { label?: unknown; seedPrompt?: unknown; negativePrompt?: unknown },
+): { state: RadioState; style: RadioStyle } | undefined {
+  const label = typeof input.label === "string" ? cleanShortText(input.label, "", 80) : "";
+  const seedPrompt = typeof input.seedPrompt === "string" ? cleanShortText(input.seedPrompt, "", 1000) : "";
+  const negativePrompt = typeof input.negativePrompt === "string"
+    ? cleanShortText(input.negativePrompt, "vocals, clipping, harsh noise", 500)
+    : "vocals, clipping, harsh noise";
+  if (label.length < 2 || seedPrompt.length < 8) return undefined;
+
+  const style: RadioStyle = {
+    id: makeUniqueRadioStyleId(label, getAvailableRadioStyles(state)),
+    label,
+    seedPrompt,
+    negativePrompt,
+  };
+  const nextState = selectRadioStyle({
+    ...state,
+    customStyles: [...state.customStyles, style],
+    updatedAt: nextTimestamp(state.updatedAt),
+  }, style.id);
+  return { state: nextState, style };
 }
 
 export function normalizeOllamaPromptModel(value: unknown): string {
@@ -404,12 +450,12 @@ export function buildRadioTrackPlaybackFilenames(track: RadioTrackRecord, option
   ].filter((filename): filename is string => !!filename);
 }
 
-export function getRadioStyle(styleId: RadioStyleId) {
-  return radioStyles.find((style) => style.id === styleId) ?? radioStyles[0];
+export function getRadioStyle(styleId: RadioStyleId, customStyles: RadioStyle[] = []) {
+  return getAvailableRadioStyles(customStyles).find((style) => style.id === styleId) ?? radioStyles[0];
 }
 
 export function selectRadioStyle(state: RadioState, styleIdInput: unknown): RadioState {
-  const selectedStyleId = normalizeRadioStyleId(styleIdInput);
+  const selectedStyleId = normalizeRadioStyleId(styleIdInput, state.customStyles);
   return {
     ...alignRadioStateToSelectedStyle({ ...state, selectedStyleId }),
     updatedAt: nextTimestamp(state.updatedAt),
@@ -421,7 +467,7 @@ export function recordRadioRating(state: RadioState, styleIdInput: unknown, phra
   const phrase = typeof phraseInput === "string" ? phraseInput.trim().slice(0, 180) : "";
   if (!rating || !phrase) return state;
 
-  const styleId = normalizeRadioStyleId(styleIdInput);
+  const styleId = normalizeRadioStyleId(styleIdInput, state.customStyles);
   const previous = state.preferences[styleId] ?? { likes: [], dislikes: [] };
   const removesExistingLike = rating === "up" && previous.likes.includes(phrase);
   const nextPreference: RadioPreference = {
@@ -450,8 +496,8 @@ export function recordRadioRating(state: RadioState, styleIdInput: unknown, phra
 }
 
 export function buildRadioPromptSeed(state: RadioState, styleIdInput: unknown): string {
-  const styleId = normalizeRadioStyleId(styleIdInput);
-  const style = getRadioStyle(styleId);
+  const styleId = normalizeRadioStyleId(styleIdInput, state.customStyles);
+  const style = getRadioStyle(styleId, state.customStyles);
   const preference = state.preferences[styleId];
   const likes = preference?.likes?.length ? `Lean into: ${preference.likes.slice(-6).join("; ")}` : "Lean into: fresh variations within the style.";
   const dislikes = preference?.dislikes?.length ? `Avoid repeating: ${preference.dislikes.slice(-6).join("; ")}` : "Avoid repeating: generic stock music, vocals, and brittle mixes.";
@@ -478,8 +524,8 @@ export function buildRadioPromptSeed(state: RadioState, styleIdInput: unknown): 
 }
 
 export function buildRadioTasteDistillationPrompt(state: RadioState, styleIdInput: unknown): string {
-  const styleId = normalizeRadioStyleId(styleIdInput);
-  const style = getRadioStyle(styleId);
+  const styleId = normalizeRadioStyleId(styleIdInput, state.customStyles);
+  const style = getRadioStyle(styleId, state.customStyles);
   const preference = state.preferences[styleId] ?? { likes: [], dislikes: [] };
   return [
     "Distill listener thumbs feedback into a compact Stable Audio 3 music taste profile.",
@@ -502,7 +548,7 @@ export function buildRadioTasteDistillationPrompt(state: RadioState, styleIdInpu
 }
 
 export function updateRadioTasteProfile(state: RadioState, styleIdInput: unknown, input: RadioTasteProfileInput, modelInput: unknown, now = new Date().toISOString()): RadioState {
-  const styleId = normalizeRadioStyleId(styleIdInput);
+  const styleId = normalizeRadioStyleId(styleIdInput, state.customStyles);
   const previous = state.preferences[styleId] ?? { likes: [], dislikes: [] };
   const sourceEventCount = previous.likes.length + previous.dislikes.length;
   const tasteProfile: RadioTasteProfile = {
@@ -527,7 +573,7 @@ export function updateRadioTasteProfile(state: RadioState, styleIdInput: unknown
 }
 
 export function buildRadioPromptGeneratorMessages(state: RadioState, styleIdInput: unknown, modelInput: unknown) {
-  const styleId = normalizeRadioStyleId(styleIdInput);
+  const styleId = normalizeRadioStyleId(styleIdInput, state.customStyles);
   const model = normalizeOllamaPromptModel(modelInput);
   return {
     provider: "ollama" as const,
@@ -555,6 +601,7 @@ export function createRadioPromptDraft({
   promptProvider,
   promptModel,
   rawResponse,
+  style,
 }: {
   title: string;
   prompt: string;
@@ -563,13 +610,15 @@ export function createRadioPromptDraft({
   promptProvider: RadioPromptProvider;
   promptModel: string;
   rawResponse?: string;
+  style?: RadioStyle;
 }): RadioPromptDraft {
   const createdAt = new Date().toISOString();
+  const fallbackStyle = style ?? getRadioStyle(styleId);
   return {
     id: `draft-${compactTimestamp(createdAt)}-${randomSuffix()}`,
     title: cleanShortText(title, "Untitled Signal", 80),
-    prompt: cleanShortText(prompt, getRadioStyle(styleId).seedPrompt, 1000),
-    negativePrompt: cleanShortText(negativePrompt, getRadioStyle(styleId).negativePrompt, 500),
+    prompt: cleanShortText(prompt, fallbackStyle.seedPrompt, 1000),
+    negativePrompt: cleanShortText(negativePrompt, fallbackStyle.negativePrompt, 500),
     styleId,
     createdAt,
     promptProvider,
@@ -579,8 +628,8 @@ export function createRadioPromptDraft({
 }
 
 export function createFallbackRadioPromptDraft(state: RadioState, styleIdInput: unknown, modelInput: unknown, nowInput = new Date().toISOString()): RadioPromptDraft {
-  const styleId = normalizeRadioStyleId(styleIdInput);
-  const style = getRadioStyle(styleId);
+  const styleId = normalizeRadioStyleId(styleIdInput, state.customStyles);
+  const style = getRadioStyle(styleId, state.customStyles);
   const preference = state.preferences[styleId];
   const likedTexture = preference?.likes?.at(-1);
   const dislikedTexture = preference?.dislikes?.at(-1);
@@ -603,21 +652,24 @@ export function createFallbackRadioPromptDraft(state: RadioState, styleIdInput: 
     prompt: [style.seedPrompt, likedTexture ? `emphasize ${likedTexture}` : `add a fresh ${variant.toLowerCase()} melodic motif`, `variation seed ${variationSeed}`, "polished full-song intro and outro"].join(", "),
     negativePrompt: [style.negativePrompt, dislikedTexture ? `avoid ${dislikedTexture}` : ""].filter(Boolean).join(", "),
     styleId,
+    style,
     promptProvider: "fallback",
     promptModel: normalizeOllamaPromptModel(modelInput),
   });
 }
 
 export function parseRadioPromptDraft(rawResponse: string, state: RadioState, styleIdInput: unknown, modelInput: unknown): RadioPromptDraft {
-  const styleId = normalizeRadioStyleId(styleIdInput);
+  const styleId = normalizeRadioStyleId(styleIdInput, state.customStyles);
+  const style = getRadioStyle(styleId, state.customStyles);
   try {
     const parsed = JSON.parse(extractJsonObject(rawResponse)) as Partial<Record<"title" | "prompt" | "negativePrompt", unknown>>;
-    const title = makeUniqueRadioTrackTitle(typeof parsed.title === "string" ? parsed.title : getRadioStyle(styleId).label, state.history);
+    const title = makeUniqueRadioTrackTitle(typeof parsed.title === "string" ? parsed.title : style.label, state.history);
     return createRadioPromptDraft({
       title,
-      prompt: typeof parsed.prompt === "string" ? parsed.prompt : getRadioStyle(styleId).seedPrompt,
-      negativePrompt: typeof parsed.negativePrompt === "string" ? parsed.negativePrompt : getRadioStyle(styleId).negativePrompt,
+      prompt: typeof parsed.prompt === "string" ? parsed.prompt : style.seedPrompt,
+      negativePrompt: typeof parsed.negativePrompt === "string" ? parsed.negativePrompt : style.negativePrompt,
       styleId,
+      style,
       promptProvider: "ollama",
       promptModel: normalizeOllamaPromptModel(modelInput),
       rawResponse,
@@ -863,7 +915,7 @@ export function removeRadioTracksFromLineup(state: RadioState, tracks: RadioTrac
     ...alignRadioStateToSelectedStyle({
       ...state,
       currentTrack,
-      currentTrackByStyle: rebuildRadioQueuePositions(state.currentTrackByStyle, history),
+      currentTrackByStyle: rebuildRadioQueuePositions(state, history),
       history,
     }),
     currentTrack,
@@ -877,6 +929,7 @@ export function buildRadioStreamState(state: RadioState): RadioStreamState {
   const queueAheadCount = getRadioQueueAheadCount(state);
   return {
     ...state,
+    styles: getAvailableRadioStyles(state),
     streamReady,
     queueAheadCount,
     queueTarget: RADIO_QUEUE_TARGET,
@@ -1009,11 +1062,36 @@ function stripYamlInlineComment(value: string) {
   return value;
 }
 
-function normalizeRadioQueuePositions(value: unknown, history: RadioTrackRecord[]): RadioQueuePositions {
+function normalizeCustomRadioStyles(value: unknown): RadioStyle[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set(radioStyles.map((style) => style.id));
+  const customStyles: RadioStyle[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const input = item as Partial<RadioStyle>;
+    const label = typeof input.label === "string" ? cleanShortText(input.label, "", 80) : "";
+    const seedPrompt = typeof input.seedPrompt === "string" ? cleanShortText(input.seedPrompt, "", 1000) : "";
+    if (label.length < 2 || seedPrompt.length < 8) continue;
+    const idInput = typeof input.id === "string" ? slugForStyleId(input.id) : slugForStyleId(label);
+    const id = idInput && !seen.has(idInput) ? idInput : makeUniqueRadioStyleId(label, [...radioStyles, ...customStyles]);
+    seen.add(id);
+    customStyles.push({
+      id,
+      label,
+      seedPrompt,
+      negativePrompt: typeof input.negativePrompt === "string"
+        ? cleanShortText(input.negativePrompt, "vocals, clipping, harsh noise", 500)
+        : "vocals, clipping, harsh noise",
+    });
+  }
+  return customStyles.slice(-30);
+}
+
+function normalizeRadioQueuePositions(value: unknown, history: RadioTrackRecord[], customStyles: RadioStyle[] = []): RadioQueuePositions {
   if (!value || typeof value !== "object") return {};
   const positions: RadioQueuePositions = {};
   for (const [styleIdInput, filename] of Object.entries(value)) {
-    const styleId = normalizeRadioStyleId(styleIdInput);
+    const styleId = normalizeRadioStyleId(styleIdInput, customStyles);
     if (typeof filename !== "string") continue;
     if (history.some((track) => track.styleId === styleId && track.filename === filename)) {
       positions[styleId] = filename;
@@ -1022,10 +1100,10 @@ function normalizeRadioQueuePositions(value: unknown, history: RadioTrackRecord[
   return positions;
 }
 
-function rebuildRadioQueuePositions(positions: RadioQueuePositions, history: RadioTrackRecord[]): RadioQueuePositions {
+function rebuildRadioQueuePositions(state: RadioState, history: RadioTrackRecord[]): RadioQueuePositions {
   const rebuilt: RadioQueuePositions = {};
-  for (const style of radioStyles) {
-    const current = findCurrentTrackForStyle({ ...defaultRadioState(), currentTrackByStyle: positions, history }, style.id);
+  for (const style of getAvailableRadioStyles(state)) {
+    const current = findCurrentTrackForStyle({ ...state, history }, style.id);
     if (current) rebuilt[style.id] = current.filename;
   }
   return rebuilt;
@@ -1055,7 +1133,7 @@ function alignRadioStateToSelectedStyle(state: RadioState): RadioState {
 }
 
 function findCurrentTrackForStyle(state: RadioState, styleIdInput: unknown): RadioTrackRecord | undefined {
-  const styleId = normalizeRadioStyleId(styleIdInput);
+  const styleId = normalizeRadioStyleId(styleIdInput, state.customStyles);
   const savedFilename = state.currentTrackByStyle[styleId];
   const savedTrack = savedFilename
     ? state.history.find((track) => track.styleId === styleId && track.filename === savedFilename)
@@ -1156,6 +1234,21 @@ function escapeRegExp(value: string) {
 function slugForFilename(value: string, maxLength: number) {
   const slug = value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, maxLength).replace(/_+$/g, "");
   return slug || "untitled";
+}
+
+function slugForStyleId(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48).replace(/-+$/g, "");
+}
+
+function makeUniqueRadioStyleId(label: string, styles: RadioStyle[]) {
+  const base = slugForStyleId(label) || "custom-style";
+  const used = new Set(styles.map((style) => style.id));
+  if (!used.has(base)) return base;
+  for (let index = 2; index < 100; index += 1) {
+    const id = `${base}-${index}`;
+    if (!used.has(id)) return id;
+  }
+  return `${base}-${shortHash(`${label}-${Date.now()}`)}`;
 }
 
 function isSafeAnnouncementFilename(value: unknown): value is string {

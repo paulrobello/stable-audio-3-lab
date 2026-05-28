@@ -4,9 +4,9 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import { ForwardIcon, HandThumbDownIcon, HandThumbUpIcon, TrashIcon } from "@heroicons/react/24/solid";
-import { buildRadioStats, defaultRadioTtsVoice, getRadioTtsVoiceOptions, normalizeRadioSongLengthMinutes, normalizeRadioUnlikedTrackExpirationHours, radioOllamaModels, radioSongLengthMinuteOptions, radioStyles, radioUnlikedTrackExpirationHourOptions, type RadioPlaylistUrls, type RadioPromptDraft, type RadioStats, type RadioStreamState, type RadioStyleId, type RadioTrackRecord, type RadioTtsProvider, type RadioTtsVoiceOption } from "@/lib/radio";
+import { buildRadioStats, defaultRadioTtsVoice, getRadioTtsVoiceOptions, normalizeRadioSongLengthMinutes, normalizeRadioUnlikedTrackExpirationHours, radioOllamaModels, radioSongLengthMinuteOptions, radioStyles, radioUnlikedTrackExpirationHourOptions, type RadioPlaylistUrls, type RadioPromptDraft, type RadioStats, type RadioStreamState, type RadioStyle, type RadioStyleId, type RadioTrackRecord, type RadioTtsProvider, type RadioTtsVoiceOption } from "@/lib/radio";
 
-type RadioApiResponse = { ok: boolean; state?: RadioStreamState; draft?: RadioPromptDraft; fallbackTrack?: RadioTrackRecord; rejectedTrack?: RadioTrackRecord; skippedTrack?: RadioTrackRecord; deletedTrack?: RadioTrackRecord; cleanedTracks?: RadioTrackRecord[]; promptModels?: string[]; voices?: RadioTtsVoiceOption[]; error?: string };
+type RadioApiResponse = { ok: boolean; state?: RadioStreamState; draft?: RadioPromptDraft; style?: RadioStyle; fallbackTrack?: RadioTrackRecord; rejectedTrack?: RadioTrackRecord; skippedTrack?: RadioTrackRecord; deletedTrack?: RadioTrackRecord; cleanedTracks?: RadioTrackRecord[]; promptModels?: string[]; voices?: RadioTtsVoiceOption[]; error?: string };
 type RadioTestVoiceResponse = { ok: boolean; audioUrl?: string; error?: string };
 type GenerateResponse = { ok: boolean; filename?: string; title?: string; audioUrl?: string; meta?: unknown; error?: string };
 const RADIO_STATE_RETRY_MS = 1500;
@@ -25,13 +25,16 @@ export default function RadioStationClient({ initialState = null, initialPromptM
   const [ttsVoice, setTtsVoice] = useState(initialState?.ttsVoice ?? "nova");
   const [announcementPrefix, setAnnouncementPrefix] = useState(initialState?.announcementPrefix ?? "Now playing: ");
   const [announcementSuffix, setAnnouncementSuffix] = useState(initialState?.announcementSuffix ?? "");
+  const [styleLabel, setStyleLabel] = useState("");
+  const [styleSeedPrompt, setStyleSeedPrompt] = useState("");
+  const [styleNegativePrompt, setStyleNegativePrompt] = useState("");
   const [draft, setDraft] = useState<RadioPromptDraft | null>(initialState?.currentDraft ?? null);
   const [generated, setGenerated] = useState<GenerateResponse | null>(null);
   const [status, setStatus] = useState("");
   const [testVoiceAudioUrl, setTestVoiceAudioUrl] = useState("");
   const [remoteTtsVoiceOptions, setRemoteTtsVoiceOptions] = useState<{ provider: RadioTtsProvider; voices: RadioTtsVoiceOption[] } | null>(null);
   const [browserStreamUrl, setBrowserStreamUrl] = useState(initialState?.streamUrl ?? initialState?.lanStreamUrl ?? "");
-  const [busy, setBusy] = useState<"draft" | "generate" | "rating" | "config" | "maintenance" | "select" | "delete" | "voice" | null>(null);
+  const [busy, setBusy] = useState<"draft" | "generate" | "rating" | "config" | "maintenance" | "select" | "delete" | "voice" | "style" | null>(null);
   const [optimisticLike, setOptimisticLike] = useState<{ trackKey: string; liked: boolean } | null>(null);
   const [selectedQueueTrackIds, setSelectedQueueTrackIds] = useState<Set<string>>(() => new Set());
   const [streamReloadKey, setStreamReloadKey] = useState(0);
@@ -43,7 +46,8 @@ export default function RadioStationClient({ initialState = null, initialPromptM
   const streamElapsedAtTrackStartRef = useRef(0);
   const resumeAfterStreamReloadRef = useRef(false);
 
-  const selectedStyle = useMemo(() => radioStyles.find((style) => style.id === selectedStyleId) ?? radioStyles[0], [selectedStyleId]);
+  const availableStyles = useMemo(() => radioState?.styles?.length ? radioState.styles : radioStyles, [radioState?.styles]);
+  const selectedStyle = useMemo(() => availableStyles.find((style) => style.id === selectedStyleId) ?? availableStyles[0] ?? radioStyles[0], [availableStyles, selectedStyleId]);
   const promptModelOptions = useMemo(() => mergePromptModelOptions(promptModels, promptModel), [promptModels, promptModel]);
   const ttsVoiceOptions = useMemo(() => {
     const fallback = getRadioTtsVoiceOptions(ttsProvider, ttsVoice);
@@ -428,6 +432,30 @@ export default function RadioStationClient({ initialState = null, initialPromptM
     void saveConfiguration({ nextStyleId: styleId });
   }
 
+  async function createCustomStyle() {
+    setBusy("style");
+    setStatus("Creating music style...");
+    try {
+      const json = await postRadio({
+        action: "createStyle",
+        label: styleLabel,
+        seedPrompt: styleSeedPrompt,
+        negativePrompt: styleNegativePrompt,
+      });
+      if (json.style) {
+        setSelectedStyleId(json.style.id);
+        setStyleLabel("");
+        setStyleSeedPrompt("");
+        setStyleNegativePrompt("");
+        setStatus(`Created ${json.style.label}.`);
+      }
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not create music style.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   function changeAnnounce(enabled: boolean) {
     setAnnounceEnabled(enabled);
     void saveConfiguration({ nextAnnounceEnabled: enabled });
@@ -571,7 +599,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
                 disabled={!!busy}
                 className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-white/[0.06] px-3 text-sm font-semibold normal-case tracking-normal text-white outline-none disabled:opacity-55"
               >
-                {radioStyles.map((style) => <option key={style.id} value={style.id}>{style.label}</option>)}
+                {availableStyles.map((style) => <option key={style.id} value={style.id}>{style.label}</option>)}
               </select>
             </label>
 
@@ -655,7 +683,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
             <div>
               <h2 className="text-lg font-semibold">Music style</h2>
               <div className="mt-3 grid gap-2">
-                {radioStyles.map((style) => (
+                {availableStyles.map((style) => (
                   <button
                     key={style.id}
                     type="button"
@@ -671,6 +699,31 @@ export default function RadioStationClient({ initialState = null, initialPromptM
                 ))}
               </div>
             </div>
+
+            <form
+              className="space-y-3 rounded-2xl border border-emerald-200/15 bg-emerald-200/[0.05] p-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void createCustomStyle();
+              }}
+            >
+              <h3 className="text-sm font-semibold text-white/78">New music style</h3>
+              <label className="block text-xs font-semibold text-white/55">
+                Style name
+                <input value={styleLabel} onChange={(event) => setStyleLabel(event.target.value)} className="mt-2 w-full rounded-xl border border-white/10 bg-black/45 p-3 text-sm font-semibold text-white outline-none" />
+              </label>
+              <label className="block text-xs font-semibold text-white/55">
+                Style prompt
+                <textarea value={styleSeedPrompt} onChange={(event) => setStyleSeedPrompt(event.target.value)} rows={3} className="mt-2 w-full resize-y rounded-xl border border-white/10 bg-black/45 p-3 text-sm leading-5 text-white outline-none" />
+              </label>
+              <label className="block text-xs font-semibold text-white/55">
+                Style negative prompt
+                <textarea value={styleNegativePrompt} onChange={(event) => setStyleNegativePrompt(event.target.value)} rows={2} className="mt-2 w-full resize-y rounded-xl border border-white/10 bg-black/45 p-3 text-sm leading-5 text-white outline-none" />
+              </label>
+              <button type="submit" disabled={!!busy || !styleLabel.trim() || !styleSeedPrompt.trim()} className="w-full rounded-xl border border-emerald-200/35 bg-emerald-200/15 px-4 py-3 text-sm font-bold text-emerald-50 transition hover:bg-emerald-200/22 disabled:opacity-45">
+                {busy === "style" ? "Creating..." : "Create music style"}
+              </button>
+            </form>
 
             <label className="block rounded-2xl border border-white/10 bg-white/[0.04] p-3 text-sm text-white/65">
               Ollama prompt model
