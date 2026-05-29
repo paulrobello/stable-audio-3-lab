@@ -11,6 +11,7 @@ type RadioTestVoiceResponse = { ok: boolean; audioUrl?: string; error?: string }
 type GenerateResponse = { ok: boolean; filename?: string; title?: string; audioUrl?: string; meta?: unknown; error?: string };
 type AudioAssessment = { summary?: string; attributes?: { instruments?: string[]; mood?: string[]; genre?: string[]; rhythm?: string; tempoBpm?: number; key?: string }; model?: string };
 type AssessmentResponse = { ok: boolean; assessment?: AudioAssessment; error?: string };
+type PreferenceMemoryItem = { phrase: string; assessment?: AudioAssessment };
 const RADIO_STATE_RETRY_MS = 1500;
 const RADIO_STATE_POLL_MS = 30000;
 type RadioPlaybackPhase = "announcement" | "song";
@@ -68,6 +69,14 @@ export default function RadioStationClient({ initialState = null, initialPromptM
   const selectedQueueTracks = useMemo(
     () => selectedStyleQueue.filter((track) => selectedQueueTrackIds.has(track.id)),
     [selectedQueueTrackIds, selectedStyleQueue],
+  );
+  const preferenceLikeItems = useMemo(
+    () => buildPreferenceMemoryItems(radioState, selectedStyleId, "up"),
+    [radioState, selectedStyleId],
+  );
+  const preferenceDislikeItems = useMemo(
+    () => buildPreferenceMemoryItems(radioState, selectedStyleId, "down"),
+    [radioState, selectedStyleId],
   );
   const selectedQueueCount = selectedQueueTracks.length;
   const allQueueTracksSelected = selectedStyleQueue.length > 0 && selectedQueueCount === selectedStyleQueue.length;
@@ -1121,8 +1130,8 @@ export default function RadioStationClient({ initialState = null, initialPromptM
 
             <Panel title="Preference memory" className="mt-4">
               <div className="grid gap-3 md:grid-cols-2">
-                <PreferenceList title="Likes" items={radioState?.preferences[selectedStyleId]?.likes ?? []} />
-                <PreferenceList title="Dislikes" items={radioState?.preferences[selectedStyleId]?.dislikes ?? []} />
+                <PreferenceList title="Likes" items={preferenceLikeItems} />
+                <PreferenceList title="Dislikes" items={preferenceDislikeItems} />
               </div>
             </Panel>
           </section>
@@ -1426,7 +1435,7 @@ function Panel({ title, className, children }: { title: string; className?: stri
   );
 }
 
-function PreferenceList({ title, items }: { title: string; items: string[] }) {
+function PreferenceList({ title, items }: { title: string; items: PreferenceMemoryItem[] }) {
   return (
     <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-3">
       <div className="mb-2 text-sm font-semibold text-white/70">{title}</div>
@@ -1434,9 +1443,50 @@ function PreferenceList({ title, items }: { title: string; items: string[] }) {
         <div className="text-sm text-white/38">No feedback recorded yet.</div>
       ) : (
         <ul className="space-y-2 text-sm leading-5 text-white/62">
-          {items.slice().reverse().map((item) => <li key={item}>{item}</li>)}
+          {items.slice().reverse().map((item) => (
+            <li key={item.phrase} className="rounded-xl border border-white/10 bg-black/20 p-2">
+              <div>{item.phrase}</div>
+              <PreferenceAssessmentSummary assessment={item.assessment} />
+            </li>
+          ))}
         </ul>
       )}
     </div>
   );
+}
+
+function PreferenceAssessmentSummary({ assessment }: { assessment: AudioAssessment | undefined }) {
+  if (!assessment) return null;
+  const attrs = assessment.attributes ?? {};
+  const details = [
+    attrs.tempoBpm ? `${attrs.tempoBpm} BPM` : undefined,
+    attrs.key,
+    attrs.rhythm,
+    attrs.genre?.join(", "),
+  ].filter(Boolean);
+  return (
+    <div className="mt-2 rounded-xl border border-sky-200/12 bg-sky-300/[0.05] p-2 text-xs leading-5 text-white/50">
+      <div className="font-bold uppercase tracking-[0.14em] text-sky-100/60">Assessment</div>
+      {assessment.summary ? <div className="mt-1 text-white/62">{assessment.summary}</div> : null}
+      {details.length ? <div className="mt-1 font-semibold text-sky-100/70">{details.join(" / ")}</div> : null}
+      {attrs.instruments?.length ? <div className="mt-1">Instruments: {attrs.instruments.join(", ")}</div> : null}
+      {attrs.mood?.length ? <div className="mt-1">Mood: {attrs.mood.join(", ")}</div> : null}
+    </div>
+  );
+}
+
+function buildPreferenceMemoryItems(state: RadioStreamState | null, styleId: RadioStyleId, rating: "up" | "down"): PreferenceMemoryItem[] {
+  const preference = state?.preferences[styleId];
+  const preferencePhrases = rating === "up" ? preference?.likes ?? [] : preference?.dislikes ?? [];
+  const tracks = state?.history.filter((track) => track.styleId === styleId) ?? [];
+  const ratedPhrases = tracks.filter((track) => track.rating === rating).map((track) => track.prompt);
+  return uniqueStrings([...preferencePhrases, ...ratedPhrases]).map((phrase) => ({
+    phrase,
+    assessment: tracks.find((track) => track.prompt === phrase && track.rating === rating && track.latestAssessment)?.latestAssessment
+      ?? tracks.find((track) => track.prompt === phrase && track.latestAssessment)?.latestAssessment,
+  }));
+}
+
+function uniqueStrings(values: string[]) {
+  return [...new Set(values)];
 }

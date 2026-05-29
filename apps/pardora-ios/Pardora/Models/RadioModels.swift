@@ -93,14 +93,21 @@ struct RadioStreamState: Codable, Equatable {
     func feedbackSummary(for style: RadioStyleID) -> RadioFeedbackSummary {
         let preference = preference(for: style)
         let ratedTracks = history.filter { $0.styleId == style }
-        let ratedLikes = ratedTracks.filter { $0.rating == .up }.map(\.prompt)
-        let ratedDislikes = ratedTracks.filter { $0.rating == .down }.map(\.prompt)
 
         return RadioFeedbackSummary(
-            likes: (preference?.likes ?? []).mergingUnique(ratedLikes),
-            dislikes: (preference?.dislikes ?? []).mergingUnique(ratedDislikes),
+            likeItems: memoryItems(phrases: preference?.likes ?? [], ratedTracks: ratedTracks, rating: .up),
+            dislikeItems: memoryItems(phrases: preference?.dislikes ?? [], ratedTracks: ratedTracks, rating: .down),
             tasteProfile: preference?.tasteProfile
         )
+    }
+
+    private func memoryItems(phrases: [String], ratedTracks: [RadioTrackRecord], rating: RadioRating) -> [RadioMemoryItem] {
+        let ratedPhrases = ratedTracks.filter { $0.rating == rating }.map(\.prompt)
+        return phrases.mergingUnique(ratedPhrases).map { phrase in
+            let exactAssessment = ratedTracks.first { $0.prompt == phrase && $0.rating == rating && $0.latestAssessment != nil }?.latestAssessment
+            let promptAssessment = ratedTracks.first { $0.prompt == phrase && $0.latestAssessment != nil }?.latestAssessment
+            return RadioMemoryItem(phrase: phrase, rating: rating, assessment: exactAssessment ?? promptAssessment)
+        }
     }
 
     func isTrackLiked(_ track: RadioTrackRecord?) -> Bool {
@@ -157,6 +164,7 @@ struct RadioTrackRecord: Codable, Equatable, Identifiable {
     var fileSizeBytes: Int?
     var rating: RadioRating?
     var ratedAt: String?
+    var latestAssessment: RadioAudioAssessment?
 
     var isLiked: Bool {
         rating == .up
@@ -243,12 +251,128 @@ struct RadioPreference: Codable, Equatable {
 }
 
 struct RadioFeedbackSummary: Equatable {
-    var likes: [String]
-    var dislikes: [String]
+    var likeItems: [RadioMemoryItem]
+    var dislikeItems: [RadioMemoryItem]
     var tasteProfile: RadioTasteProfile?
+
+    var likes: [String] {
+        likeItems.map(\.phrase)
+    }
+
+    var dislikes: [String] {
+        dislikeItems.map(\.phrase)
+    }
 
     var isEmpty: Bool {
         likes.isEmpty && dislikes.isEmpty && tasteProfile == nil
+    }
+}
+
+struct RadioMemoryItem: Equatable, Identifiable {
+    var phrase: String
+    var rating: RadioRating
+    var assessment: RadioAudioAssessment?
+
+    var id: String {
+        "\(rating.rawValue):\(phrase)"
+    }
+}
+
+struct RadioAudioAssessment: Codable, Equatable {
+    var assessedAt: String?
+    var provider: String?
+    var model: String?
+    var summary: String?
+    var attributes: RadioAudioAssessmentAttributes
+
+    init(
+        assessedAt: String? = nil,
+        provider: String? = nil,
+        model: String? = nil,
+        summary: String? = nil,
+        attributes: RadioAudioAssessmentAttributes = RadioAudioAssessmentAttributes()
+    ) {
+        self.assessedAt = assessedAt
+        self.provider = provider
+        self.model = model
+        self.summary = summary
+        self.attributes = attributes
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case assessedAt
+        case provider
+        case model
+        case summary
+        case attributes
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        assessedAt = try container.decodeIfPresent(String.self, forKey: .assessedAt)
+        provider = try container.decodeIfPresent(String.self, forKey: .provider)
+        model = try container.decodeIfPresent(String.self, forKey: .model)
+        summary = try container.decodeIfPresent(String.self, forKey: .summary)
+        attributes = try container.decodeIfPresent(RadioAudioAssessmentAttributes.self, forKey: .attributes) ?? RadioAudioAssessmentAttributes()
+    }
+}
+
+struct RadioAudioAssessmentAttributes: Codable, Equatable {
+    var genre: [String]
+    var instruments: [String]
+    var mood: [String]
+    var production: [String]
+    var positives: [String]
+    var negatives: [String]
+    var rhythm: String?
+    var tempoBpm: Int?
+    var key: String?
+
+    init(
+        genre: [String] = [],
+        instruments: [String] = [],
+        mood: [String] = [],
+        production: [String] = [],
+        positives: [String] = [],
+        negatives: [String] = [],
+        rhythm: String? = nil,
+        tempoBpm: Int? = nil,
+        key: String? = nil
+    ) {
+        self.genre = genre
+        self.instruments = instruments
+        self.mood = mood
+        self.production = production
+        self.positives = positives
+        self.negatives = negatives
+        self.rhythm = rhythm
+        self.tempoBpm = tempoBpm
+        self.key = key
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case genre
+        case instruments
+        case mood
+        case production
+        case positives
+        case negatives
+        case rhythm
+        case tempoBpm
+        case key
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        genre = try container.decodeIfPresent([String].self, forKey: .genre) ?? []
+        instruments = try container.decodeIfPresent([String].self, forKey: .instruments) ?? []
+        mood = try container.decodeIfPresent([String].self, forKey: .mood) ?? []
+        production = try container.decodeIfPresent([String].self, forKey: .production) ?? []
+        positives = try container.decodeIfPresent([String].self, forKey: .positives) ?? []
+        negatives = try container.decodeIfPresent([String].self, forKey: .negatives) ?? []
+        rhythm = try container.decodeIfPresent(String.self, forKey: .rhythm)
+        tempoBpm = try container.decodeIfPresent(Int.self, forKey: .tempoBpm)
+        key = try container.decodeIfPresent(String.self, forKey: .key)
     }
 }
 

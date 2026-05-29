@@ -1080,6 +1080,67 @@ describe("radio page loading", () => {
     })));
   });
 
+  it("shows assessment info on matching preference memory items", async () => {
+    const likedTrack = {
+      ...currentTrack,
+      id: "track-assessed-like",
+      filename: "assessed_like.mp3",
+      title: "Assessed Like",
+      prompt: "assessed like prompt",
+      rating: "up" as const,
+      latestAssessment: {
+        assessedAt: "2026-05-28T20:00:00.000Z",
+        provider: "local",
+        model: "test-assessor",
+        summary: "Wide analog bass with controlled low end.",
+        source: {
+          filename: "assessed_like.mp3",
+          audioUrl: "/outputs/assessed_like.mp3",
+          metadataUrl: "/outputs/assessed_like.mp3.json",
+          source: "radio" as const,
+          title: "Assessed Like",
+          prompt: "assessed like prompt",
+          styleId: "synthwave",
+          rating: "up",
+        },
+        attributes: {
+          genre: [],
+          instruments: ["analog bass", "drum machine"],
+          mood: ["driving"],
+          production: [],
+          positives: [],
+          negatives: [],
+          tempoBpm: 112,
+          key: "A minor",
+          rhythm: "four on the floor",
+        },
+      },
+    };
+    const stateWithAssessedPreference = {
+      ...radioState,
+      currentTrack: likedTrack,
+      selectedStyleId: "synthwave" as const,
+      history: [likedTrack],
+      streamReady: true,
+      streamUrl: "/api/radio?stream=1",
+      preferences: { synthwave: { likes: [likedTrack.prompt], dislikes: [] } },
+    };
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as { action?: string } : {};
+      return { json: async () => ({ ok: true, state: stateWithAssessedPreference, promptModels: ["qwen3:14b"], cleanedTracks: [], voices: body.action === "ttsVoices" ? [] : undefined }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<RadioStationClient initialState={stateWithAssessedPreference} initialPromptModels={["qwen3:14b"]} />);
+
+    const preferenceMemory = within(screen.getByRole("heading", { name: "Preference memory" }).closest("section")!);
+    expect(preferenceMemory.getByText("assessed like prompt")).toBeTruthy();
+    expect(preferenceMemory.getByText("Wide analog bass with controlled low end.")).toBeTruthy();
+    expect(preferenceMemory.getByText("112 BPM / A minor / four on the floor")).toBeTruthy();
+    expect(preferenceMemory.getByText("Instruments: analog bass, drum machine")).toBeTruthy();
+    expect(preferenceMemory.getByText("Mood: driving")).toBeTruthy();
+  });
+
   it("sends the current radio song to the audio assessor with rating context", async () => {
     const likedTrack = { ...currentTrack, rating: "up" as const };
     const stateWithTrack = {

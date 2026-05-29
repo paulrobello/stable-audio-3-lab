@@ -1,4 +1,4 @@
-import type { AudioAssessmentQueueStatus } from "./audio-assessment";
+import type { AudioAssessment, AudioAssessmentQueueStatus } from "./audio-assessment";
 
 export type RadioStyleId = string;
 export type RadioRating = "up" | "down";
@@ -84,6 +84,7 @@ export type RadioTrackRecord = {
   fileSizeBytes?: number;
   rating?: RadioRating;
   ratedAt?: string;
+  latestAssessment?: AudioAssessment;
 };
 
 export type RadioStats = {

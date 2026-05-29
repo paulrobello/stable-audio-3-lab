@@ -339,14 +339,22 @@ export async function POST(request: NextRequest) {
 }
 
 async function buildRadioResponseState(state: RadioState, request: NextRequest) {
+  await enqueueMissingRatedTrackAssessments(state);
   const port = request.nextUrl.port || process.env.PORT || "3007";
   const publicOrigin = resolvePublicRadioOrigin(request);
   const publicStreamUrl = buildRadioPublicStreamUrl(publicOrigin);
   const publicPlaylistUrls = buildRadioPlaylistUrls(resolveConfiguredPublicRadioOrigin(request));
   const lanStreamUrl = buildRadioLanStreamUrl(resolveLanIp(), port);
   const lanPlaylistUrls = buildRadioPlaylistUrls(lanStreamUrl);
+  const streamState = buildRadioStreamState(state);
+  const history = await attachLatestAssessmentsToTracks(streamState.history);
+  const currentTrack = streamState.currentTrack
+    ? history.find((track) => track.filename === streamState.currentTrack?.filename) ?? await attachLatestAssessmentToTrack(streamState.currentTrack)
+    : undefined;
   return {
-    ...buildRadioStreamState(state),
+    ...streamState,
+    history,
+    currentTrack,
     stats: buildRadioStats(state, await getRadioAudioDiskBytes(state)),
     assessmentQueue: await getAudioAssessmentQueueStatus(),
     ...(publicStreamUrl ? { streamUrl: publicStreamUrl } : {}),
@@ -1136,6 +1144,64 @@ async function readAudioFileSizeBytes(filename: string) {
 function findRatedAssessmentTrack(track: RadioTrackRecord | undefined, rating: RadioRating | undefined) {
   if (!track || !rating) return undefined;
   return track;
+}
+
+async function attachLatestAssessmentsToTracks(tracks: RadioTrackRecord[]) {
+  return Promise.all(tracks.map(attachLatestAssessmentToTrack));
+}
+
+async function attachLatestAssessmentToTrack(track: RadioTrackRecord): Promise<RadioTrackRecord> {
+  const metadata = await readTrackMetadata(track);
+  const latestAssessment = metadata.latestAssessment;
+  if (!latestAssessment || typeof latestAssessment !== "object") return track;
+  return { ...track, latestAssessment: latestAssessment as RadioTrackRecord["latestAssessment"] };
+}
+
+async function enqueueMissingRatedTrackAssessments(state: RadioState) {
+  let queuedCount = 0;
+  const seenFilenames = new Set<string>();
+  for (const track of state.history) {
+    if (seenFilenames.has(track.filename)) continue;
+    seenFilenames.add(track.filename);
+    const rating = resolveTrackAssessmentRating(track, state);
+    if (!rating || !isSafeAudioFilename(track.filename) || !track.filename.toLowerCase().endsWith(".mp3")) continue;
+    try {
+      const audioInfo = await stat(outputPathForAudio(outputDir(), track.filename));
+      if (!audioInfo.isFile()) continue;
+    } catch {
+      continue;
+    }
+    const metadata = await readTrackMetadata(track);
+    if (hasAssessmentMetadata(metadata)) continue;
+    await enqueueAudioAssessment({
+      filename: track.filename,
+      source: "radio",
+      title: track.title,
+      prompt: track.prompt,
+      styleId: track.styleId,
+      rating,
+    });
+    queuedCount += 1;
+  }
+  if (queuedCount > 0) void startAudioAssessmentQueueProcessing();
+}
+
+function resolveTrackAssessmentRating(track: RadioTrackRecord, state: RadioState): RadioRating | undefined {
+  if (track.rating === "up" || track.rating === "down") return track.rating;
+  const preference = state.preferences[track.styleId];
+  if (preference?.likes.includes(track.prompt)) return "up";
+  if (preference?.dislikes.includes(track.prompt)) return "down";
+  return undefined;
+}
+
+function hasAssessmentMetadata(metadata: Record<string, unknown>) {
+  if (metadata.latestAssessment && typeof metadata.latestAssessment === "object") return true;
+  if (Array.isArray(metadata.assessments) && metadata.assessments.length > 0) return true;
+  const assessmentQueue = metadata.assessmentQueue && typeof metadata.assessmentQueue === "object"
+    ? metadata.assessmentQueue as Record<string, unknown>
+    : undefined;
+  const status = assessmentQueue?.status;
+  return status === "queued" || status === "done" || status === "failed";
 }
 
 async function removeRejectedTrackAudio(track: RadioTrackRecord) {

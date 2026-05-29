@@ -720,6 +720,83 @@ printf '%s' '{"likedTraits":["wide neon pads"],"dislikedTraits":["thin supersaw 
     expect(queue).toMatchObject([{ filename: "queued.mp3", rating: "down" }]);
   });
 
+  it("queues missing assessments for previously thumbed songs when loading radio state", async () => {
+    tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
+    process.chdir(tempCwd);
+    const outputDir = path.join(tempCwd, "public", "outputs");
+    const stateFile = path.join(tempCwd, ".stable-audio-radio", "state.json");
+    await mkdir(outputDir, { recursive: true });
+    await mkdir(path.dirname(stateFile), { recursive: true });
+    await writeFile(path.join(outputDir, "liked.mp3"), Buffer.from("liked audio"));
+    await writeFile(path.join(outputDir, "liked.mp3.json"), JSON.stringify({ title: "Liked" }));
+    await writeFile(path.join(outputDir, "disliked.mp3"), Buffer.from("disliked audio"));
+    await writeFile(path.join(outputDir, "disliked.mp3.json"), JSON.stringify({ title: "Disliked" }));
+    await writeFile(path.join(outputDir, "assessed.mp3"), Buffer.from("assessed audio"));
+    await writeFile(path.join(outputDir, "assessed.mp3.json"), JSON.stringify({ title: "Assessed", latestAssessment: { summary: "Already done", model: "queue-test-model" } }));
+    const liked = {
+      ...createRadioTrackRecord({
+        filename: "liked.mp3",
+        title: "Liked",
+        prompt: "warm neon pads",
+        styleId: "synthwave",
+        announce: false,
+      }),
+      rating: "up" as const,
+    };
+    const disliked = createRadioTrackRecord({
+      filename: "disliked.mp3",
+      title: "Disliked",
+      prompt: "thin brittle drums",
+      styleId: "synthwave",
+      announce: false,
+    });
+    const assessed = {
+      ...createRadioTrackRecord({
+        filename: "assessed.mp3",
+        title: "Assessed",
+        prompt: "wide bass",
+        styleId: "synthwave",
+        announce: false,
+      }),
+      rating: "up" as const,
+    };
+    await writeFile(stateFile, JSON.stringify({
+      ...defaultRadioState(),
+      currentTrack: liked,
+      history: [liked, disliked, assessed],
+      preferences: {
+        synthwave: { likes: [liked.prompt, assessed.prompt], dislikes: [disliked.prompt] },
+      },
+    }, null, 2));
+
+    const response = await GET(new NextRequest("http://localhost:3007/api/radio"));
+    const json = await response.json() as {
+      ok?: boolean;
+      state?: {
+        assessmentQueue?: { pendingCount?: number };
+        history?: Array<{ filename?: string; latestAssessment?: { summary?: string; model?: string } }>;
+      };
+    };
+    const queue = JSON.parse(await readFile(path.join(tempCwd, ".stable-audio-assessments", "queue.json"), "utf8")) as Array<{ filename?: string; rating?: string }>;
+    const likedMetadata = JSON.parse(await readFile(path.join(outputDir, "liked.mp3.json"), "utf8")) as { assessmentQueue?: { status?: string; source?: { rating?: string } } };
+    const dislikedMetadata = JSON.parse(await readFile(path.join(outputDir, "disliked.mp3.json"), "utf8")) as { assessmentQueue?: { status?: string; source?: { rating?: string } } };
+    const assessedMetadata = JSON.parse(await readFile(path.join(outputDir, "assessed.mp3.json"), "utf8")) as { assessmentQueue?: unknown };
+
+    expect(json.ok).toBe(true);
+    expect(json.state?.assessmentQueue?.pendingCount).toBe(2);
+    expect(queue).toMatchObject([
+      { filename: "liked.mp3", rating: "up" },
+      { filename: "disliked.mp3", rating: "down" },
+    ]);
+    expect(likedMetadata.assessmentQueue).toMatchObject({ status: "queued", source: { rating: "up" } });
+    expect(dislikedMetadata.assessmentQueue).toMatchObject({ status: "queued", source: { rating: "down" } });
+    expect(assessedMetadata.assessmentQueue).toBeUndefined();
+    expect(json.state?.history?.find((track) => track.filename === "assessed.mp3")?.latestAssessment).toMatchObject({
+      summary: "Already done",
+      model: "queue-test-model",
+    });
+  });
+
   it("deletes thumbs feedback from preferences and matching rated tracks", async () => {
     tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
     process.chdir(tempCwd);

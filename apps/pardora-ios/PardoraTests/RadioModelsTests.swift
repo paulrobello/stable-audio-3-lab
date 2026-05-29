@@ -101,6 +101,35 @@ final class RadioModelsTests: XCTestCase {
         XCTAssertFalse(feedback.isEmpty)
     }
 
+    func testFeedbackSummaryCarriesTrackAssessmentForMemoryItems() throws {
+        let json = Self.fixture.replacingOccurrences(of: "\"rating\": \"up\"", with: """
+        "rating": "up",
+        "latestAssessment": {
+          "assessedAt": "2026-05-28T20:00:00.000Z",
+          "provider": "local-command",
+          "model": "queue-test-model",
+          "summary": "Warm analog bass with clean neon motion.",
+          "attributes": {
+            "genre": ["synthwave"],
+            "instruments": ["analog bass"],
+            "mood": ["driving"],
+            "production": ["wide"],
+            "positives": ["clean pulse"],
+            "negatives": ["thin bridge"]
+          }
+        }
+        """)
+        var state = try JSONDecoder().decode(RadioStreamState.self, from: Data(json.utf8))
+        state.history = [try XCTUnwrap(state.currentTrack)]
+
+        let feedback = state.feedbackSummary(for: .synthwave)
+        let assessedItem = try XCTUnwrap(feedback.likeItems.first { $0.phrase == "instrumental synthwave, warm analog bass" })
+
+        XCTAssertEqual(assessedItem.assessment?.summary, "Warm analog bass with clean neon motion.")
+        XCTAssertEqual(assessedItem.assessment?.model, "queue-test-model")
+        XCTAssertEqual(assessedItem.assessment?.attributes.positives, ["clean pulse"])
+    }
+
     func testNextUpTrackUsesSelectedQueueAfterCurrentTrack() throws {
         var state = try JSONDecoder().decode(RadioStreamState.self, from: Data(Self.fixture.utf8))
         let current = try XCTUnwrap(state.currentTrack)
