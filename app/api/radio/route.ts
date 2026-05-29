@@ -11,6 +11,7 @@ import {
   buildRadioTasteDistillationPrompt,
   buildRadioLanStreamUrl,
   buildRadioPublicStreamUrl,
+  buildRadioQueueGenerationStatus,
   buildRadioStats,
   buildRadioStreamState,
   buildRadioStyleGenerationPrompt,
@@ -91,12 +92,14 @@ export async function GET(request: NextRequest) {
     if (playlistFormat) return buildRadioPlaylistRouteResponse(playlistFormat, request);
     if (request.nextUrl.searchParams.get("stream") === "1") {
       const state = await readSynchronizedRadioState();
+      const styleId = radioStyleQueryParam(request, state);
+      startRadioQueueMaintenance(resolveStreamStyleState(state, styleId));
       const forceIcyMetadata = request.nextUrl.searchParams.get("icy") === "1";
       return streamCurrentTrack(state, {
         icyMetadataEnabled: forceIcyMetadata || request.headers.get("icy-metadata") === "1",
         metadataOnly: forceIcyMetadata || request.nextUrl.searchParams.get("metadataOnly") === "1",
         skipAnnouncement: request.nextUrl.searchParams.get("skipAnnouncement") === "1",
-        styleId: radioStyleQueryParam(request, state),
+        styleId,
       });
     }
     const state = await readRadioState();
@@ -357,6 +360,7 @@ async function buildRadioResponseState(state: RadioState, request: NextRequest) 
     currentTrack,
     stats: buildRadioStats(state, await getRadioAudioDiskBytes(state)),
     assessmentQueue: await getAudioAssessmentQueueStatus(),
+    queueGeneration: buildRadioQueueGenerationStatus(state, isRadioQueueMaintenanceActive()),
     ...(publicStreamUrl ? { streamUrl: publicStreamUrl } : {}),
     ...(lanStreamUrl ? { lanStreamUrl } : {}),
     ...(publicPlaylistUrls ? { publicPlaylistUrls } : {}),
@@ -500,14 +504,18 @@ function startRadioQueueMaintenance(state: RadioState) {
   if (!buildRadioStreamState(state).needsQueueFill) return;
   const key = statePath();
   if (radioQueueMaintenance.has(key)) return;
-  const task = maintainRadioQueue().finally(() => {
+  const task = maintainRadioQueue(state).finally(() => {
     if (radioQueueMaintenance.get(key) === task) radioQueueMaintenance.delete(key);
   });
   radioQueueMaintenance.set(key, task);
 }
 
-async function maintainRadioQueue() {
-  let state = await cleanRadioQueue(await readRadioState());
+function isRadioQueueMaintenanceActive() {
+  return radioQueueMaintenance.has(statePath());
+}
+
+async function maintainRadioQueue(initialState?: RadioState) {
+  let state = await cleanRadioQueue(initialState ?? await readRadioState());
   let generatedCount = 0;
   const maxGenerations = buildRadioStreamState(state).queueTarget + 1;
 
@@ -806,6 +814,7 @@ async function advanceStreamStateAfterTrack(track: RadioTrackRecord, styleId: Re
   if (latestState.currentTrack?.filename !== track.filename) return latestState;
   const advanced = advanceRadioCurrentTrack(latestState);
   if (advanced.currentTrack?.filename !== latestState.currentTrack?.filename) await writeRadioState(advanced);
+  startRadioQueueMaintenance(advanced);
   return advanced;
 }
 

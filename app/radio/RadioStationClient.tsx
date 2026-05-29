@@ -796,6 +796,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
           </div>
           <RadioAssessmentPanel assessment={currentAssessment} error={currentAssessmentError} loading={busy === "assess"} />
           <AssessmentQueueStatusPanel queue={radioState?.assessmentQueue} />
+          <QueueGenerationStatusPanel queue={radioState?.queueGeneration} />
           <div aria-label="Station stats" className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
             <StatTile label="Songs generated" value={radioStats ? formatStatNumber(radioStats.generatedSongCount) : "--"} />
             <StatTile label="Thumbs up" value={radioStats ? formatStatNumber(radioStats.thumbsUpCount) : "--"} />
@@ -1036,92 +1037,96 @@ export default function RadioStationClient({ initialState = null, initialPromptM
                       {busy === "delete" && selectedQueueCount ? "Removing..." : `Remove selected (${selectedQueueCount})`}
                     </button>
                   </div>
-                  {selectedStyleQueue.map((track) => {
-                    const isCurrentTrack = track.filename === currentTrack?.filename;
-                    const trackLiked = isRadioTrackLiked(track, radioState);
-                    const trackDisliked = isRadioTrackDisliked(track, radioState);
-                    const trackSelected = selectedQueueTrackIds.has(track.id);
-                    return (
-                      <div
-                        key={track.id}
-                        aria-current={isCurrentTrack ? "true" : undefined}
-                        className={clsx(
-                          "min-w-0 rounded-2xl border p-3 transition",
-                          trackSelected ? "border-rose-200/35 bg-rose-300/[0.08]" : isCurrentTrack ? "border-emerald-200/35 bg-emerald-200/[0.08]" : "border-white/10 bg-white/[0.035]",
-                        )}
-                      >
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                          <div className="flex min-w-0 items-start gap-3">
-                            <input
-                              type="checkbox"
-                              checked={trackSelected}
-                              onChange={(event) => toggleQueueTrackSelection(track.id, event.currentTarget.checked)}
-                              aria-label={`Select ${track.title}`}
-                              disabled={busy === "delete"}
-                              className="mt-1 h-4 w-4 shrink-0 accent-rose-300"
-                            />
-                            <div className="min-w-0">
-                              <div className="min-w-0 truncate font-semibold text-white/82">{isCurrentTrack ? "Now playing: " : ""}{track.title}</div>
-                              <div className="mt-1 text-xs uppercase tracking-[0.14em] text-white/35">{trackProvenanceLabel(track)}</div>
-                              <QueueTrackMetadata track={track} />
+                  <div aria-label={`${selectedStyle.label} queue list`} className="max-h-[44rem] overflow-y-auto pr-1">
+                    <div className="grid gap-2">
+                      {selectedStyleQueue.map((track) => {
+                        const isCurrentTrack = track.filename === currentTrack?.filename;
+                        const trackLiked = isRadioTrackLiked(track, radioState);
+                        const trackDisliked = isRadioTrackDisliked(track, radioState);
+                        const trackSelected = selectedQueueTrackIds.has(track.id);
+                        return (
+                          <div
+                            key={track.id}
+                            aria-current={isCurrentTrack ? "true" : undefined}
+                            className={clsx(
+                              "min-w-0 rounded-2xl border p-3 transition",
+                              trackSelected ? "border-rose-200/35 bg-rose-300/[0.08]" : isCurrentTrack ? "border-emerald-200/35 bg-emerald-200/[0.08]" : "border-white/10 bg-white/[0.035]",
+                            )}
+                          >
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                              <div className="flex min-w-0 items-start gap-3">
+                                <input
+                                  type="checkbox"
+                                  checked={trackSelected}
+                                  onChange={(event) => toggleQueueTrackSelection(track.id, event.currentTarget.checked)}
+                                  aria-label={`Select ${track.title}`}
+                                  disabled={busy === "delete"}
+                                  className="mt-1 h-4 w-4 shrink-0 accent-rose-300"
+                                />
+                                <div className="min-w-0">
+                                  <div className="min-w-0 truncate font-semibold text-white/82">{isCurrentTrack ? "Now playing: " : ""}{track.title}</div>
+                                  <div className="mt-1 text-xs uppercase tracking-[0.14em] text-white/35">{trackProvenanceLabel(track)}</div>
+                                  <QueueTrackMetadata track={track} />
+                                </div>
+                              </div>
+                              <div className="flex shrink-0 items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => void rateLineupTrack(track, "up")}
+                                  disabled={busy === "rating" || busy === "delete"}
+                                  aria-label={`Thumbs up ${track.title}`}
+                                  aria-pressed={trackLiked}
+                                  className={clsx(
+                                    "touch-manipulation rounded-full border p-2 transition disabled:cursor-default disabled:opacity-45",
+                                    trackLiked ? "border-amber-200/45 bg-amber-200/18 text-amber-100" : "border-white/15 bg-white/[0.07] text-white/65 hover:border-amber-200/35 hover:bg-amber-200/12 hover:text-amber-50",
+                                  )}
+                                >
+                                  <HandThumbUpIcon className="h-4 w-4" aria-hidden="true" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void rateLineupTrack(track, "down")}
+                                  disabled={busy === "rating" || busy === "delete"}
+                                  aria-label={`Thumbs down ${track.title}`}
+                                  aria-pressed={trackDisliked}
+                                  className={clsx(
+                                    "touch-manipulation rounded-full border p-2 transition disabled:cursor-default disabled:opacity-45",
+                                    trackDisliked ? "border-pink-200/45 bg-pink-400/18 text-pink-100" : "border-white/15 bg-white/[0.07] text-white/65 hover:border-pink-200/35 hover:bg-pink-400/12 hover:text-pink-50",
+                                  )}
+                                >
+                                  <HandThumbDownIcon className="h-4 w-4" aria-hidden="true" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void selectLineupTrack(track)}
+                                  disabled={isCurrentTrack || busy === "select" || busy === "delete"}
+                                  aria-label={isCurrentTrack ? `Now playing ${track.title}` : `Play ${track.title}`}
+                                  className={clsx(
+                                    "touch-manipulation rounded-full border px-4 py-2 text-xs font-bold uppercase tracking-[0.12em] transition disabled:cursor-default",
+                                    isCurrentTrack ? "border-emerald-200/30 bg-emerald-200/12 text-emerald-100/75" : "border-white/15 bg-white/[0.07] text-white/75 hover:border-emerald-200/35 hover:bg-emerald-200/12 hover:text-emerald-50",
+                                  )}
+                                >
+                                  {isCurrentTrack ? "Playing" : busy === "select" ? "Loading" : "Play"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void deleteLineupTrack(track)}
+                                  disabled={busy === "delete"}
+                                  aria-label={`Delete ${track.title}`}
+                                  title={`Delete ${track.title}`}
+                                  className="touch-manipulation rounded-full border border-rose-200/20 bg-rose-400/10 p-2 text-rose-100/80 transition hover:border-rose-200/40 hover:bg-rose-400/18 hover:text-rose-50 disabled:cursor-default disabled:opacity-45"
+                                >
+                                  <TrashIcon className="h-4 w-4" aria-hidden="true" />
+                                </button>
+                              </div>
                             </div>
+                            <div className="mt-1 truncate text-xs text-white/42">{track.filename}</div>
+                            <QueueTrackMetadata track={track} />
                           </div>
-                          <div className="flex shrink-0 items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => void rateLineupTrack(track, "up")}
-                              disabled={busy === "rating" || busy === "delete"}
-                              aria-label={`Thumbs up ${track.title}`}
-                              aria-pressed={trackLiked}
-                              className={clsx(
-                                "touch-manipulation rounded-full border p-2 transition disabled:cursor-default disabled:opacity-45",
-                                trackLiked ? "border-amber-200/45 bg-amber-200/18 text-amber-100" : "border-white/15 bg-white/[0.07] text-white/65 hover:border-amber-200/35 hover:bg-amber-200/12 hover:text-amber-50",
-                              )}
-                            >
-                              <HandThumbUpIcon className="h-4 w-4" aria-hidden="true" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void rateLineupTrack(track, "down")}
-                              disabled={busy === "rating" || busy === "delete"}
-                              aria-label={`Thumbs down ${track.title}`}
-                              aria-pressed={trackDisliked}
-                              className={clsx(
-                                "touch-manipulation rounded-full border p-2 transition disabled:cursor-default disabled:opacity-45",
-                                trackDisliked ? "border-pink-200/45 bg-pink-400/18 text-pink-100" : "border-white/15 bg-white/[0.07] text-white/65 hover:border-pink-200/35 hover:bg-pink-400/12 hover:text-pink-50",
-                              )}
-                            >
-                              <HandThumbDownIcon className="h-4 w-4" aria-hidden="true" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void selectLineupTrack(track)}
-                              disabled={isCurrentTrack || busy === "select" || busy === "delete"}
-                              aria-label={isCurrentTrack ? `Now playing ${track.title}` : `Play ${track.title}`}
-                              className={clsx(
-                                "touch-manipulation rounded-full border px-4 py-2 text-xs font-bold uppercase tracking-[0.12em] transition disabled:cursor-default",
-                                isCurrentTrack ? "border-emerald-200/30 bg-emerald-200/12 text-emerald-100/75" : "border-white/15 bg-white/[0.07] text-white/75 hover:border-emerald-200/35 hover:bg-emerald-200/12 hover:text-emerald-50",
-                              )}
-                            >
-                              {isCurrentTrack ? "Playing" : busy === "select" ? "Loading" : "Play"}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void deleteLineupTrack(track)}
-                              disabled={busy === "delete"}
-                              aria-label={`Delete ${track.title}`}
-                              title={`Delete ${track.title}`}
-                              className="touch-manipulation rounded-full border border-rose-200/20 bg-rose-400/10 p-2 text-rose-100/80 transition hover:border-rose-200/40 hover:bg-rose-400/18 hover:text-rose-50 disabled:cursor-default disabled:opacity-45"
-                            >
-                              <TrashIcon className="h-4 w-4" aria-hidden="true" />
-                            </button>
-                          </div>
-                        </div>
-                        <div className="mt-1 truncate text-xs text-white/42">{track.filename}</div>
-                        <QueueTrackMetadata track={track} />
-                      </div>
-                    );
-                  })}
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
               ) : (
                 <p className="text-sm text-white/45">No songs queued for this music style yet.</p>
@@ -1287,8 +1292,13 @@ function trackProvenanceLabel(track: RadioTrackRecord) {
 
 function QueueTrackMetadata({ track }: { track: RadioTrackRecord }) {
   const createdAtText = formatTrackCreatedAt(track.createdAt);
-  const ageText = formatTrackAge(track.createdAt);
+  const [ageText, setAgeText] = useState("recently added");
   const fileSizeText = formatBytes(track.fileSizeBytes);
+
+  useEffect(() => {
+    setAgeText(formatTrackAge(track.createdAt));
+  }, [track.createdAt]);
+
   return (
     <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-white/38">
       <span>
@@ -1409,6 +1419,33 @@ function AssessmentQueueStatusPanel({ queue }: { queue: RadioStreamState["assess
       <div className="mt-2 truncate text-xs font-semibold text-white/50">{nextText}</div>
     </div>
   );
+}
+
+function QueueGenerationStatusPanel({ queue }: { queue: RadioStreamState["queueGeneration"] | undefined }) {
+  const status = queue?.status ?? "idle";
+  const queueAheadCount = queue?.queueAheadCount ?? 0;
+  const queueTarget = queue?.queueTarget ?? 3;
+  const pendingCount = queue?.pendingCount ?? Math.max(0, queueTarget - queueAheadCount);
+  return (
+    <div aria-label="Queue audio generation status" className="mt-3 rounded-2xl border border-emerald-200/15 bg-emerald-300/[0.07] p-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-100/60">Queue audio generation</div>
+          <div className="mt-1 text-sm font-semibold text-emerald-50">{formatQueueGenerationStatus(status)}</div>
+        </div>
+        <div className="text-left sm:text-right">
+          <div className="text-lg font-semibold tracking-[-0.02em] text-white">{queueAheadCount}/{queueTarget} songs ready ahead</div>
+          <div className="text-xs font-semibold text-emerald-100/68">{pendingCount} song{pendingCount === 1 ? "" : "s"} needed</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function formatQueueGenerationStatus(status: NonNullable<RadioStreamState["queueGeneration"]>["status"]) {
+  if (status === "generating") return "Generating station audio";
+  if (status === "queued") return "Waiting for server refill";
+  return "Queue target met";
 }
 
 function formatAssessmentQueueStatus(status: NonNullable<RadioStreamState["assessmentQueue"]>["status"]) {

@@ -94,6 +94,13 @@ export type RadioStats = {
   audioDiskBytes: number;
 };
 
+export type RadioQueueGenerationStatus = {
+  status: "idle" | "queued" | "generating";
+  pendingCount: number;
+  queueAheadCount: number;
+  queueTarget: number;
+};
+
 export type RadioState = {
   selectedStyleId: RadioStyleId;
   announceEnabled: boolean;
@@ -127,6 +134,7 @@ export type RadioStreamState = RadioState & {
   lanPlaylistUrls?: RadioPlaylistUrls;
   stats?: RadioStats;
   assessmentQueue?: AudioAssessmentQueueStatus;
+  queueGeneration?: RadioQueueGenerationStatus;
 };
 
 export type RadioPlaylistFormat = "m3u" | "pls";
@@ -960,7 +968,7 @@ export function advanceRadioCurrentTrack(state: RadioState, nowInput?: string): 
   const styleId = state.currentTrack.styleId;
   const nextTrack = state.history.slice(Math.max(currentIndex + 1, 0)).find((track) => track.styleId === styleId && isRadioMp3Track(track));
   if (!nextTrack) return state;
-  const updatedAt = normalizeRadioTimestamp(nowInput) ?? nextTimestamp(state.updatedAt);
+  const updatedAt = clampRadioAdvanceTimestampToTrackCreation(normalizeRadioTimestamp(nowInput) ?? nextTimestamp(state.updatedAt), nextTrack);
   return {
     ...state,
     currentTrack: nextTrack,
@@ -971,6 +979,13 @@ export function advanceRadioCurrentTrack(state: RadioState, nowInput?: string): 
     currentTrackStartedAt: updatedAt,
     updatedAt,
   };
+}
+
+function clampRadioAdvanceTimestampToTrackCreation(timestamp: string, track: RadioTrackRecord) {
+  const timestampMs = Date.parse(timestamp);
+  const createdAtMs = Date.parse(track.createdAt);
+  if (!Number.isFinite(timestampMs) || !Number.isFinite(createdAtMs) || createdAtMs <= timestampMs) return timestamp;
+  return new Date(createdAtMs).toISOString();
 }
 
 export function synchronizeRadioPlayback(state: RadioState, nowInput = new Date().toISOString()): RadioState {
@@ -1069,6 +1084,7 @@ export function removeRadioTracksFromLineup(state: RadioState, tracks: RadioTrac
 export function buildRadioStreamState(state: RadioState): RadioStreamState {
   const streamReady = !!state.currentTrack?.filename.toLowerCase().endsWith(".mp3");
   const queueAheadCount = getRadioQueueAheadCount(state);
+  const queueGeneration = buildRadioQueueGenerationStatus(state);
   return {
     ...state,
     styles: getAvailableRadioStyles(state),
@@ -1076,7 +1092,19 @@ export function buildRadioStreamState(state: RadioState): RadioStreamState {
     queueAheadCount,
     queueTarget: RADIO_QUEUE_TARGET,
     needsQueueFill: queueAheadCount < RADIO_QUEUE_TARGET,
+    queueGeneration,
     ...(streamReady ? { streamUrl: STREAM_URL } : {}),
+  };
+}
+
+export function buildRadioQueueGenerationStatus(state: RadioState, active = false): RadioQueueGenerationStatus {
+  const queueAheadCount = getRadioQueueAheadCount(state);
+  const pendingCount = Math.max(0, RADIO_QUEUE_TARGET - queueAheadCount);
+  return {
+    status: active ? "generating" : pendingCount > 0 ? "queued" : "idle",
+    pendingCount,
+    queueAheadCount,
+    queueTarget: RADIO_QUEUE_TARGET,
   };
 }
 

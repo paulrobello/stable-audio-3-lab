@@ -1,4 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { hydrateRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import RadioStationClient from "./RadioStationClient";
 import type { RadioStreamState, RadioTrackRecord } from "@/lib/radio";
@@ -570,6 +572,87 @@ describe("radio page loading", () => {
 
     expect(fetchMock.mock.calls.some((call) => call[0] === "/api/generate")).toBe(false);
     expect(fetchMock.mock.calls.some(([_url, init]) => typeof init?.body === "string" && init.body.includes('"action":"fallbackTrack"'))).toBe(false);
+  });
+
+  it("limits the visible queue list to a scrollable five-song panel and shows audio generation status", async () => {
+    const queuedTracks = Array.from({ length: 6 }, (_, index) => ({
+      ...currentTrack,
+      id: `track-${index}`,
+      filename: `queued_${index}.mp3`,
+      title: `Queued ${index}`,
+      prompt: `queued prompt ${index}`,
+      createdAt: `2026-05-26T12:0${index}:00.000Z`,
+    }));
+    const stateWithQueue = {
+      ...radioState,
+      currentTrack: queuedTracks[0],
+      history: queuedTracks,
+      streamReady: true,
+      streamUrl: "/api/radio?stream=1",
+      queueAheadCount: 0,
+      needsQueueFill: true,
+      queueGeneration: {
+        status: "generating" as const,
+        pendingCount: 3,
+        queueAheadCount: 0,
+        queueTarget: 3,
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      json: async () => ({ ok: true, state: stateWithQueue, promptModels: ["qwen3:14b"] }),
+    }));
+
+    render(<RadioStationClient initialState={stateWithQueue} initialPromptModels={["qwen3:14b"]} />);
+
+    const queueList = screen.getByLabelText("Synthwave Night Drive queue list");
+    expect(queueList.className).toContain("overflow-y-auto");
+    expect(queueList.className).toContain("max-h-");
+    expect(within(screen.getByLabelText("Queue audio generation status")).getByText("Generating station audio")).toBeTruthy();
+    expect(screen.getByText("0/3 songs ready ahead")).toBeTruthy();
+    expect(screen.getByText("3 songs needed")).toBeTruthy();
+  });
+
+  it("does not hydrate queue metadata with server/client relative-age mismatches", async () => {
+    const queuedTrack = {
+      ...currentTrack,
+      createdAt: "2026-05-26T12:00:00.000Z",
+    };
+    const stateWithQueue = {
+      ...radioState,
+      currentTrack: queuedTrack,
+      history: [queuedTrack],
+      streamReady: true,
+      streamUrl: "/api/radio?stream=1",
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      json: async () => ({ ok: true, state: stateWithQueue, promptModels: ["qwen3:14b"] }),
+    }));
+    const dateNowMock = vi.spyOn(Date, "now").mockReturnValue(Date.parse(queuedTrack.createdAt) + 10_000);
+    const html = renderToString(<RadioStationClient initialState={stateWithQueue} initialPromptModels={["qwen3:14b"]} />);
+    document.body.innerHTML = `<div id="root">${html}</div>`;
+    const rootElement = document.getElementById("root");
+    if (!rootElement) throw new Error("Missing test root");
+    const recoverableErrors: unknown[] = [];
+
+    dateNowMock.mockReturnValue(Date.parse(queuedTrack.createdAt) + 70_000);
+    let root: ReturnType<typeof hydrateRoot> | undefined;
+    try {
+      await act(async () => {
+        root = hydrateRoot(rootElement, <RadioStationClient initialState={stateWithQueue} initialPromptModels={["qwen3:14b"]} />, {
+          onRecoverableError: (error) => recoverableErrors.push(error),
+        });
+        await Promise.resolve();
+      });
+
+      expect(recoverableErrors).toHaveLength(0);
+    } finally {
+      if (root) {
+        await act(async () => {
+          root?.unmount();
+        });
+      }
+      document.body.innerHTML = "";
+    }
   });
 
   it("shows song duration and progress for the current track", () => {

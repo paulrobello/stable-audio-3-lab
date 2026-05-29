@@ -403,6 +403,58 @@ fs.writeFileSync(process.argv[outIndex + 1], Buffer.from("ID3 server queue audio
     expect(saved.history.slice(1).every((track) => track.promptProvider === "fallback")).toBe(true);
   });
 
+  it("starts queue refill when a stream request synchronizes to the last queued song", async () => {
+    tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
+    process.chdir(tempCwd);
+    const outputDir = path.join(tempCwd, "public", "outputs");
+    const scriptsDir = path.join(tempCwd, "scripts");
+    const stateFile = path.join(tempCwd, ".stable-audio-radio", "state.json");
+    await mkdir(outputDir, { recursive: true });
+    await mkdir(scriptsDir, { recursive: true });
+    await mkdir(path.dirname(stateFile), { recursive: true });
+    await writeFile(path.join(scriptsDir, "generate_audio.py"), `
+const fs = require("node:fs");
+const outIndex = process.argv.indexOf("--out");
+fs.writeFileSync(process.argv[outIndex + 1], Buffer.from("ID3 stream queue audio"));
+`);
+    const current = createRadioTrackRecord({
+      filename: "current.mp3",
+      title: "Current",
+      prompt: "current",
+      styleId: "synthwave",
+      announce: false,
+      durationSeconds: 1,
+    });
+    const lastQueued = createRadioTrackRecord({
+      filename: "last_queued.mp3",
+      title: "Last Queued",
+      prompt: "last queued",
+      styleId: "synthwave",
+      announce: false,
+    });
+    await writeFile(path.join(outputDir, "current.mp3"), Buffer.from("current"));
+    await writeFile(path.join(outputDir, "last_queued.mp3"), Buffer.from("last queued"));
+    await writeFile(stateFile, JSON.stringify({
+      ...defaultRadioState(),
+      announceEnabled: false,
+      currentTrack: current,
+      currentTrackStartedAt: "2000-01-01T00:00:00.000Z",
+      history: [current, lastQueued],
+    }, null, 2));
+    process.env.STABLE_AUDIO_PYTHON = process.execPath;
+    process.env.RADIO_OLLAMA_TIMEOUT_MS = "1";
+    process.env.RADIO_QUEUE_AUTO_FILL = "true";
+
+    const response = await GET(new NextRequest("http://localhost:3007/api/radio?stream=1"));
+    const saved = await waitForRadioState(stateFile, (state) => state.history.length === 5);
+
+    expect(response.status).toBe(200);
+    expect(saved.history.map((track) => track.filename).slice(0, 2)).toEqual(["current.mp3", "last_queued.mp3"]);
+    expect(saved.history.slice(2).every((track) => track.styleId === "synthwave")).toBe(true);
+    expect(saved.history.slice(2).every((track) => track.promptProvider === "fallback")).toBe(true);
+    await response.body?.cancel();
+  });
+
   it("streams a starred library fallback when the lineup has no current mp3", async () => {
     tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
     process.chdir(tempCwd);
