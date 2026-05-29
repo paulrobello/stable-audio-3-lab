@@ -99,13 +99,6 @@ struct NowPlayingView: View {
             if let playbackStatus = visiblePlaybackStatus {
                 StatusBanner(text: playbackStatus, tone: .warning)
             }
-
-            Button {
-                player.setLiveActivityEnabled(!player.liveActivityEnabled)
-            } label: {
-                Label(player.liveActivityEnabled ? "Hide Dynamic Island" : "Show Dynamic Island", systemImage: "platter.filled.top.iphone")
-            }
-            .buttonStyle(.bordered)
         }
     }
 

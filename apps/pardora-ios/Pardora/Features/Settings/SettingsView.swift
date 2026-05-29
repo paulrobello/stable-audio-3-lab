@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @Bindable var model: RadioAppModel
     @AppStorage(PardoraSettings.autoPlayOnLaunchKey) private var autoPlayOnLaunch = false
+    @AppStorage(PardoraSettings.carPlayModeEnabledKey) private var carPlayModeEnabled = true
     @State private var player = RadioPlayer.shared
 
     var body: some View {
@@ -89,6 +90,7 @@ struct SettingsView: View {
             Section("Playback") {
                 Toggle("Auto Play on App Launch", isOn: $autoPlayOnLaunch)
                 Toggle("Dynamic Island", isOn: liveActivitySelection)
+                Toggle("CarPlay Mode", isOn: $carPlayModeEnabled)
 
                 Button(role: .destructive) {
                     player.stop()

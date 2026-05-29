@@ -1237,6 +1237,36 @@ describe("radio page loading", () => {
     expect(stats.getByText("5.0 MB")).toBeTruthy();
   });
 
+  it("shows assessment queue status from the stream state", () => {
+    const stateWithAssessmentQueue = {
+      ...radioState,
+      currentTrack,
+      history: [currentTrack],
+      streamReady: true,
+      streamUrl: "/api/radio?stream=1",
+      assessmentQueue: {
+        pendingCount: 2,
+        status: "paused" as const,
+        loadRatio: 0.32,
+        loadThreshold: 0.25,
+        nextFilename: "synthwave_mobile_check.mp3",
+        nextRating: "up",
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      json: async () => ({ ok: true, state: stateWithAssessmentQueue, promptModels: ["qwen3:14b"] }),
+    }));
+
+    render(<RadioStationClient initialState={stateWithAssessmentQueue} initialPromptModels={["qwen3:14b"]} />);
+
+    const queue = within(screen.getByLabelText("Assessment queue status"));
+    expect(queue.getByText("Assessment queue")).toBeTruthy();
+    expect(queue.getByText("Paused for load")).toBeTruthy();
+    expect(queue.getByText("2 pending")).toBeTruthy();
+    expect(queue.getByText("Load 32% / limit 25%")).toBeTruthy();
+    expect(queue.getByText("Next: synthwave_mobile_check.mp3 (up)")).toBeTruthy();
+  });
+
   it("indicates when the current song prompt is in saved likes", () => {
     const stateWithSavedLike = {
       ...radioState,

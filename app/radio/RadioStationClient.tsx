@@ -786,6 +786,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
             </div>
           </div>
           <RadioAssessmentPanel assessment={currentAssessment} error={currentAssessmentError} loading={busy === "assess"} />
+          <AssessmentQueueStatusPanel queue={radioState?.assessmentQueue} />
           <div aria-label="Station stats" className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
             <StatTile label="Songs generated" value={radioStats ? formatStatNumber(radioStats.generatedSongCount) : "--"} />
             <StatTile label="Thumbs up" value={radioStats ? formatStatNumber(radioStats.thumbsUpCount) : "--"} />
@@ -1372,6 +1373,39 @@ function formatAudioBytes(bytes: number) {
     unitIndex += 1;
   }
   return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
+}
+
+function formatPercent(value: number | undefined) {
+  return `${Math.round(Math.max(0, value ?? 0) * 100)}%`;
+}
+
+function AssessmentQueueStatusPanel({ queue }: { queue: RadioStreamState["assessmentQueue"] | undefined }) {
+  const status = queue?.status ?? "idle";
+  const pendingCount = queue?.pendingCount ?? 0;
+  const nextText = queue?.nextFilename
+    ? `Next: ${queue.nextFilename}${queue.nextRating !== undefined ? ` (${queue.nextRating})` : ""}`
+    : "Next: none";
+  return (
+    <div aria-label="Assessment queue status" className="mt-3 rounded-2xl border border-sky-200/15 bg-sky-300/[0.07] p-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="text-xs font-bold uppercase tracking-[0.16em] text-sky-100/60">Assessment queue</div>
+          <div className="mt-1 text-sm font-semibold text-sky-50">{formatAssessmentQueueStatus(status)}</div>
+        </div>
+        <div className="text-left sm:text-right">
+          <div className="text-lg font-semibold tracking-[-0.02em] text-white">{pendingCount} pending</div>
+          <div className="text-xs font-semibold text-sky-100/68">Load {formatPercent(queue?.loadRatio)} / limit {formatPercent(queue?.loadThreshold)}</div>
+        </div>
+      </div>
+      <div className="mt-2 truncate text-xs font-semibold text-white/50">{nextText}</div>
+    </div>
+  );
+}
+
+function formatAssessmentQueueStatus(status: NonNullable<RadioStreamState["assessmentQueue"]>["status"]) {
+  if (status === "paused") return "Paused for load";
+  if (status === "queued") return "Ready below load limit";
+  return "Idle";
 }
 
 function StatTile({ label, value }: { label: string; value: string }) {

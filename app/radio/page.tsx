@@ -13,6 +13,7 @@ import {
   type RadioState,
   type RadioStreamState,
 } from "@/lib/radio";
+import { getAudioAssessmentQueueStatus } from "@/lib/audio-assessment";
 import RadioStationClient from "./RadioStationClient";
 
 export const dynamic = "force-dynamic";
@@ -43,6 +44,7 @@ async function readInitialRadioStreamState(): Promise<RadioStreamState> {
   const lanPlaylistUrls = buildRadioPlaylistUrls(lanStreamUrl);
   return {
     ...buildRadioStreamState(state),
+    assessmentQueue: await getAudioAssessmentQueueStatus(),
     ...(publicStreamUrl ? { streamUrl: publicStreamUrl } : {}),
     ...(lanStreamUrl ? { lanStreamUrl } : {}),
     ...(publicPlaylistUrls ? { publicPlaylistUrls } : {}),

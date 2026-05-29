@@ -15,6 +15,7 @@
 		307DF81E9B2A6CFFB32EAC6F /* RadioAPIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B5E1918683A7065423DB90B /* RadioAPIClientTests.swift */; };
 		372E7419B9AAF560BC99E656 /* PardoraSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E450DA60541D6E4BC3DA859 /* PardoraSettings.swift */; };
 		379D754617397768AB7BB2A5 /* PardoraApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08372637BE5403229D4E0EF6 /* PardoraApp.swift */; };
+		3F550660C86EE1C0C014C5C4 /* PardoraSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 431EBD2A73DB77DEF28A223E /* PardoraSettingsTests.swift */; };
 		3FF915DDCCAB5248F41BA996 /* WatchConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5F3B82256BCE9D9BAB951C5F /* WatchConnectivity.framework */; };
 		430F7B35AE418180545A7037 /* PardoraLiveActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFC009390CAA7F24CCF8AA64 /* PardoraLiveActivityWidget.swift */; };
 		47B5AFCB2A7C38288B4B591A /* AppRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23BD467777D391EB06DF855E /* AppRootView.swift */; };
@@ -106,6 +107,7 @@
 		2E4F9A7ABC4DB8DB6CCB028C /* RadioPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadioPlayer.swift; sourceTree = "<group>"; };
 		32D4A2488E0485950AC9CD79 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		334FC8DBEACABE845F084D81 /* PardoraActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PardoraActivityAttributes.swift; sourceTree = "<group>"; };
+		431EBD2A73DB77DEF28A223E /* PardoraSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PardoraSettingsTests.swift; sourceTree = "<group>"; };
 		4B5E1918683A7065423DB90B /* RadioAPIClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadioAPIClientTests.swift; sourceTree = "<group>"; };
 		4E450DA60541D6E4BC3DA859 /* PardoraSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PardoraSettings.swift; sourceTree = "<group>"; };
 		5F3B82256BCE9D9BAB951C5F /* WatchConnectivity.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WatchConnectivity.framework; path = System/Library/Frameworks/WatchConnectivity.framework; sourceTree = SDKROOT; };
@@ -270,6 +272,7 @@
 		BD52DF1A0DFD6D13243BB1A1 /* PardoraTests */ = {
 			isa = PBXGroup;
 			children = (
+				431EBD2A73DB77DEF28A223E /* PardoraSettingsTests.swift */,
 				4B5E1918683A7065423DB90B /* RadioAPIClientTests.swift */,
 				EB8B977B5C0D7C55362C7DE9 /* RadioAppModelTests.swift */,
 				D4AC7390FC2C0078F36FF56A /* RadioModelsTests.swift */,
@@ -525,6 +528,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3F550660C86EE1C0C014C5C4 /* PardoraSettingsTests.swift in Sources */,
 				307DF81E9B2A6CFFB32EAC6F /* RadioAPIClientTests.swift in Sources */,
 				BAE2F32085F983044470542C /* RadioAppModelTests.swift in Sources */,
 				D570AE90FF8C3C9372D8FA56 /* RadioModelsTests.swift in Sources */,

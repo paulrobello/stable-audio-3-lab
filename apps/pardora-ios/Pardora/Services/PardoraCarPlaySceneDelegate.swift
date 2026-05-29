@@ -73,6 +73,12 @@ final class PardoraCarPlaySceneDelegate: UIResponder, CPTemplateApplicationScene
     }
 
     private func refreshAndRender(animated: Bool) async {
+        guard PardoraSettings.isCarPlayModeEnabled() else {
+            player.setNextTrackHandler(nil)
+            renderRootTemplate(animated: animated)
+            return
+        }
+
         await model.refresh(showStatus: false)
         configurePlayer()
         renderRootTemplate(animated: animated)
@@ -107,6 +113,10 @@ final class PardoraCarPlaySceneDelegate: UIResponder, CPTemplateApplicationScene
     }
 
     private func rootSections() -> [CPListSection] {
+        guard PardoraSettings.isCarPlayModeEnabled() else {
+            return [CPListSection(items: [carPlayDisabledItem()], header: "CarPlay", sectionIndexTitle: nil)]
+        }
+
         var sections: [CPListSection] = []
 
         if let current = currentTrackItem() {
@@ -146,6 +156,12 @@ final class PardoraCarPlaySceneDelegate: UIResponder, CPTemplateApplicationScene
     private func statusItem() -> CPListItem {
         let detail = model.statusMessage ?? "Open Pardora on iPhone to connect to the radio server."
         let item = CPListItem(text: "Pardora Radio", detailText: detail)
+        item.isEnabled = false
+        return item
+    }
+
+    private func carPlayDisabledItem() -> CPListItem {
+        let item = CPListItem(text: "CarPlay Mode Off", detailText: "Enable CarPlay Mode in Pardora Settings on iPhone.")
         item.isEnabled = false
         return item
     }

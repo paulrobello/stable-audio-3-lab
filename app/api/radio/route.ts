@@ -61,6 +61,7 @@ import { buildRadioPlaylistRouteResponse } from "@/lib/radio-playlist-response";
 import { normalizeGenerationRequest } from "@/lib/generation";
 import { buildGeneratorArgs, resolveGenerationBackend } from "@/lib/generator-backend";
 import { buildLibraryMetadata, isFavoriteMetadata, isSafeAudioFilename, metadataPathForAudio, outputPathForAudio, titleToFilename } from "@/lib/library";
+import { enqueueAudioAssessment, getAudioAssessmentQueueStatus, startAudioAssessmentQueueProcessing } from "@/lib/audio-assessment";
 
 export const runtime = "nodejs";
 export const maxDuration = 180;
@@ -278,6 +279,19 @@ export async function POST(request: NextRequest) {
         ? body.phrase
         : ratedTrack?.prompt ?? state.currentTrack?.prompt ?? state.currentDraft?.prompt ?? "";
       const ratedState = recordRadioRating(state, styleId, phrase, body.rating);
+      const rating = normalizeRadioRatingPayload(body.rating);
+      const assessmentTrack = findRatedAssessmentTrack(ratedTrack ?? state.currentTrack, rating);
+      if (assessmentTrack && rating) {
+        await enqueueAudioAssessment({
+          filename: assessmentTrack.filename,
+          source: "radio",
+          title: assessmentTrack.title,
+          prompt: assessmentTrack.prompt,
+          styleId: assessmentTrack.styleId,
+          rating,
+        });
+        void startAudioAssessmentQueueProcessing();
+      }
       const shouldRejectCurrentTrack = body.rating === "down" && (!ratedTrack || ratedTrack.filename === state.currentTrack?.filename);
       const rejectResult = shouldRejectCurrentTrack ? rejectCurrentRadioTrack(ratedState) : { state: ratedState, rejectedTrack: undefined };
       if (rejectResult.rejectedTrack) await removeRejectedTrackAudio(rejectResult.rejectedTrack);
@@ -334,6 +348,7 @@ async function buildRadioResponseState(state: RadioState, request: NextRequest) 
   return {
     ...buildRadioStreamState(state),
     stats: buildRadioStats(state, await getRadioAudioDiskBytes(state)),
+    assessmentQueue: await getAudioAssessmentQueueStatus(),
     ...(publicStreamUrl ? { streamUrl: publicStreamUrl } : {}),
     ...(lanStreamUrl ? { lanStreamUrl } : {}),
     ...(publicPlaylistUrls ? { publicPlaylistUrls } : {}),
@@ -1118,8 +1133,13 @@ async function readAudioFileSizeBytes(filename: string) {
   }
 }
 
+function findRatedAssessmentTrack(track: RadioTrackRecord | undefined, rating: RadioRating | undefined) {
+  if (!track || !rating) return undefined;
+  return track;
+}
+
 async function removeRejectedTrackAudio(track: RadioTrackRecord) {
-  await removeTrackAudio(track, { rejectedAt: new Date().toISOString(), removalReason: "thumbs_down" });
+  await markRetainedRejectedTrackMetadata(track, { rejectedAt: new Date().toISOString(), removalReason: "thumbs_down" });
 }
 
 async function removeExpiredTrackAudio(track: RadioTrackRecord) {
@@ -1174,6 +1194,23 @@ async function markRemovedTrackMetadata(track: RadioTrackRecord, removalMetadata
       ...removalMetadata,
       audioRemovedAt: new Date().toISOString(),
       removedAudioFilename: track.filename,
+    },
+  };
+  await writeFile(metaPath, JSON.stringify(updated, null, 2));
+  return updated;
+}
+
+async function markRetainedRejectedTrackMetadata(track: RadioTrackRecord, removalMetadata: Record<string, unknown>) {
+  const audioPath = outputPathForAudio(outputDir(), track.filename);
+  const metaPath = metadataPathForAudio(audioPath);
+  const meta = await readTrackMetadata(track);
+  const previousRadio = meta.radio && typeof meta.radio === "object" ? meta.radio as Record<string, unknown> : {};
+  const updated = {
+    ...meta,
+    radio: {
+      ...previousRadio,
+      ...removalMetadata,
+      retainedForAssessment: true,
     },
   };
   await writeFile(metaPath, JSON.stringify(updated, null, 2));

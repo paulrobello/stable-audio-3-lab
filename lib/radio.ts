@@ -1,3 +1,5 @@
+import type { AudioAssessmentQueueStatus } from "./audio-assessment";
+
 export type RadioStyleId = string;
 export type RadioRating = "up" | "down";
 export type RadioPromptProvider = "ollama" | "fallback";
@@ -123,6 +125,7 @@ export type RadioStreamState = RadioState & {
   publicPlaylistUrls?: RadioPlaylistUrls;
   lanPlaylistUrls?: RadioPlaylistUrls;
   stats?: RadioStats;
+  assessmentQueue?: AudioAssessmentQueueStatus;
 };
 
 export type RadioPlaylistFormat = "m3u" | "pls";

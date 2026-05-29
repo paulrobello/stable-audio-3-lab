@@ -666,8 +666,12 @@ printf '%s' '{"likedTraits":["wide neon pads"],"dislikedTraits":["thin supersaw 
   it("records thumbs down for a queued track without rejecting the current track", async () => {
     tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
     process.chdir(tempCwd);
+    const outputDir = path.join(tempCwd, "public", "outputs");
     const stateFile = path.join(tempCwd, ".stable-audio-radio", "state.json");
+    await mkdir(outputDir, { recursive: true });
     await mkdir(path.dirname(stateFile), { recursive: true });
+    await writeFile(path.join(outputDir, "queued.mp3"), Buffer.from("queued audio"));
+    await writeFile(path.join(outputDir, "queued.mp3.json"), JSON.stringify({ title: "Queued" }));
     const current = createRadioTrackRecord({
       filename: "current.mp3",
       title: "Current",
@@ -699,12 +703,21 @@ printf '%s' '{"likedTraits":["wide neon pads"],"dislikedTraits":["thin supersaw 
       history?: { filename?: string }[];
       preferences?: { synthwave?: { dislikes?: string[] } };
     };
+    const metadata = JSON.parse(await readFile(path.join(outputDir, "queued.mp3.json"), "utf8")) as {
+      assessmentQueue?: { status?: string; source?: { filename?: string; rating?: string; prompt?: string } };
+    };
+    const queue = JSON.parse(await readFile(path.join(tempCwd, ".stable-audio-assessments", "queue.json"), "utf8")) as Array<{ filename?: string; rating?: string }>;
 
     expect(json.ok).toBe(true);
     expect(json.rejectedTrack).toBeUndefined();
     expect(saved.currentTrack?.filename).toBe("current.mp3");
     expect(saved.history?.map((track) => track.filename)).toEqual(["current.mp3", "queued.mp3"]);
     expect(saved.preferences?.synthwave?.dislikes).toEqual(["thin brittle drums"]);
+    expect(metadata.assessmentQueue).toMatchObject({
+      status: "queued",
+      source: { filename: "queued.mp3", rating: "down", prompt: "thin brittle drums" },
+    });
+    expect(queue).toMatchObject([{ filename: "queued.mp3", rating: "down" }]);
   });
 
   it("deletes thumbs feedback from preferences and matching rated tracks", async () => {
