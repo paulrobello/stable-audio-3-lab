@@ -14,6 +14,7 @@ EXPORT_OPTIONS="${EXPORT_OPTIONS:-$PWD/Config/ExportOptions-TestFlight.plist}"
 CONFIGURATION="${CONFIGURATION:-Release}"
 DESTINATION="${TESTFLIGHT_DESTINATION:-generic/platform=iOS}"
 PARVAULT_ASC_SECRET="${PARVAULT_ASC_SECRET:-APPLE_APP_STORE_CONNECT}"
+PARVAULT_REQUESTER_CONTEXT="${PARVAULT_REQUESTER_CONTEXT:-Codex stable-audio-3-lab Pardora internal TestFlight upload}"
 ASC_KEY_ID="${ASC_KEY_ID:-}"
 ASC_ISSUER_ID="${ASC_ISSUER_ID:-}"
 ASC_KEY_PATH="${ASC_KEY_PATH:-${APP_STORE_CONNECT_API_KEY_PATH:-}}"
@@ -108,7 +109,7 @@ load_parvault_secret() {
 	require_tool jq
 
 	local secret value parsed
-	secret="$(parvault --json agent get "$PARVAULT_ASC_SECRET")"
+	secret="$(parvault --json agent get --requester "$PARVAULT_REQUESTER_CONTEXT" "$PARVAULT_ASC_SECRET")"
 	value="$(printf '%s' "$secret" | jq -r '.value')"
 
 	if printf '%s' "$value" | jq -e . >/dev/null 2>&1; then
