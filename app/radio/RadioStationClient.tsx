@@ -809,7 +809,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
           <aside className="space-y-4 rounded-[2rem] border border-white/10 bg-black/24 p-4">
             <div>
               <h2 className="text-lg font-semibold">Music style</h2>
-              <div className="mt-3 grid gap-2">
+              <div aria-label="Music style list" className="mt-3 grid max-h-[44.5rem] gap-2 overflow-y-auto pr-1">
                 {availableStyles.map((style) => (
                   <div
                     key={style.id}

@@ -150,8 +150,21 @@ extension MPRemoteCommandCenter: RadioRemoteCommandCenter {
 @MainActor
 @Observable
 final class RadioPlayer {
-    static let shared = RadioPlayer(liveActivityEnabled: nil)
+    static let shared = RadioPlayer(liveActivityEnabled: defaultLiveActivityEnabled() ? nil : false)
     static let noStreamMessage = "Connect to the radio stream before pressing Play."
+
+    static func defaultLiveActivityEnabled(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        arguments: [String] = ProcessInfo.processInfo.arguments,
+        bundlePaths: [String] = Bundle.allBundles.map(\.bundlePath)
+    ) -> Bool {
+        guard environment["XCTestConfigurationFilePath"] == nil else { return false }
+        guard !arguments.contains(where: { $0.contains(".xctestconfiguration") || $0 == "-XCTest" }) else {
+            return false
+        }
+        guard !bundlePaths.contains(where: { $0.hasSuffix(".xctest") }) else { return false }
+        return true
+    }
 
     private let player = AVPlayer()
     private let audioSession: RadioAudioSession
@@ -211,7 +224,7 @@ final class RadioPlayer {
         updateProgressBaseline(for: metadata)
         updateNowPlayingInfo()
         updateRemoteCommands()
-        if isPlaying {
+        if liveActivityEnabled, !systemPlaybackReleased {
             updateLiveActivity()
         }
     }

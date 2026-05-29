@@ -9,6 +9,25 @@ final class RadioPlayerTests: XCTestCase {
         XCTAssertTrue(RadioAudioSessionConfiguration.categoryOptions.isEmpty)
     }
 
+    func testSharedPlayerSuppressesLiveActivitiesUnderXCTest() {
+        XCTAssertFalse(RadioPlayer.defaultLiveActivityEnabled(
+            environment: ["XCTestConfigurationFilePath": "/tmp/tests.xctestconfiguration"],
+            arguments: [],
+            bundlePaths: []
+        ))
+        XCTAssertFalse(RadioPlayer.defaultLiveActivityEnabled(
+            environment: [:],
+            arguments: ["/tmp/tests.xctestconfiguration"],
+            bundlePaths: []
+        ))
+        XCTAssertFalse(RadioPlayer.defaultLiveActivityEnabled(
+            environment: [:],
+            arguments: [],
+            bundlePaths: ["/tmp/PardoraTests.xctest"]
+        ))
+        XCTAssertTrue(RadioPlayer.defaultLiveActivityEnabled(environment: [:], arguments: [], bundlePaths: []))
+    }
+
     func testAppRegistersForBackgroundAudio() throws {
         let testFileURL = URL(filePath: #filePath)
         let plistURL = testFileURL
@@ -154,6 +173,58 @@ final class RadioPlayerTests: XCTestCase {
 
         XCTAssertEqual(nowPlayingCenter.nowPlayingInfo?[MPNowPlayingInfoPropertyPlaybackRate] as? Double, 0)
         XCTAssertEqual(liveActivityController.lastMetadata?.title, "Public Track")
+        XCTAssertEqual(liveActivityController.lastIsPlaying, false)
+    }
+
+    func testLoadingNewMetadataWhilePausedRefreshesLockScreenAndDynamicIslandInfo() {
+        let nowPlayingCenter = FakeRadioNowPlayingCenter()
+        let liveActivityController = FakeRadioLiveActivityController()
+        let player = RadioPlayer(
+            audioSession: FakeRadioAudioSession(),
+            nowPlayingCenter: nowPlayingCenter,
+            remoteCommandCenter: FakeRadioRemoteCommandCenter(),
+            liveActivityController: liveActivityController)
+
+        player.load(
+            url: URL(string: "https://radio.pardev.net/api/radio?stream=1"),
+            metadata: .init(trackID: "track-1", title: "Public Track", albumTitle: "Synthwave")
+        )
+        player.play()
+        player.pause()
+        player.load(
+            url: URL(string: "https://radio.pardev.net/api/radio?stream=1"),
+            metadata: .init(trackID: "track-2", title: "Sonos Track", albumTitle: "Ambient")
+        )
+
+        XCTAssertFalse(player.isPlaying)
+        XCTAssertEqual(nowPlayingCenter.nowPlayingInfo?[MPMediaItemPropertyTitle] as? String, "Sonos Track")
+        XCTAssertEqual(nowPlayingCenter.nowPlayingInfo?[MPMediaItemPropertyAlbumTitle] as? String, "Ambient")
+        XCTAssertEqual(nowPlayingCenter.nowPlayingInfo?[MPNowPlayingInfoPropertyPlaybackRate] as? Double, 0)
+        XCTAssertEqual(liveActivityController.lastMetadata?.title, "Sonos Track")
+        XCTAssertEqual(liveActivityController.lastMetadata?.albumTitle, "Ambient")
+        XCTAssertEqual(liveActivityController.lastIsPlaying, false)
+    }
+
+    func testLoadingMetadataWithoutLocalPlaybackRefreshesDynamicIslandInfo() {
+        let liveActivityController = FakeRadioLiveActivityController()
+        let player = RadioPlayer(
+            audioSession: FakeRadioAudioSession(),
+            nowPlayingCenter: FakeRadioNowPlayingCenter(),
+            remoteCommandCenter: FakeRadioRemoteCommandCenter(),
+            liveActivityController: liveActivityController)
+
+        player.load(
+            url: URL(string: "https://radio.pardev.net/api/radio?stream=1"),
+            metadata: .init(trackID: "track-1", title: "Public Track", albumTitle: "Synthwave")
+        )
+        player.load(
+            url: URL(string: "https://radio.pardev.net/api/radio?stream=1"),
+            metadata: .init(trackID: "track-2", title: "Sonos Track", albumTitle: "Ambient")
+        )
+
+        XCTAssertFalse(player.isPlaying)
+        XCTAssertEqual(liveActivityController.lastMetadata?.title, "Sonos Track")
+        XCTAssertEqual(liveActivityController.lastMetadata?.albumTitle, "Ambient")
         XCTAssertEqual(liveActivityController.lastIsPlaying, false)
     }
 

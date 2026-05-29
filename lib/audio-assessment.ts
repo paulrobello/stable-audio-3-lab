@@ -115,6 +115,8 @@ export async function assessAudioFile(request: AudioAssessmentRequest) {
 export async function enqueueAudioAssessment(request: AudioAssessmentRequest) {
   const filename = normalizeSafeFilename(request.filename);
   const metadata = await readAudioMetadata(filename);
+  const queue = await readAssessmentQueue();
+  if (hasFinishedAssessment(metadata) || queue.some((item) => item.filename === filename)) return undefined;
   const sourceInfo = buildAssessmentSource({
     filename,
     source: request.source === "radio" ? "radio" : "library",
@@ -133,8 +135,7 @@ export async function enqueueAudioAssessment(request: AudioAssessmentRequest) {
     queuedAt,
     attempts: 0,
   };
-  const queue = await readAssessmentQueue();
-  const nextQueue = [...queue.filter((item) => item.filename !== filename), job].slice(-200);
+  const nextQueue = [...queue, job].slice(-200);
   await writeAssessmentQueue(nextQueue);
   await writeAssessmentQueueMetadata(filename, metadata, sourceInfo, queuedAt, "queued");
   return job;
@@ -166,6 +167,11 @@ export async function processAudioAssessmentQueue(options: { loadRatio?: number 
     const queue = await readAssessmentQueue();
     const [job, ...remaining] = queue;
     if (!job) return { processed, deferred: false };
+    const metadata = await readAudioMetadata(job.filename);
+    if (hasFinishedAssessment(metadata)) {
+      await writeAssessmentQueue(remaining);
+      continue;
+    }
 
     try {
       await assessAudioFile(job);
@@ -173,7 +179,6 @@ export async function processAudioAssessmentQueue(options: { loadRatio?: number 
       processed += 1;
     } catch (error) {
       const failedAt = new Date().toISOString();
-      const metadata = await readAudioMetadata(job.filename);
       await writeAssessmentQueueMetadata(
         job.filename,
         metadata,
@@ -306,6 +311,15 @@ function appendAssessmentMetadata(metadata: Record<string, unknown>, assessment:
     },
     assessments: [...previous, assessment].slice(-20),
   };
+}
+
+function hasFinishedAssessment(metadata: Record<string, unknown>) {
+  if (metadata.latestAssessment && typeof metadata.latestAssessment === "object") return true;
+  if (Array.isArray(metadata.assessments) && metadata.assessments.length > 0) return true;
+  const assessmentQueue = metadata.assessmentQueue && typeof metadata.assessmentQueue === "object"
+    ? metadata.assessmentQueue as Record<string, unknown>
+    : undefined;
+  return assessmentQueue?.status === "done";
 }
 
 async function writeAssessmentQueueMetadata(

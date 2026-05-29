@@ -158,6 +158,25 @@ describe("radio page loading", () => {
     expect(screen.getByText("moody dungeon synth instrumental, tape hiss, simple medieval melody, no vocals")).toBeTruthy();
   });
 
+  it("limits the music style management list to a scrollable five-style panel", () => {
+    const styles = Array.from({ length: 6 }, (_, index) => ({
+      id: `style-${index + 1}`,
+      label: `Style ${index + 1}`,
+      seedPrompt: `instrumental style ${index + 1}, wide stereo field, no vocals`,
+      negativePrompt: "vocals, clipping",
+    }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      json: async () => ({ ok: true, state: radioState, promptModels: ["qwen3:14b"], cleanedTracks: [] }),
+    }));
+
+    render(<RadioStationClient initialState={{ ...radioState, selectedStyleId: styles[0].id, styles }} initialPromptModels={["qwen3:14b"]} />);
+
+    const styleList = screen.getByLabelText("Music style list");
+    expect(styleList.className).toContain("max-h-[44.5rem]");
+    expect(styleList.className).toContain("overflow-y-auto");
+    expect(within(styleList).getByText("Style 6")).toBeTruthy();
+  });
+
   it("generates style prompts with Codex and edits and deletes custom styles", async () => {
     const dungeonStyle = {
       id: "dungeon-synth",
