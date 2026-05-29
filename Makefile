@@ -1,4 +1,4 @@
-.PHONY: build test lint fmt typecheck checkall dev pre-commit pre-commit-install pre-commit-update pardora-generate pardora-build pardora-test pardora-checkall pardora-run
+.PHONY: build test lint fmt typecheck checkall dev pre-commit pre-commit-install pre-commit-update pardora-generate pardora-build pardora-test pardora-checkall pardora-run pardora-archive-testflight pardora-upload-testflight
 
 dev:
 	npm run dev
@@ -44,3 +44,9 @@ pardora-checkall:
 
 pardora-run:
 	$(MAKE) -C apps/pardora-ios run
+
+pardora-archive-testflight:
+	$(MAKE) -C apps/pardora-ios archive-testflight
+
+pardora-upload-testflight:
+	$(MAKE) -C apps/pardora-ios upload-testflight
