@@ -191,6 +191,59 @@ final class RadioPlayerTests: XCTestCase {
         XCTAssertEqual(liveActivityController.endCount, 1)
     }
 
+    func testStopReleasesPlaybackSurfacesAndAudioSession() {
+        let audioSession = FakeRadioAudioSession()
+        let nowPlayingCenter = FakeRadioNowPlayingCenter()
+        let remoteCommandCenter = FakeRadioRemoteCommandCenter()
+        let liveActivityController = FakeRadioLiveActivityController()
+        let player = RadioPlayer(
+            audioSession: audioSession,
+            nowPlayingCenter: nowPlayingCenter,
+            remoteCommandCenter: remoteCommandCenter,
+            liveActivityController: liveActivityController)
+
+        player.load(url: URL(string: "https://radio.pardev.net/api/radio?stream=1"), metadata: .init(title: "Public Track"))
+        player.play()
+        player.stop()
+
+        XCTAssertFalse(player.isPlaying)
+        XCTAssertEqual(player.statusMessage, "Stopped")
+        XCTAssertNil(nowPlayingCenter.nowPlayingInfo)
+        XCTAssertEqual(liveActivityController.endCount, 1)
+        XCTAssertEqual(audioSession.deactivationCount, 1)
+        XCTAssertEqual(remoteCommandCenter.lastIsPlaying, false)
+
+        player.refreshProgress()
+
+        XCTAssertNil(nowPlayingCenter.nowPlayingInfo)
+
+        player.play()
+
+        XCTAssertTrue(player.isPlaying)
+        XCTAssertEqual(nowPlayingCenter.nowPlayingInfo?[MPMediaItemPropertyTitle] as? String, "Public Track")
+    }
+
+    func testDisablingLiveActivityEndsAndSuppressesUpdates() {
+        let liveActivityController = FakeRadioLiveActivityController()
+        let player = RadioPlayer(
+            audioSession: FakeRadioAudioSession(),
+            nowPlayingCenter: FakeRadioNowPlayingCenter(),
+            remoteCommandCenter: FakeRadioRemoteCommandCenter(),
+            liveActivityController: liveActivityController,
+            liveActivityEnabled: false)
+
+        player.load(url: URL(string: "https://radio.pardev.net/api/radio?stream=1"), metadata: .init(title: "Public Track"))
+        player.play()
+
+        XCTAssertNil(liveActivityController.lastMetadata)
+        XCTAssertEqual(liveActivityController.endCount, 1)
+
+        player.setLiveActivityEnabled(true)
+
+        XCTAssertEqual(liveActivityController.lastMetadata?.title, "Public Track")
+        XCTAssertEqual(liveActivityController.lastIsPlaying, true)
+    }
+
     func testRemoteCommandsControlPlaybackAndSkip() {
         let remoteCommandCenter = FakeRadioRemoteCommandCenter()
         let player = RadioPlayer(
@@ -226,6 +279,7 @@ final class RadioPlayerTests: XCTestCase {
 
 private final class FakeRadioAudioSession: RadioAudioSession {
     var activationCount = 0
+    var deactivationCount = 0
     var error: Error?
 
     init(error: Error? = nil) {
@@ -238,6 +292,10 @@ private final class FakeRadioAudioSession: RadioAudioSession {
         }
 
         activationCount += 1
+    }
+
+    func deactivatePlaybackSession() throws {
+        deactivationCount += 1
     }
 }
 

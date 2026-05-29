@@ -99,6 +99,13 @@ struct NowPlayingView: View {
             if let playbackStatus = visiblePlaybackStatus {
                 StatusBanner(text: playbackStatus, tone: .warning)
             }
+
+            Button {
+                player.setLiveActivityEnabled(!player.liveActivityEnabled)
+            } label: {
+                Label(player.liveActivityEnabled ? "Hide Dynamic Island" : "Show Dynamic Island", systemImage: "platter.filled.top.iphone")
+            }
+            .buttonStyle(.bordered)
         }
     }
 
@@ -231,9 +238,9 @@ struct NowPlayingView: View {
         let compact = width < 360
         let horizontalPadding: CGFloat = compact ? 8 : 16
         let spacing: CGFloat = compact ? 8 : 12
-        let availableWidth = max(0, width - (horizontalPadding * 2) - (spacing * 3))
+        let availableWidth = max(0, width - (horizontalPadding * 2) - (spacing * 4))
         let playWidth = min(76, max(66, availableWidth * 0.28))
-        let actionWidth = max(48, (availableWidth - playWidth) / 3)
+        let actionWidth = max(48, (availableWidth - playWidth) / 4)
         let playHeight: CGFloat = compact ? 58 : 62
         let actionHeight: CGFloat = compact ? 54 : 58
         let liked = currentTrackLiked
@@ -251,6 +258,18 @@ struct NowPlayingView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
+
+            Button(role: .destructive) {
+                player.stop()
+            } label: {
+                Image(systemName: "stop.fill")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(PardoraTheme.destructive)
+                    .frame(width: actionWidth, height: actionHeight)
+                    .background(PardoraTheme.destructive.opacity(0.18), in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Stop App")
 
             Button {
                 Task { await model.likeCurrentTrack() }

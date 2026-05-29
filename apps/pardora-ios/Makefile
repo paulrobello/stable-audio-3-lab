@@ -2,7 +2,9 @@
 
 SCHEME := Pardora
 SIMULATOR_NAME := iPhone 17 Pro Max
-SIMULATOR_DESTINATION := platform=iOS Simulator,name=$(SIMULATOR_NAME),OS=26.5
+SIMULATOR_OS := 26.5
+SIMULATOR_ID ?= $(shell xcrun simctl list devices available 'iOS $(SIMULATOR_OS)' | sed -nE 's/^[[:space:]]*$(SIMULATOR_NAME) \(([0-9A-F-]+)\).*/\1/p' | head -n 1)
+SIMULATOR_DESTINATION := platform=iOS Simulator,id=$(SIMULATOR_ID)
 PHONE_DEVICE_ID ?= 00008150-001A089E1AD8401C
 PHONE_DESTINATION ?= id=$(PHONE_DEVICE_ID)
 BUNDLE_ID := net.pardev.pardora
@@ -38,11 +40,11 @@ checkall: test
 run: run-simulator
 
 run-simulator: build-simulator
-	xcrun simctl boot '$(SIMULATOR_NAME)' || true
-	xcrun simctl bootstatus '$(SIMULATOR_NAME)' -b
-	xcrun simctl install booted $(SIMULATOR_APP)
-	xcrun simctl ui booted appearance dark
-	xcrun simctl launch booted $(BUNDLE_ID)
+	xcrun simctl boot '$(SIMULATOR_ID)' || true
+	xcrun simctl bootstatus '$(SIMULATOR_ID)' -b
+	xcrun simctl install '$(SIMULATOR_ID)' $(SIMULATOR_APP)
+	xcrun simctl ui '$(SIMULATOR_ID)' appearance dark
+	xcrun simctl launch '$(SIMULATOR_ID)' $(BUNDLE_ID)
 
 install-phone: build-phone
 	xcrun devicectl device install app --device '$(PHONE_DEVICE_ID)' $(PHONE_APP)

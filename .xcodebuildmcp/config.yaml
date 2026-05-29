@@ -1,0 +1,10 @@
+schemaVersion: 1
+sessionDefaults:
+  projectPath: /Users/probello/Repos/stable-audio-3-lab/apps/pardora-ios/Pardora.xcodeproj
+  scheme: Pardora
+  configuration: Debug
+  simulatorId: B6228BB2-7B4E-4757-BC4A-486DBB4CAAC0
+  useLatestOS: true
+  bundleId: net.pardev.pardora
+  simulatorName: iPhone 17 Pro Max
+  simulatorPlatform: iOS Simulator

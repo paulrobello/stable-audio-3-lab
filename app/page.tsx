@@ -10,6 +10,8 @@ import { radioStyles, type RadioStyleId } from "@/lib/radio";
 type AudioFormat = "mp3" | "wav";
 type PlaybackState = { currentTime: number; duration: number; isPlaying?: boolean; error?: string };
 type Result = { ok: boolean; audioUrl?: string; metadataUrl?: string; filename?: string; title?: string; meta?: unknown; error?: string; detail?: unknown };
+type AudioAssessment = { summary?: string; attributes?: { genre?: string[]; instruments?: string[]; mood?: string[]; production?: string[]; positives?: string[]; negatives?: string[]; rhythm?: string; tempoBpm?: number; key?: string }; model?: string; assessedAt?: string };
+type AssessmentResponse = { ok: boolean; assessment?: AudioAssessment; error?: string };
 export type LibraryItem = { filename: string; audioUrl: string; downloadUrl: string; metadataUrl?: string; bundleUrl?: string; batchRunId?: string; batchBundleUrl?: string; format: AudioFormat; bytes: number; createdAt: string; favorite?: boolean; notes?: string; rating?: number; title?: string; meta?: unknown };
 type PersistedSettings = {
   mode: "music" | "sfx";
@@ -56,6 +58,9 @@ export default function Home() {
   const [radioQueuedFilenames, setRadioQueuedFilenames] = useState<Set<string>>(new Set());
   const [radioQueueStyleId, setRadioQueueStyleId] = useState<RadioStyleId>("synthwave");
   const [radioQueueError, setRadioQueueError] = useState("");
+  const [assessmentBusyFilename, setAssessmentBusyFilename] = useState<string | null>(null);
+  const [assessmentByFilename, setAssessmentByFilename] = useState<Record<string, AudioAssessment>>({});
+  const [assessmentErrorByFilename, setAssessmentErrorByFilename] = useState<Record<string, string>>({});
   const [settingsHydrated, setSettingsHydrated] = useState(false);
 
   const selectedModel = useMemo(() => modelOptions.find((m) => m.id === model)!, [model]);
@@ -192,6 +197,29 @@ export default function Home() {
       setRadioQueueError(error instanceof Error ? error.message : "Radio lineup request failed");
     } finally {
       setRadioQueueBusyFilename(null);
+    }
+  }
+
+  async function assessLibraryItem(item: LibraryItem) {
+    setAssessmentBusyFilename(item.filename);
+    setAssessmentErrorByFilename((current) => ({ ...current, [item.filename]: "" }));
+    try {
+      const response = await fetch("/api/assess", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(buildAssessmentRequestFromLibraryItem(item)),
+      });
+      const json = (await response.json()) as AssessmentResponse;
+      if (!json.ok || !json.assessment) throw new Error(json.error ?? "Audio assessment failed");
+      setAssessmentByFilename((current) => ({ ...current, [item.filename]: json.assessment! }));
+      await loadLibrary();
+    } catch (error) {
+      setAssessmentErrorByFilename((current) => ({
+        ...current,
+        [item.filename]: error instanceof Error ? error.message : "Audio assessment failed",
+      }));
+    } finally {
+      setAssessmentBusyFilename(null);
     }
   }
 
@@ -465,6 +493,9 @@ export default function Home() {
               radioQueuedFilenames={radioQueuedFilenames}
               radioQueueStyleId={radioQueueStyleId}
               radioQueueError={radioQueueError}
+              assessmentBusyFilename={assessmentBusyFilename}
+              assessmentByFilename={assessmentByFilename}
+              assessmentErrorByFilename={assessmentErrorByFilename}
               onSearchChange={setLibraryQuery}
               onFavoritesOnlyChange={setFavoritesOnly}
               onHideRadioUtilityAudioChange={setHideRadioUtilityAudio}
@@ -479,6 +510,7 @@ export default function Home() {
               onPlaybackVolumeChange={setPlaybackVolume}
               onRadioQueueStyleChange={setRadioQueueStyleId}
               onAddToRadio={addLibraryItemToRadio}
+              onAssess={assessLibraryItem}
             />
           </motion.section>
         </section>
@@ -936,6 +968,9 @@ function LibraryPanel({
   radioQueuedFilenames,
   radioQueueStyleId,
   radioQueueError,
+  assessmentBusyFilename,
+  assessmentByFilename,
+  assessmentErrorByFilename,
   onSearchChange,
   onFavoritesOnlyChange,
   onHideRadioUtilityAudioChange,
@@ -950,6 +985,7 @@ function LibraryPanel({
   onPlaybackVolumeChange,
   onRadioQueueStyleChange,
   onAddToRadio,
+  onAssess,
 }: {
   items: LibraryItem[];
   liveItems: LibraryItem[];
@@ -964,6 +1000,9 @@ function LibraryPanel({
   radioQueuedFilenames: Set<string>;
   radioQueueStyleId: RadioStyleId;
   radioQueueError: string;
+  assessmentBusyFilename: string | null;
+  assessmentByFilename: Record<string, AudioAssessment>;
+  assessmentErrorByFilename: Record<string, string>;
   onSearchChange: (query: string) => void;
   onFavoritesOnlyChange: (favoritesOnly: boolean) => void;
   onHideRadioUtilityAudioChange: (hideRadioUtilityAudio: boolean) => void;
@@ -978,6 +1017,7 @@ function LibraryPanel({
   onPlaybackVolumeChange: (volume: number) => void;
   onRadioQueueStyleChange: (styleId: RadioStyleId) => void;
   onAddToRadio: (item: LibraryItem) => void;
+  onAssess: (item: LibraryItem) => void;
 }) {
   const [playbackByFilename, setPlaybackByFilename] = useState<Record<string, PlaybackState>>({});
   const audioRefs = useRef<Record<string, HTMLAudioElement | null>>({});
@@ -1083,6 +1123,9 @@ function LibraryPanel({
             const radioTitle = item.title ?? readMetaString(item.meta, "title") ?? item.filename;
             const radioQueued = radioQueuedFilenames.has(item.filename);
             const radioBusy = radioQueueBusyFilename === item.filename;
+            const assessment = assessmentByFilename[item.filename] ?? readLatestAssessment(item.meta);
+            const assessmentError = assessmentErrorByFilename[item.filename];
+            const assessmentBusy = assessmentBusyFilename === item.filename;
             return (
               <article key={item.filename} className="min-w-0 rounded-2xl border border-white/10 bg-black/30 p-3">
                 <div className="mb-3 flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
@@ -1114,6 +1157,15 @@ function LibraryPanel({
                         {radioQueued ? "Queued" : radioBusy ? "Adding..." : "Radio"}
                       </button>
                     )}
+                    <button
+                      type="button"
+                      onClick={() => onAssess(item)}
+                      disabled={assessmentBusy}
+                      aria-label={`Assess ${radioTitle}`}
+                      className="inline-flex min-h-10 items-center justify-center rounded-full border border-sky-200/25 bg-sky-300/12 px-3 py-2 text-xs font-bold leading-none text-sky-100 hover:bg-sky-300/20 disabled:cursor-wait disabled:opacity-55"
+                    >
+                      {assessmentBusy ? "Assessing..." : "Assess"}
+                    </button>
                     {(() => { const m = item.meta && typeof item.meta === "object" ? item.meta as Record<string, unknown> : {}; const s = m.settings && typeof m.settings === "object" ? m.settings as Record<string, unknown> : {}; return s.prompt && s.mode ? <button onClick={() => onRegenerateTitle(item.filename, String(s.prompt), String(s.mode))} className="inline-flex min-h-10 items-center justify-center rounded-full border border-cyan-300/30 bg-cyan-400/15 px-3 py-2 text-xs font-bold leading-none text-cyan-100 hover:bg-cyan-400/25">AI Title</button> : null; })()}
                     <a href={item.downloadUrl} download={item.filename} className="inline-flex min-h-10 items-center justify-center rounded-full bg-white px-3 py-2 text-xs font-bold leading-none text-black hover:bg-emerald-100">Download</a>
                     {item.bundleUrl && <a href={item.bundleUrl} download className="inline-flex min-h-10 items-center justify-center rounded-full border border-violet-200/20 bg-violet-200/10 px-3 py-2 text-xs font-bold leading-none text-violet-100 hover:bg-violet-200/20">Bundle</a>}
@@ -1132,6 +1184,7 @@ function LibraryPanel({
                   onCrop={onCrop}
                 />
                 <AnnotationControls item={item} onSave={onSaveAnnotation} />
+                <AssessmentSummary assessment={assessment} error={assessmentError} />
                 <MetadataSummary meta={item.meta} metadataUrl={item.metadataUrl} compact onLoadConfig={onLoadConfig} />
               </article>
             );
@@ -1139,6 +1192,47 @@ function LibraryPanel({
         </div>
       )}
     </section>
+  );
+}
+
+function buildAssessmentRequestFromLibraryItem(item: LibraryItem) {
+  const meta = item.meta && typeof item.meta === "object" ? item.meta as Record<string, unknown> : {};
+  const settings = meta.settings && typeof meta.settings === "object" ? meta.settings as Record<string, unknown> : {};
+  return {
+    filename: item.filename,
+    source: "library",
+    title: item.title ?? readMetaString(item.meta, "title") ?? item.filename,
+    prompt: readMetaString(settings, "prompt"),
+    rating: item.rating ?? readMetaNumber(item.meta, "rating"),
+  };
+}
+
+function readLatestAssessment(meta: unknown): AudioAssessment | undefined {
+  if (!meta || typeof meta !== "object") return undefined;
+  const assessment = (meta as Record<string, unknown>).latestAssessment;
+  return assessment && typeof assessment === "object" ? assessment as AudioAssessment : undefined;
+}
+
+function AssessmentSummary({ assessment, error }: { assessment?: AudioAssessment; error?: string }) {
+  if (error) {
+    return <div className="mt-3 rounded-2xl border border-pink-300/20 bg-pink-500/10 p-3 text-sm text-pink-100">{error}</div>;
+  }
+  if (!assessment) return null;
+  const attrs = assessment.attributes ?? {};
+  const details = [
+    attrs.tempoBpm ? `${attrs.tempoBpm} BPM` : undefined,
+    attrs.key,
+    attrs.rhythm,
+    attrs.genre?.join(", "),
+  ].filter(Boolean);
+  return (
+    <div className="mt-3 rounded-2xl border border-sky-200/15 bg-sky-300/[0.06] p-3">
+      <div className="text-xs font-bold uppercase tracking-[0.18em] text-sky-100/70">Model assessment</div>
+      {assessment.summary ? <p className="mt-2 text-sm leading-6 text-white/72">{assessment.summary}</p> : null}
+      {details.length ? <div className="mt-2 text-xs font-semibold text-sky-100/70">{details.join(" / ")}</div> : null}
+      {attrs.instruments?.length ? <div className="mt-2 text-xs text-white/48">Instruments: {attrs.instruments.join(", ")}</div> : null}
+      {attrs.mood?.length ? <div className="mt-1 text-xs text-white/48">Mood: {attrs.mood.join(", ")}</div> : null}
+    </div>
   );
 }
 

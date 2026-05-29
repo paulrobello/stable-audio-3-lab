@@ -88,6 +88,9 @@ struct RadioAPIClient: RadioActionClient {
             throw RadioAPIError.webLoginPage
         }
         guard (200..<300).contains(http.statusCode) else {
+            if let serverError = try? JSONDecoder().decode(RadioServerErrorResponse.self, from: data), let message = serverError.error {
+                throw RadioAPIError.server(message)
+            }
             throw RadioAPIError.transport
         }
         if Self.isHTMLResponse(data: data, response: http) {
@@ -141,6 +144,10 @@ struct RadioActionResponse: Decodable {
     var skippedTrack: RadioTrackRecord? = nil
     var promptModels: [String]? = nil
     var voices: [RadioTTSVoiceOption]? = nil
+}
+
+private struct RadioServerErrorResponse: Decodable {
+    var error: String?
 }
 
 struct RadioStyleDraft: Codable, Equatable {

@@ -230,6 +230,23 @@ STABLE_AUDIO_TIMEOUT_MS=900000
 
 `STABLE_AUDIO_BACKEND=mlx` is the default when unset. Set `STABLE_AUDIO_BACKEND=torch` only if you intentionally want to test the standard PyTorch backend.
 
+### Configure audio assessment
+
+The Library and Pardora radio **Assess** buttons call `/api/assess`, which runs a local audio-language model against the selected generated song and saves the structured result into the audio sidecar metadata.
+
+The first supported assessor is Qwen2.5-Omni-7B via `scripts/audio_assessor_qwen_omni.py`. Hugging Face's Transformers docs describe Qwen2.5-Omni as a multimodal model that accepts audio input, and the wrapper disables the speech-output talker when the lab only needs JSON attributes.
+
+Update `.env.local`:
+
+```bash
+STABLE_AUDIO_ASSESSOR_COMMAND=uv run --with torch --with torchvision --with transformers --with accelerate --with soundfile --with librosa --with qwen-omni-utils python scripts/audio_assessor_qwen_omni.py
+STABLE_AUDIO_ASSESSOR_TIMEOUT_MS=900000
+QWEN_OMNI_MODEL=Qwen/Qwen2.5-Omni-7B
+QWEN_OMNI_MAX_AUDIO_SECONDS=120
+```
+
+Restart the Next.js server after changing these values. The first assessment may take a while because `uv` resolves Python packages and Hugging Face downloads the model weights.
+
 ## Environment Variables
 
 ### Variables are loaded in the following order, last one to set a var wins
@@ -247,6 +264,10 @@ STABLE_AUDIO_TIMEOUT_MS=900000
 * `STABLE_AUDIO_BACKEND` - Real inference backend: `mlx` by default/recommended, or `torch` for the standard PyTorch path.
 * `STABLE_AUDIO_MLX_DIR` - Optional override for the vendored MLX runtime directory.
 * `STABLE_AUDIO_TIMEOUT_MS` - Generation timeout for the API route. Defaults to `900000` ms.
+* `STABLE_AUDIO_ASSESSOR_COMMAND` - Local command used by `/api/assess`. Defaults in this repo to the Qwen2.5-Omni wrapper.
+* `STABLE_AUDIO_ASSESSOR_TIMEOUT_MS` - Timeout for local audio assessment. Defaults to `300000` ms in the route; use `900000` for first-run model downloads.
+* `QWEN_OMNI_MODEL` - Hugging Face model id for the Qwen Omni assessor. Defaults to `Qwen/Qwen2.5-Omni-7B`.
+* `QWEN_OMNI_MAX_AUDIO_SECONDS` - Optional max audio duration passed to the assessor after ffmpeg conversion. Use `0` to send the full file.
 
 ## Running Stable Audio 3 Lab
 

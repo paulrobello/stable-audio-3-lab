@@ -590,6 +590,29 @@ describe("radio page loading", () => {
     expect(screen.getByRole("progressbar", { name: "Song progress" }).getAttribute("aria-valuemax")).toBe("90");
   });
 
+  it("does not advance visible progress from the shared station clock while local audio is idle", async () => {
+    vi.useFakeTimers({ now: new Date("2026-05-28T20:01:00.000Z") });
+    const stateWithIdleTrack = {
+      ...radioState,
+      currentTrack: { ...currentTrack, durationSeconds: 90 },
+      currentTrackStartedAt: "2026-05-28T20:00:00.000Z",
+      history: [{ ...currentTrack, durationSeconds: 90 }],
+      streamReady: true,
+      streamUrl: "/api/radio?stream=1",
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      json: async () => ({ ok: true, state: stateWithIdleTrack, promptModels: ["qwen3:14b"] }),
+    }));
+
+    render(<RadioStationClient initialState={stateWithIdleTrack} initialPromptModels={["qwen3:14b"]} />);
+    await act(async () => {
+      vi.advanceTimersByTime(2000);
+    });
+
+    expect(screen.getByText("0:00 / 1:30")).toBeTruthy();
+    expect(screen.getByRole("progressbar", { name: "Song progress" }).getAttribute("aria-valuenow")).toBe("0");
+  });
+
   it("uses a 2 minute default song length and sends selected minutes as generation seconds", async () => {
     const stateWithDraft = {
       ...radioState,
@@ -1055,6 +1078,84 @@ describe("radio page loading", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/radio", expect.objectContaining({
       body: expect.stringContaining('"rating":"down"'),
     })));
+  });
+
+  it("sends the current radio song to the audio assessor with rating context", async () => {
+    const likedTrack = { ...currentTrack, rating: "up" as const };
+    const stateWithTrack = {
+      ...radioState,
+      currentTrack: likedTrack,
+      history: [likedTrack],
+      streamReady: true,
+      streamUrl: "/api/radio?stream=1",
+    };
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as { action?: string } : {};
+      if (!body.action && init?.method === "POST") {
+        return {
+          json: async () => ({
+            ok: true,
+            assessment: {
+              summary: "Bright synthwave with a steady electronic pulse.",
+              attributes: {
+                instruments: ["analog bass", "drum machine"],
+                mood: ["driving"],
+              },
+            },
+          }),
+        };
+      }
+      return { json: async () => ({ ok: true, state: stateWithTrack, promptModels: ["qwen3:14b"], cleanedTracks: [] }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<RadioStationClient initialState={stateWithTrack} initialPromptModels={["qwen3:14b"]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Assess current song" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/assess", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        filename: "synthwave_mobile_check.mp3",
+        source: "radio",
+        title: "Synthwave Mobile Check",
+        prompt: "instrumental synthwave mobile render check",
+        styleId: "synthwave",
+        rating: "up",
+      }),
+    })));
+    expect(await screen.findByText("Bright synthwave with a steady electronic pulse.")).toBeTruthy();
+    expect(await screen.findByText(/analog bass, drum machine/)).toBeTruthy();
+  });
+
+  it("shows a local radio assessment error when the assessor is not configured", async () => {
+    const stateWithTrack = {
+      ...radioState,
+      currentTrack,
+      history: [currentTrack],
+      streamReady: true,
+      streamUrl: "/api/radio?stream=1",
+    };
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as { action?: string } : {};
+      if (!body.action && init?.method === "POST") {
+        return {
+          json: async () => ({
+            ok: false,
+            error: "Set STABLE_AUDIO_ASSESSOR_COMMAND to a local audio assessment command.",
+          }),
+        };
+      }
+      return { json: async () => ({ ok: true, state: stateWithTrack, promptModels: ["qwen3:14b"], cleanedTracks: [] }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<RadioStationClient initialState={stateWithTrack} initialPromptModels={["qwen3:14b"]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Assess current song" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Set STABLE_AUDIO_ASSESSOR_COMMAND");
   });
 
   it("shows created time, age, and file size for radio queue items", () => {

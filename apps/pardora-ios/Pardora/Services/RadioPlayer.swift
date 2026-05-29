@@ -5,6 +5,7 @@ import Observation
 
 protocol RadioAudioSession: AnyObject {
     func activatePlaybackSession() throws
+    func deactivatePlaybackSession() throws
 }
 
 protocol RadioNowPlayingCenter: AnyObject {
@@ -100,6 +101,10 @@ extension AVAudioSession: RadioAudioSession {
         try setCategory(.playback, mode: .default, options: RadioAudioSessionConfiguration.categoryOptions)
         try setActive(true)
     }
+
+    func deactivatePlaybackSession() throws {
+        try setActive(false, options: .notifyOthersOnDeactivation)
+    }
 }
 
 extension MPNowPlayingInfoCenter: RadioNowPlayingCenter {}
@@ -145,7 +150,7 @@ extension MPRemoteCommandCenter: RadioRemoteCommandCenter {
 @MainActor
 @Observable
 final class RadioPlayer {
-    static let shared = RadioPlayer()
+    static let shared = RadioPlayer(liveActivityEnabled: nil)
     static let noStreamMessage = "Connect to the radio stream before pressing Play."
 
     private let player = AVPlayer()
@@ -155,10 +160,14 @@ final class RadioPlayer {
     private let liveActivityController: RadioLiveActivityControlling
     private let now: () -> Date
     private var metadata: RadioPlaybackMetadata?
+    private var loadedPlayerURL: URL?
     private var activeTrackID: String?
     private var progressAnchorDate: Date?
     private var progressAnchorElapsedSeconds = 0
     private var nextTrackHandler: (() -> Void)?
+    private let defaults: UserDefaults
+    private var systemPlaybackReleased = false
+    private(set) var liveActivityEnabled: Bool
     private(set) var isPlaying = false
     private(set) var currentURL: URL?
     private(set) var statusMessage: String?
@@ -169,12 +178,16 @@ final class RadioPlayer {
         nowPlayingCenter: RadioNowPlayingCenter = MPNowPlayingInfoCenter.default(),
         remoteCommandCenter: RadioRemoteCommandCenter = MPRemoteCommandCenter.shared(),
         liveActivityController: RadioLiveActivityControlling = PardoraLiveActivityController.shared,
+        defaults: UserDefaults = .standard,
+        liveActivityEnabled: Bool? = true,
         now: @escaping () -> Date = Date.init
     ) {
         self.audioSession = audioSession
         self.nowPlayingCenter = nowPlayingCenter
         self.remoteCommandCenter = remoteCommandCenter
         self.liveActivityController = liveActivityController
+        self.defaults = defaults
+        self.liveActivityEnabled = liveActivityEnabled ?? (defaults.object(forKey: PardoraSettings.liveActivityEnabledKey) as? Bool) ?? true
         self.now = now
         configureRemoteCommands()
     }
@@ -185,9 +198,11 @@ final class RadioPlayer {
             currentURL = url
             if let url {
                 player.replaceCurrentItem(with: AVPlayerItem(url: url))
+                loadedPlayerURL = url
                 statusMessage = nil
             } else {
                 player.replaceCurrentItem(with: nil)
+                loadedPlayerURL = nil
                 isPlaying = false
                 liveActivityController.end()
             }
@@ -215,7 +230,7 @@ final class RadioPlayer {
     }
 
     func play() {
-        guard currentURL != nil else {
+        guard let currentURL else {
             statusMessage = Self.noStreamMessage
             return
         }
@@ -227,6 +242,11 @@ final class RadioPlayer {
             return
         }
 
+        if loadedPlayerURL != currentURL {
+            player.replaceCurrentItem(with: AVPlayerItem(url: currentURL))
+            loadedPlayerURL = currentURL
+        }
+        systemPlaybackReleased = false
         player.play()
         isPlaying = true
         statusMessage = "Playing"
@@ -235,6 +255,33 @@ final class RadioPlayer {
         updateNowPlayingInfo()
         updateRemoteCommands()
         updateLiveActivity()
+    }
+
+    func stop() {
+        player.pause()
+        player.replaceCurrentItem(with: nil)
+        loadedPlayerURL = nil
+        systemPlaybackReleased = true
+        isPlaying = false
+        statusMessage = "Stopped"
+        progressAnchorElapsedSeconds = 0
+        progressAnchorDate = nil
+        progress = RadioPlaybackProgress(durationSeconds: metadata?.durationSeconds)
+        nowPlayingCenter.nowPlayingInfo = nil
+        liveActivityController.end()
+        try? audioSession.deactivatePlaybackSession()
+        updateRemoteCommands()
+    }
+
+    func setLiveActivityEnabled(_ enabled: Bool) {
+        liveActivityEnabled = enabled
+        defaults.set(enabled, forKey: PardoraSettings.liveActivityEnabledKey)
+
+        if enabled, isPlaying {
+            updateLiveActivity()
+        } else {
+            liveActivityController.end()
+        }
     }
 
     func pause() {
@@ -276,7 +323,7 @@ final class RadioPlayer {
     }
 
     private func updateNowPlayingInfo() {
-        guard let metadata else {
+        guard let metadata, !systemPlaybackReleased else {
             nowPlayingCenter.nowPlayingInfo = nil
             return
         }
@@ -353,6 +400,11 @@ final class RadioPlayer {
     }
 
     private func updateLiveActivity() {
+        guard liveActivityEnabled else {
+            liveActivityController.end()
+            return
+        }
+
         liveActivityController.update(metadata: metadata, isPlaying: isPlaying)
     }
 }

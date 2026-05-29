@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @Bindable var model: RadioAppModel
     @AppStorage(PardoraSettings.autoPlayOnLaunchKey) private var autoPlayOnLaunch = false
+    @State private var player = RadioPlayer.shared
 
     var body: some View {
         Form {
@@ -87,6 +88,13 @@ struct SettingsView: View {
 
             Section("Playback") {
                 Toggle("Auto Play on App Launch", isOn: $autoPlayOnLaunch)
+                Toggle("Dynamic Island", isOn: liveActivitySelection)
+
+                Button(role: .destructive) {
+                    player.stop()
+                } label: {
+                    Label("Stop App", systemImage: "stop.fill")
+                }
             }
         }
         .navigationTitle("Settings")
@@ -152,6 +160,15 @@ struct SettingsView: View {
         }
 
         return voice.description
+    }
+
+    private var liveActivitySelection: Binding<Bool> {
+        Binding(
+            get: { player.liveActivityEnabled },
+            set: { enabled in
+                player.setLiveActivityEnabled(enabled)
+            }
+        )
     }
 }
 

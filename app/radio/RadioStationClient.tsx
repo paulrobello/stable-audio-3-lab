@@ -9,6 +9,8 @@ import { buildRadioStats, defaultRadioTtsVoice, getRadioTtsVoiceOptions, normali
 type RadioApiResponse = { ok: boolean; state?: RadioStreamState; draft?: RadioPromptDraft; style?: RadioStyle; styleDraft?: RadioStyleDraft; deletedStyle?: RadioStyle; fallbackTrack?: RadioTrackRecord; rejectedTrack?: RadioTrackRecord; skippedTrack?: RadioTrackRecord; deletedTrack?: RadioTrackRecord; cleanedTracks?: RadioTrackRecord[]; promptModels?: string[]; voices?: RadioTtsVoiceOption[]; error?: string };
 type RadioTestVoiceResponse = { ok: boolean; audioUrl?: string; error?: string };
 type GenerateResponse = { ok: boolean; filename?: string; title?: string; audioUrl?: string; meta?: unknown; error?: string };
+type AudioAssessment = { summary?: string; attributes?: { instruments?: string[]; mood?: string[]; genre?: string[]; rhythm?: string; tempoBpm?: number; key?: string }; model?: string };
+type AssessmentResponse = { ok: boolean; assessment?: AudioAssessment; error?: string };
 const RADIO_STATE_RETRY_MS = 1500;
 const RADIO_STATE_POLL_MS = 30000;
 type RadioPlaybackPhase = "announcement" | "song";
@@ -36,7 +38,9 @@ export default function RadioStationClient({ initialState = null, initialPromptM
   const [testVoiceAudioUrl, setTestVoiceAudioUrl] = useState("");
   const [remoteTtsVoiceOptions, setRemoteTtsVoiceOptions] = useState<{ provider: RadioTtsProvider; voices: RadioTtsVoiceOption[] } | null>(null);
   const [browserStreamUrl, setBrowserStreamUrl] = useState(initialState?.streamUrl ?? initialState?.lanStreamUrl ?? "");
-  const [busy, setBusy] = useState<"draft" | "generate" | "rating" | "config" | "maintenance" | "select" | "delete" | "voice" | "style" | "styleDraft" | null>(null);
+  const [busy, setBusy] = useState<"draft" | "generate" | "rating" | "config" | "maintenance" | "select" | "delete" | "voice" | "style" | "styleDraft" | "assess" | null>(null);
+  const [currentAssessment, setCurrentAssessment] = useState<AudioAssessment | null>(null);
+  const [currentAssessmentError, setCurrentAssessmentError] = useState("");
   const [optimisticLike, setOptimisticLike] = useState<{ trackKey: string; liked: boolean } | null>(null);
   const [selectedQueueTrackIds, setSelectedQueueTrackIds] = useState<Set<string>>(() => new Set());
   const [streamReloadKey, setStreamReloadKey] = useState(0);
@@ -103,23 +107,12 @@ export default function RadioStationClient({ initialState = null, initialPromptM
 
   useEffect(() => {
     setOptimisticLike(null);
+    setCurrentAssessment(null);
+    setCurrentAssessmentError("");
     setTrackElapsedSeconds(0);
     setPlaybackPhase(shouldPlayCurrentAnnouncement ? "announcement" : "song");
     streamElapsedAtTrackStartRef.current = readAudioCurrentTime(audioRef.current);
   }, [currentTrackKey, shouldPlayCurrentAnnouncement]);
-
-  useEffect(() => {
-    if (!currentTrack || playbackPhase === "announcement") return;
-
-    const updateSharedElapsed = () => {
-      const elapsedSeconds = getSharedTrackElapsedSeconds(radioState?.currentTrackStartedAt, trackDurationSeconds);
-      if (elapsedSeconds !== undefined) setTrackElapsedSeconds(elapsedSeconds);
-    };
-
-    updateSharedElapsed();
-    const timer = window.setInterval(updateSharedElapsed, 1000);
-    return () => window.clearInterval(timer);
-  }, [currentTrack, currentTrackKey, playbackPhase, radioState?.currentTrackStartedAt, trackDurationSeconds]);
 
   useEffect(() => {
     const visibleIds = new Set(selectedStyleQueue.map((track) => track.id));
@@ -327,6 +320,37 @@ export default function RadioStationClient({ initialState = null, initialPromptM
     } catch (error) {
       if (ratedTrackKey) setOptimisticLike(null);
       setStatus(error instanceof Error ? error.message : "Could not save preference.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function assessCurrentTrack() {
+    if (!currentTrack) return;
+    setBusy("assess");
+    setCurrentAssessmentError("");
+    setStatus(`Assessing "${currentTrack.title}"...`);
+    try {
+      const response = await fetch("/api/assess", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          filename: currentTrack.filename,
+          source: "radio",
+          title: currentTrack.title,
+          prompt: currentTrack.prompt,
+          styleId: currentTrack.styleId,
+          rating: currentTrack.rating,
+        }),
+      });
+      const json = await response.json() as AssessmentResponse;
+      if (!json.ok || !json.assessment) throw new Error(json.error ?? "Audio assessment failed");
+      setCurrentAssessment(json.assessment);
+      setStatus("Audio assessment saved to the track metadata.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Audio assessment failed.";
+      setCurrentAssessmentError(message);
+      setStatus(message);
     } finally {
       setBusy(null);
     }
@@ -625,7 +649,6 @@ export default function RadioStationClient({ initialState = null, initialPromptM
 
   function handleAudioTimeUpdate(event: React.SyntheticEvent<HTMLAudioElement>) {
     if (playbackPhase === "announcement") return;
-    if (radioState?.currentTrackStartedAt) return;
     const elapsed = Math.max(0, readAudioCurrentTime(event.currentTarget) - streamElapsedAtTrackStartRef.current);
     setTrackElapsedSeconds(Math.min(elapsed, trackDurationSeconds));
   }
@@ -734,7 +757,7 @@ export default function RadioStationClient({ initialState = null, initialPromptM
               )}
             </div>
 
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <button
                 type="button"
                 onClick={() => void rateCurrent("up")}
@@ -756,8 +779,13 @@ export default function RadioStationClient({ initialState = null, initialPromptM
                 <HandThumbDownIcon className="h-5 w-5" />
                 <span>Dislike</span>
               </button>
+              <button type="button" onClick={() => void assessCurrentTrack()} disabled={!!busy || !currentTrack} aria-label="Assess current song" className="flex min-h-14 items-center justify-center gap-2 rounded-2xl border border-sky-200/30 bg-sky-300/12 px-3 py-3 text-sm font-bold text-sky-50 disabled:opacity-45">
+                <SparklesIcon className="h-5 w-5" />
+                <span>{busy === "assess" ? "Assessing" : "Assess"}</span>
+              </button>
             </div>
           </div>
+          <RadioAssessmentPanel assessment={currentAssessment} error={currentAssessmentError} loading={busy === "assess"} />
           <div aria-label="Station stats" className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
             <StatTile label="Songs generated" value={radioStats ? formatStatNumber(radioStats.generatedSongCount) : "--"} />
             <StatTile label="Thumbs up" value={radioStats ? formatStatNumber(radioStats.thumbsUpCount) : "--"} />
@@ -1103,6 +1131,28 @@ export default function RadioStationClient({ initialState = null, initialPromptM
   );
 }
 
+function RadioAssessmentPanel({ assessment, error, loading }: { assessment: AudioAssessment | null; error: string; loading: boolean }) {
+  if (!assessment && !error && !loading) return null;
+  const attrs = assessment?.attributes ?? {};
+  const details = [
+    attrs.tempoBpm ? `${attrs.tempoBpm} BPM` : undefined,
+    attrs.key,
+    attrs.rhythm,
+    attrs.genre?.join(", "),
+  ].filter(Boolean);
+  return (
+    <div className="mt-3 rounded-2xl border border-sky-200/15 bg-sky-300/[0.06] p-3">
+      <div className="text-xs font-bold uppercase tracking-[0.18em] text-sky-100/70">Model assessment</div>
+      {loading ? <p className="mt-2 text-sm leading-6 text-white/72">Listening and assessing the current song...</p> : null}
+      {error ? <p role="alert" className="mt-2 text-sm leading-6 text-rose-100">{error}</p> : null}
+      {assessment?.summary ? <p className="mt-2 text-sm leading-6 text-white/72">{assessment.summary}</p> : null}
+      {details.length ? <div className="mt-2 text-xs font-semibold text-sky-100/70">{details.join(" / ")}</div> : null}
+      {attrs.instruments?.length ? <div className="mt-2 text-xs text-white/48">Instruments: {attrs.instruments.join(", ")}</div> : null}
+      {attrs.mood?.length ? <div className="mt-1 text-xs text-white/48">Mood: {attrs.mood.join(", ")}</div> : null}
+    </div>
+  );
+}
+
 function cleanPromptModels(models: string[]) {
   return models.map((model) => model.trim()).filter(Boolean);
 }
@@ -1175,14 +1225,6 @@ function useBrowserOriginOutputUrl(filename: string | undefined) {
 
 function readAudioCurrentTime(audio: HTMLAudioElement | null) {
   return audio && Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
-}
-
-function getSharedTrackElapsedSeconds(startedAt: string | undefined, durationSeconds: number) {
-  if (!startedAt) return undefined;
-  const startedMs = Date.parse(startedAt);
-  if (!Number.isFinite(startedMs)) return undefined;
-  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startedMs) / 1000));
-  return Math.min(elapsedSeconds, durationSeconds);
 }
 
 function formatDuration(seconds: number) {

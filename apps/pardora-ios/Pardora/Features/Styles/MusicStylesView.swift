@@ -9,6 +9,7 @@ struct MusicStylesView: View {
     @State private var editingStyleID: RadioStyleID?
     @State private var busy: MusicStyleBusy?
     @State private var styleStatus: String?
+    @FocusState private var focusedStyleField: StyleFormField?
 
     var body: some View {
         Form {
@@ -40,24 +41,43 @@ struct MusicStylesView: View {
                 TextField("Describe style", text: $styleRequest, axis: .vertical)
                     .lineLimit(2...4)
                     .textInputAutocapitalization(.sentences)
+                    .focused($focusedStyleField, equals: .request)
 
                 Button {
                     Task { await draftStyle() }
                 } label: {
-                    Label(busy == .draft ? "Generating style prompts..." : "Generate style prompts", systemImage: "sparkles")
+                    Label {
+                        Text(busy == .draft ? "Generating style prompts..." : "Generate style prompts")
+                    } icon: {
+                        if busy == .draft {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: "sparkles")
+                        }
+                    }
                 }
                 .disabled(busy != nil || styleRequest.trimmingCharacters(in: .whitespacesAndNewlines).count < 3)
 
+                if let styleStatus {
+                    Text(styleStatus)
+                        .font(.caption)
+                        .foregroundStyle(styleStatus == model.statusMessage ? PardoraTheme.warning : .secondary)
+                }
+
                 TextField("Style name", text: $styleLabel)
                     .textInputAutocapitalization(.words)
+                    .focused($focusedStyleField, equals: .label)
 
                 TextField("Style prompt", text: $styleSeedPrompt, axis: .vertical)
                     .lineLimit(3...8)
                     .textInputAutocapitalization(.sentences)
+                    .focused($focusedStyleField, equals: .seedPrompt)
 
                 TextField("Negative prompt", text: $styleNegativePrompt, axis: .vertical)
                     .lineLimit(2...5)
                     .textInputAutocapitalization(.sentences)
+                    .focused($focusedStyleField, equals: .negativePrompt)
 
                 Button {
                     Task { await saveStyle() }
@@ -74,6 +94,14 @@ struct MusicStylesView: View {
             }
         }
         .navigationTitle("Styles")
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") {
+                    focusedStyleField = nil
+                }
+            }
+        }
     }
 
     private func styleRow(_ style: RadioStyle) -> some View {
@@ -138,19 +166,23 @@ struct MusicStylesView: View {
     }
 
     private func draftStyle() async {
+        focusedStyleField = nil
         busy = .draft
-        styleStatus = "Generating style prompts..."
+        styleStatus = nil
         if let draft = await model.draftMusicStyle(request: styleRequest) {
             styleLabel = draft.label
             styleSeedPrompt = draft.seedPrompt
             styleNegativePrompt = draft.negativePrompt
             editingStyleID = nil
             styleStatus = "Drafted \(draft.label)."
+        } else {
+            styleStatus = model.statusMessage ?? "Could not draft music style prompts."
         }
         busy = nil
     }
 
     private func saveStyle() async {
+        focusedStyleField = nil
         busy = .save
         let wasEditing = editingStyleID != nil
         if let style = await model.saveMusicStyle(
@@ -185,11 +217,19 @@ struct MusicStylesView: View {
     }
 
     private func clearStyleForm() {
+        focusedStyleField = nil
         editingStyleID = nil
         styleLabel = ""
         styleSeedPrompt = ""
         styleNegativePrompt = ""
     }
+}
+
+private enum StyleFormField {
+    case request
+    case label
+    case seedPrompt
+    case negativePrompt
 }
 
 private enum MusicStyleBusy {

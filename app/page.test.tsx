@@ -332,6 +332,76 @@ describe("main page radio lineup action", () => {
       }),
     })));
   });
+
+  it("sends a library song to the audio assessor and displays returned attributes", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/library") {
+        return {
+          json: async () => ({
+            ok: true,
+            items: [{
+              filename: "assess_me.mp3",
+              audioUrl: "/outputs/assess_me.mp3",
+              downloadUrl: "/outputs/assess_me.mp3",
+              metadataUrl: "/outputs/assess_me.mp3.json",
+              bundleUrl: "/api/library/bundle?filename=assess_me.mp3",
+              format: "mp3",
+              bytes: 4096,
+              createdAt: "2026-05-21T12:00:00.000Z",
+              favorite: false,
+              title: "Assess Me",
+              rating: 5,
+              meta: { title: "Assess Me", settings: { prompt: "warm lofi groove", mode: "music", seed: 77 } },
+            }],
+          }),
+        } as Response;
+      }
+      if (input === "/api/assess") {
+        return {
+          json: async () => ({
+            ok: true,
+            assessment: {
+              summary: "Warm lofi groove with dusty drums.",
+              attributes: {
+                genre: ["lofi hip hop"],
+                instruments: ["electric piano", "drum machine"],
+                mood: ["warm"],
+                tempoBpm: 82,
+              },
+            },
+          }),
+        } as Response;
+      }
+      return { arrayBuffer: async () => new ArrayBuffer(0) } as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      beginPath: vi.fn(),
+      clearRect: vi.fn(),
+      createLinearGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
+      fillRect: vi.fn(),
+      lineTo: vi.fn(),
+      moveTo: vi.fn(),
+      stroke: vi.fn(),
+    } as unknown as CanvasRenderingContext2D);
+
+    render(<Home />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Assess Assess Me" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/assess", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        filename: "assess_me.mp3",
+        source: "library",
+        title: "Assess Me",
+        prompt: "warm lofi groove",
+        rating: 5,
+      }),
+    })));
+    expect(await screen.findByText("Warm lofi groove with dusty drums.")).toBeTruthy();
+    expect(await screen.findByText(/electric piano, drum machine/)).toBeTruthy();
+  });
 });
 
 describe("crop waveform overlay", () => {

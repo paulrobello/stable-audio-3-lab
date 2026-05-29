@@ -229,7 +229,10 @@ printf '%s' '{"label":"Dark Orchestral Breaks","seedPrompt":"brooding cinematic 
       model: "gpt-5.5",
     });
     expect(await readFile(path.join(tempCwd, "codex-style-stdin.txt"), "utf8")).toContain("Rob D style like Furious Angels");
-    expect(await readFile(path.join(tempCwd, "codex-style-args.txt"), "utf8")).toContain("-m\ngpt-5.5");
+    const codexArgs = await readFile(path.join(tempCwd, "codex-style-args.txt"), "utf8");
+    expect(codexArgs).toContain("-m\ngpt-5.5");
+    expect(codexArgs).toContain("--config\napproval_policy=\"never\"");
+    expect(codexArgs).not.toContain("--ask-for-approval");
 
     const createResponse = await POST(new NextRequest("http://localhost:3007/api/radio", {
       method: "POST",
@@ -828,6 +831,52 @@ printf '%s' '{"likedTraits":["wide neon pads"],"dislikedTraits":["thin supersaw 
     expect(first.value?.[0]).toBe("b".charCodeAt(0));
     await reader!.cancel();
   }, 5000);
+
+  it("does not advance playback from a plain state poll when no stream is connected", async () => {
+    tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
+    process.chdir(tempCwd);
+    process.env.RADIO_OLLAMA_MODELS_TIMEOUT_MS = "1";
+    const outputDir = path.join(tempCwd, "public", "outputs");
+    const stateFile = path.join(tempCwd, ".stable-audio-radio", "state.json");
+    await mkdir(outputDir, { recursive: true });
+    await mkdir(path.dirname(stateFile), { recursive: true });
+    await writeFile(path.join(outputDir, "current.mp3"), Buffer.alloc(72_000, "a"));
+    await writeFile(path.join(outputDir, "next.mp3"), Buffer.alloc(72_000, "b"));
+    const current = createRadioTrackRecord({
+      filename: "current.mp3",
+      title: "Current",
+      prompt: "current",
+      styleId: "synthwave",
+      announce: false,
+      durationSeconds: 3,
+    });
+    const next = createRadioTrackRecord({
+      filename: "next.mp3",
+      title: "Next",
+      prompt: "next",
+      styleId: "synthwave",
+      announce: false,
+      durationSeconds: 3,
+    });
+    const state = {
+      ...defaultRadioState("2026-05-28T20:00:00.000Z"),
+      announceEnabled: false,
+      currentTrackStartedAt: "2026-05-28T20:00:00.000Z",
+      currentTrack: current,
+      history: [current, next],
+    };
+    await writeFile(stateFile, JSON.stringify(state, null, 2));
+
+    vi.useFakeTimers({ now: new Date("2026-05-28T20:00:05.000Z") });
+    const response = await GET(new NextRequest("http://localhost:3007/api/radio?promptModels=0"));
+    const json = await response.json() as { state?: { currentTrack?: { filename?: string }; currentTrackStartedAt?: string } };
+    const saved = JSON.parse(await readFile(stateFile, "utf8")) as { currentTrack?: { filename?: string }; currentTrackStartedAt?: string };
+
+    expect(json.state?.currentTrack?.filename).toBe("current.mp3");
+    expect(json.state?.currentTrackStartedAt).toBe("2026-05-28T20:00:00.000Z");
+    expect(saved.currentTrack?.filename).toBe("current.mp3");
+    expect(saved.currentTrackStartedAt).toBe("2026-05-28T20:00:00.000Z");
+  });
 
   it("strips ID3 tags before streaming MP3 frame bytes", async () => {
     tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));

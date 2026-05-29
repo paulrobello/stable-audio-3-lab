@@ -60,6 +60,8 @@ DerivedData/
 *.ipa
 *.dSYM/
 *.dSYM.zip
+*.mobileprovision
+apps/pardora-ios/Signing/
 .swiftpm/
 build-device/
 apps/pardora-ios/build-device/

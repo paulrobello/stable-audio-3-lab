@@ -78,6 +78,26 @@ final class RadioAPIClientTests: XCTestCase {
         XCTAssertTrue(response.ok)
     }
 
+    func testPostActionReportsServerJSONErrorBody() async throws {
+        let transport = MockRadioTransport { request in
+            let body = """
+            {
+              "ok": false,
+              "error": "Codex style generation timed out"
+            }
+            """.data(using: .utf8)!
+            return (body, HTTPURLResponse(url: request.url!, statusCode: 500, httpVersion: nil, headerFields: ["content-type": "application/json"])!)
+        }
+        let client = RadioAPIClient(baseURL: URL(string: "https://radio.pardev.net")!, transport: transport)
+
+        do {
+            _ = try await client.postAction(["action": .string("draftStyle"), "request": .string("dark cassette synth")])
+            XCTFail("Expected JSON server error to be surfaced.")
+        } catch {
+            XCTAssertEqual(error as? RadioAPIError, .server("Codex style generation timed out"))
+        }
+    }
+
     private static let okEnvelope = """
     {
       "ok": true,

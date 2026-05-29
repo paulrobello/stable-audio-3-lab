@@ -88,8 +88,8 @@ export async function GET(request: NextRequest) {
   try {
     const playlistFormat = normalizePlaylistFormat(request.nextUrl.searchParams.get("playlist"));
     if (playlistFormat) return buildRadioPlaylistRouteResponse(playlistFormat, request);
-    const state = await readSynchronizedRadioState();
     if (request.nextUrl.searchParams.get("stream") === "1") {
+      const state = await readSynchronizedRadioState();
       const forceIcyMetadata = request.nextUrl.searchParams.get("icy") === "1";
       return streamCurrentTrack(state, {
         icyMetadataEnabled: forceIcyMetadata || request.headers.get("icy-metadata") === "1",
@@ -98,6 +98,7 @@ export async function GET(request: NextRequest) {
         styleId: radioStyleQueryParam(request, state),
       });
     }
+    const state = await readRadioState();
     startRadioQueueMaintenance(state);
     const includePromptModels = request.nextUrl.searchParams.get("promptModels") !== "0";
     const promptModels = includePromptModels ? await listOllamaPromptModels() : undefined;
@@ -111,7 +112,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json() as Record<string, unknown>;
     const action = typeof body.action === "string" ? body.action : "";
-    const state = await readSynchronizedRadioState();
+    const state = await readRadioState();
 
     if (action === "createStyle") {
       const result = createRadioStyle(state, {
@@ -854,8 +855,8 @@ async function runCodexCli(prompt: string, outputPath: string, model: string, ta
     process.cwd(),
     "--sandbox",
     "read-only",
-    "--ask-for-approval",
-    "never",
+    "--config",
+    "approval_policy=\"never\"",
     "--ephemeral",
     "--ignore-rules",
     "-o",
