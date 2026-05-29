@@ -433,7 +433,6 @@ export function buildRadioStyleGenerationPrompt(requestInput: unknown): string {
   const request = typeof requestInput === "string" ? cleanShortText(requestInput, "", 500) : "";
   return [
     "Create a custom Stable Audio 3 radio music style from the user's request.",
-    "Do not directly imitate a named artist, song, score, or soundtrack, or copy recognizable melodies, lyrics, hooks, or production fingerprints.",
     "Translate references into broad, reusable musical traits such as instrumentation, tempo feel, arrangement arc, mood, mix character, and negative constraints.",
     "Return JSON only with string fields: label, seedPrompt, negativePrompt.",
     "Keep label under 40 characters. Keep seedPrompt under 700 characters. Keep negativePrompt under 300 characters.",
@@ -451,8 +450,8 @@ export function parseRadioStyleDraft(rawResponse: string, requestInput: unknown)
     const label = typeof parsed.label === "string" ? cleanShortText(parsed.label, "Custom Style", 80) : cleanShortText(request, "Custom Style", 80);
     const seedPrompt = typeof parsed.seedPrompt === "string" ? cleanShortText(parsed.seedPrompt, "", 1000) : "";
     const negativePrompt = typeof parsed.negativePrompt === "string"
-      ? cleanShortText(parsed.negativePrompt, "direct artist imitation, recognizable melodies, vocals, clipping, harsh noise", 500)
-      : "direct artist imitation, recognizable melodies, vocals, clipping, harsh noise";
+      ? cleanShortText(parsed.negativePrompt, "recognizable melodies, vocals, clipping, harsh noise", 500)
+      : "recognizable melodies, vocals, clipping, harsh noise";
     if (label.length < 2 || seedPrompt.length < 8) return undefined;
     return { label, seedPrompt, negativePrompt };
   } catch {

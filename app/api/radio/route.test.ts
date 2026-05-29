@@ -210,7 +210,7 @@ while [ "$#" -gt 0 ]; do
   shift || true
 done
 cat > codex-style-stdin.txt
-printf '%s' '{"label":"Dark Orchestral Breaks","seedPrompt":"brooding cinematic trip-hop with piano ostinatos, stormy strings, slow breakbeats, distorted bass, no vocals","negativePrompt":"direct artist imitation, recognizable melodies, vocals"}' > "$out"
+printf '%s' '{"label":"Dark Orchestral Breaks","seedPrompt":"brooding cinematic trip-hop with piano ostinatos, stormy strings, slow breakbeats, distorted bass, no vocals","negativePrompt":"recognizable melodies, vocals"}' > "$out"
 `);
     await chmod(codexPath, 0o755);
     process.env.PATH = `${tempCwd}:${originalPathEnv ?? ""}`;
@@ -225,7 +225,7 @@ printf '%s' '{"label":"Dark Orchestral Breaks","seedPrompt":"brooding cinematic 
     expect(draftJson.styleDraft).toMatchObject({
       label: "Dark Orchestral Breaks",
       seedPrompt: expect.stringContaining("brooding cinematic trip-hop"),
-      negativePrompt: expect.stringContaining("direct artist imitation"),
+      negativePrompt: expect.stringContaining("recognizable melodies"),
       model: "gpt-5.5",
     });
     expect(await readFile(path.join(tempCwd, "codex-style-stdin.txt"), "utf8")).toContain("Rob D style like Furious Angels");
@@ -251,7 +251,7 @@ printf '%s' '{"label":"Dark Orchestral Breaks","seedPrompt":"brooding cinematic 
         styleId: createJson.style?.id,
         label: "Dark Orchestral Breaks XL",
         seedPrompt: "larger stormy string sections with heavier half-time drums",
-        negativePrompt: "vocals, direct artist imitation",
+        negativePrompt: "vocals, recognizable melodies",
       }),
     }));
     const updateJson = await updateResponse.json() as { ok: boolean; style?: { label?: string }; state?: { styles?: Array<{ id?: string; label?: string }> } };

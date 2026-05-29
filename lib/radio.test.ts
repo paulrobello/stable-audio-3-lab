@@ -125,17 +125,17 @@ describe("radio station styles", () => {
     expect(normalized.selectedStyleId).toBe("synthwave");
   });
 
-  it("builds and parses a Codex CLI style draft without direct artist imitation", () => {
+  it("builds and parses a Codex CLI style draft from named references", () => {
     const prompt = buildRadioStyleGenerationPrompt("like Rob Dougan's Furious Angels but instrumental");
-    const draft = parseRadioStyleDraft(`prefix {"label":"Dark Orchestral Breaks","seedPrompt":"brooding cinematic trip-hop with piano ostinatos and stormy strings","negativePrompt":"vocals, direct artist imitation"} suffix`, "dark cinematic breaks");
+    const draft = parseRadioStyleDraft(`prefix {"label":"Dark Orchestral Breaks","seedPrompt":"brooding cinematic trip-hop with piano ostinatos and stormy strings","negativePrompt":"vocals, recognizable melodies"} suffix`, "dark cinematic breaks");
 
     expect(prompt).toContain("Return JSON only");
-    expect(prompt).toContain("Do not directly imitate");
+    expect(prompt).toContain("Translate references into broad, reusable musical traits");
     expect(prompt).toContain("like Rob Dougan's Furious Angels");
     expect(draft).toEqual({
       label: "Dark Orchestral Breaks",
       seedPrompt: "brooding cinematic trip-hop with piano ostinatos and stormy strings",
-      negativePrompt: "vocals, direct artist imitation",
+      negativePrompt: "vocals, recognizable melodies",
     });
   });
 

@@ -195,7 +195,7 @@ describe("radio page loading", () => {
             styleDraft: {
               label: "Dark Orchestral Breaks",
               seedPrompt: "brooding cinematic trip-hop with piano ostinatos and stormy strings",
-              negativePrompt: "direct artist imitation, vocals",
+              negativePrompt: "recognizable melodies, vocals",
               model: "gpt-5.5",
             },
           }),
