@@ -104,10 +104,12 @@ final class PardoraCarPlaySceneDelegate: UIResponder, CPTemplateApplicationScene
         let sections = rootSections()
         if let rootTemplate {
             rootTemplate.updateSections(sections)
+            updateRootTemplateActions(rootTemplate)
             return
         }
 
         let template = CPListTemplate(title: "Pardora", sections: sections)
+        updateRootTemplateActions(template)
         rootTemplate = template
         interfaceController?.setRootTemplate(template, animated: animated) { _, _ in }
     }
@@ -125,14 +127,18 @@ final class PardoraCarPlaySceneDelegate: UIResponder, CPTemplateApplicationScene
             sections.append(CPListSection(items: [statusItem()], header: "Now Playing", sectionIndexTitle: nil))
         }
 
-        sections.append(CPListSection(items: controlItems(), header: "Controls", sectionIndexTitle: nil))
-
-        let queueItems = queueTrackItems()
-        if !queueItems.isEmpty {
-            sections.append(CPListSection(items: queueItems, header: model.state?.selectedStyleId.displayName ?? "Queue", sectionIndexTitle: nil))
+        if #available(iOS 26.0, *) {
+            return sections
         }
 
+        sections.append(CPListSection(items: controlItems(), header: "Controls", sectionIndexTitle: nil))
         return sections
+    }
+
+    private func updateRootTemplateActions(_ template: CPListTemplate) {
+        if #available(iOS 26.0, *) {
+            template.headerGridButtons = PardoraSettings.isCarPlayModeEnabled() ? rootGridButtons() : nil
+        }
     }
 
     private func currentTrackItem() -> CPListItem? {
@@ -175,16 +181,53 @@ final class PardoraCarPlaySceneDelegate: UIResponder, CPTemplateApplicationScene
             controlItem(title: "Skip", detail: model.state?.nextUpTitleText) { [weak self] in
                 await self?.skipTrack()
             },
-            controlItem(title: "Thumbs Up", detail: "Tune future prompts toward this track") { [weak self] in
+            controlItem(title: "Thumbs Up", detail: "More like this") { [weak self] in
                 await self?.rateCurrentTrack(up: true)
             },
-            controlItem(title: "Thumbs Down", detail: "Remove this track and tune future prompts away") { [weak self] in
+            controlItem(title: "Thumbs Down", detail: "Less like this") { [weak self] in
                 await self?.rateCurrentTrack(up: false)
             },
-            controlItem(title: "Refresh", detail: model.endpointSummary) { [weak self] in
-                await self?.refreshAndRender(animated: true)
+        ]
+    }
+
+    @available(iOS 26.0, *)
+    private func rootGridButtons() -> [CPGridButton] {
+        [
+            rootGridButton(
+                title: player.isPlaying ? "Pause" : "Play",
+                systemImageName: player.isPlaying ? "pause.fill" : "play.fill",
+                enabled: model.streamURL != nil
+            ) { [weak self] in
+                self?.player.togglePlayback()
+                self?.renderRootTemplate(animated: true)
+            },
+            rootGridButton(title: "Skip", systemImageName: "forward.end.fill", enabled: model.state?.currentTrack != nil) { [weak self] in
+                await self?.skipTrack()
+            },
+            rootGridButton(title: "Like", systemImageName: "hand.thumbsup.fill", enabled: model.state?.currentTrack != nil) { [weak self] in
+                await self?.rateCurrentTrack(up: true)
+            },
+            rootGridButton(title: "Dislike", systemImageName: "hand.thumbsdown.fill", enabled: model.state?.currentTrack != nil) { [weak self] in
+                await self?.rateCurrentTrack(up: false)
             },
         ]
+    }
+
+    @available(iOS 26.0, *)
+    private func rootGridButton(
+        title: String,
+        systemImageName: String,
+        enabled: Bool,
+        action: @escaping @MainActor () async -> Void
+    ) -> CPGridButton {
+        let image = UIImage(systemName: systemImageName) ?? UIImage(systemName: "circle.fill")!
+        let button = CPGridButton(titleVariants: [title], image: image) { _ in
+            Task { @MainActor in
+                await action()
+            }
+        }
+        button.isEnabled = enabled
+        return button
     }
 
     private func controlItem(

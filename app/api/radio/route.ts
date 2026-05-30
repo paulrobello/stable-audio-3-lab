@@ -100,6 +100,7 @@ export async function GET(request: NextRequest) {
         metadataOnly: forceIcyMetadata || request.nextUrl.searchParams.get("metadataOnly") === "1",
         skipAnnouncement: request.nextUrl.searchParams.get("skipAnnouncement") === "1",
         styleId,
+        signal: request.signal,
       });
     }
     const state = await readRadioState();
@@ -616,9 +617,10 @@ async function runStableAudioGeneratorProcess(command: string, args: string[], t
   });
 }
 
-async function streamCurrentTrack(state: RadioState, options: { icyMetadataEnabled?: boolean; metadataOnly?: boolean; skipAnnouncement?: boolean; styleId?: ReturnType<typeof normalizeRadioStyleUrlParam> } = {}) {
+async function streamCurrentTrack(state: RadioState, options: { icyMetadataEnabled?: boolean; metadataOnly?: boolean; skipAnnouncement?: boolean; styleId?: ReturnType<typeof normalizeRadioStyleUrlParam>; signal?: AbortSignal } = {}) {
   const icyMetadataEnabled = options.icyMetadataEnabled ?? false;
   const clientSkipsAnnouncementAudio = options.skipAnnouncement || options.metadataOnly;
+  const signal = options.signal;
   let streamState = resolveStreamStyleState(state, options.styleId);
   let pendingFilenames: string[] = [];
   let pendingTrack: RadioTrackRecord | undefined;
@@ -629,9 +631,22 @@ async function streamCurrentTrack(state: RadioState, options: { icyMetadataEnabl
   let completedTrackFilename: string | undefined;
   let icyBytesUntilMetadata = RADIO_STREAM_ICY_META_INTERVAL;
 
+  // Safety net: enforce a max stream lifetime to prevent resource exhaustion
+  const RADIO_STREAM_MAX_LIFETIME_MS = 6 * 60 * 60 * 1000; // 6 hours
+  const streamDeadline = Date.now() + RADIO_STREAM_MAX_LIFETIME_MS;
+  let streamAborted = false;
+
   const stream = new ReadableStream<Uint8Array>({
+    cancel() {
+      streamAborted = true;
+    },
     async pull(controller) {
       while (true) {
+        if (streamAborted || signal?.aborted) return;
+        if (Date.now() > streamDeadline) {
+          controller.close();
+          return;
+        }
         if (activeAudio && activeFilename) {
           if (pendingTrack) {
             const latestState = resolveStreamStyleState(await readSynchronizedRadioState(), options.styleId);
