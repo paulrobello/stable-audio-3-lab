@@ -8,6 +8,7 @@ final class PardoraCarPlaySceneDelegate: UIResponder, CPTemplateApplicationScene
     private let player: RadioPlayer
     private var interfaceController: CPInterfaceController?
     private var rootTemplate: CPListTemplate?
+    private var rootRenderState = PardoraCarPlayRootRenderState()
     private var refreshTask: Task<Void, Never>?
     private var refreshLoopTask: Task<Void, Never>?
 
@@ -44,6 +45,7 @@ final class PardoraCarPlaySceneDelegate: UIResponder, CPTemplateApplicationScene
         refreshTask = nil
         refreshLoopTask = nil
         rootTemplate = nil
+        rootRenderState = PardoraCarPlayRootRenderState()
         self.interfaceController = nil
         player.setNextTrackHandler(nil)
         model.stopNetworkMonitoring()
@@ -101,6 +103,17 @@ final class PardoraCarPlaySceneDelegate: UIResponder, CPTemplateApplicationScene
     }
 
     private func renderRootTemplate(animated: Bool) {
+        let snapshot = PardoraCarPlayRootSnapshot(
+            carPlayModeEnabled: PardoraSettings.isCarPlayModeEnabled(),
+            state: model.state,
+            statusMessage: model.statusMessage,
+            isPlaying: player.isPlaying,
+            hasStreamURL: model.streamURL != nil
+        )
+        guard rootRenderState.shouldRenderRootTemplate(for: snapshot) || rootTemplate == nil else {
+            return
+        }
+
         let sections = rootSections()
         if let rootTemplate {
             rootTemplate.updateSections(sections)
@@ -307,5 +320,52 @@ final class PardoraCarPlaySceneDelegate: UIResponder, CPTemplateApplicationScene
     private func showQueue() {
         let template = CPListTemplate(title: "Queue", sections: [CPListSection(items: queueTrackItems(), header: nil, sectionIndexTitle: nil)])
         interfaceController?.pushTemplate(template, animated: true) { _, _ in }
+    }
+}
+
+struct PardoraCarPlayRootRenderState {
+    private var lastSnapshot: PardoraCarPlayRootSnapshot?
+
+    mutating func shouldRenderRootTemplate(for snapshot: PardoraCarPlayRootSnapshot) -> Bool {
+        guard lastSnapshot != snapshot else {
+            return false
+        }
+
+        lastSnapshot = snapshot
+        return true
+    }
+}
+
+struct PardoraCarPlayRootSnapshot: Equatable {
+    var carPlayModeEnabled: Bool
+    var currentTrackID: String?
+    var currentTrackFilename: String?
+    var currentTrackTitle: String?
+    var selectedStyleTitle: String?
+    var queueStatusText: String?
+    var statusMessage: String?
+    var isPlaying: Bool
+    var hasStreamURL: Bool
+    var hasCurrentTrack: Bool
+    var nextUpTitleText: String?
+
+    init(
+        carPlayModeEnabled: Bool,
+        state: RadioStreamState?,
+        statusMessage: String?,
+        isPlaying: Bool,
+        hasStreamURL: Bool
+    ) {
+        self.carPlayModeEnabled = carPlayModeEnabled
+        currentTrackID = state?.currentTrack?.id
+        currentTrackFilename = state?.currentTrack?.filename
+        currentTrackTitle = state?.currentTrack?.title
+        selectedStyleTitle = state?.selectedStyleId.displayName
+        queueStatusText = state?.queueStatusText
+        self.statusMessage = state?.currentTrack == nil ? statusMessage : nil
+        self.isPlaying = isPlaying
+        self.hasStreamURL = hasStreamURL
+        hasCurrentTrack = state?.currentTrack != nil
+        nextUpTitleText = state?.nextUpTitleText
     }
 }
