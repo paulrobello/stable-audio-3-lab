@@ -120,6 +120,55 @@ final class RadioAppModelTests: XCTestCase {
         XCTAssertEqual(model.state?.selectedStyleId, .ambient)
     }
 
+    func testSelectMusicStyleKeepsLatestSelectionWhenOlderResponseFinishesLast() async {
+        let client = DelayedStyleSelectionActionClient(delayedStyleID: .ambient, baseState: Self.stateWithLANURL)
+        let model = RadioAppModel(serverOrigin: "https://radio.pardev.net", actionClient: client)
+        model.state = Self.stateWithLANURL
+
+        let olderSelection = Task {
+            await model.selectMusicStyle(.ambient)
+        }
+        await client.waitForPayloadCount(1)
+
+        let newerSelection = Task {
+            await model.selectMusicStyle(.cinematic)
+        }
+        await client.waitForPayloadCount(2)
+        await newerSelection.value
+
+        XCTAssertEqual(model.state?.selectedStyleId, .cinematic)
+
+        await client.completeDelayedStyle()
+        await olderSelection.value
+
+        XCTAssertEqual(model.state?.selectedStyleId, .cinematic)
+    }
+
+    func testSelectMusicStylePreservesPendingSelectionAcrossRefresh() async {
+        let client = DelayedStyleSelectionActionClient(delayedStyleID: .ambient, baseState: Self.stateWithLANURL)
+        let model = RadioAppModel(
+            serverOrigin: "https://radio.pardev.net",
+            endpointMode: .custom,
+            transport: TTSRefreshRadioTransport(state: Self.stateWithLANURL),
+            actionClient: client
+        )
+        model.state = Self.stateWithLANURL
+
+        let selection = Task {
+            await model.selectMusicStyle(.ambient)
+        }
+        await client.waitForPayloadCount(1)
+
+        await model.refresh(showStatus: false)
+
+        XCTAssertEqual(model.state?.selectedStyleId, .ambient)
+
+        await client.completeDelayedStyle()
+        await selection.value
+
+        XCTAssertEqual(model.state?.selectedStyleId, .ambient)
+    }
+
     func testDraftMusicStylePostsRequestAndReturnsDraft() async {
         let draft = RadioStyleDraft(
             label: "Dungeon Synth",
@@ -730,6 +779,67 @@ private actor FakeRadioActionClient: RadioActionClient {
     func postAction(_ payload: RadioActionPayload) async throws -> RadioActionResponse {
         payloads.append(payload)
         return response
+    }
+}
+
+private actor DelayedStyleSelectionActionClient: RadioActionClient {
+    var payloads: [RadioActionPayload] = []
+
+    private let delayedStyleID: RadioStyleID
+    private let baseState: RadioStreamState
+    private var delayedContinuation: CheckedContinuation<RadioActionResponse, Error>?
+    private var payloadCountContinuations: [(Int, CheckedContinuation<Void, Never>)] = []
+
+    init(delayedStyleID: RadioStyleID, baseState: RadioStreamState) {
+        self.delayedStyleID = delayedStyleID
+        self.baseState = baseState
+    }
+
+    func postAction(_ payload: RadioActionPayload) async throws -> RadioActionResponse {
+        payloads.append(payload)
+        resumePayloadCountContinuations()
+
+        guard case .string(let styleIDValue)? = payload["styleId"] else {
+            return RadioActionResponse(ok: true)
+        }
+
+        let styleID = RadioStyleID(rawValue: styleIDValue)
+        if styleID == delayedStyleID {
+            return try await withCheckedThrowingContinuation { continuation in
+                delayedContinuation = continuation
+            }
+        }
+
+        return response(styleID: styleID)
+    }
+
+    func waitForPayloadCount(_ count: Int) async {
+        guard payloads.count < count else {
+            return
+        }
+
+        await withCheckedContinuation { continuation in
+            payloadCountContinuations.append((count, continuation))
+        }
+    }
+
+    func completeDelayedStyle() {
+        delayedContinuation?.resume(returning: response(styleID: delayedStyleID))
+        delayedContinuation = nil
+    }
+
+    private func response(styleID: RadioStyleID) -> RadioActionResponse {
+        var state = baseState
+        state.selectedStyleId = styleID
+        return RadioActionResponse(ok: true, state: state)
+    }
+
+    private func resumePayloadCountContinuations() {
+        let readyContinuations = payloadCountContinuations.filter { payloads.count >= $0.0 }
+        payloadCountContinuations.removeAll { payloads.count >= $0.0 }
+        for continuation in readyContinuations {
+            continuation.1.resume()
+        }
     }
 }
 

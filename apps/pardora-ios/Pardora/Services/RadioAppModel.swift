@@ -26,6 +26,8 @@ final class RadioAppModel {
     private let networkQueue = DispatchQueue(label: "net.pardev.pardora.network-monitor")
     private var lastNetworkSignature: String?
     private var remoteTTSVoiceOptions: (provider: RadioTTSProvider, voices: [RadioTTSVoiceOption])?
+    private var pendingMusicStyleSelection: RadioStyleID?
+    private var musicStyleSelectionRequestID = 0
 
     init(
         serverOrigin: String = RadioEndpointResolver.defaultPublicOrigin,
@@ -258,7 +260,40 @@ final class RadioAppModel {
     }
 
     func selectMusicStyle(_ style: RadioStyleID) async {
-        await post(["action": .string("configure"), "styleId": .string(style.rawValue)])
+        musicStyleSelectionRequestID += 1
+        let requestID = musicStyleSelectionRequestID
+        let previousStyle = state?.selectedStyleId
+        pendingMusicStyleSelection = style
+        state?.selectedStyleId = style
+
+        do {
+            let response = try await (actionClient ?? client).postAction([
+                "action": .string("configure"),
+                "styleId": .string(style.rawValue),
+            ])
+            guard requestID == musicStyleSelectionRequestID else {
+                return
+            }
+            guard response.ok else {
+                pendingMusicStyleSelection = nil
+                if let previousStyle {
+                    state?.selectedStyleId = previousStyle
+                }
+                statusMessage = response.error ?? "Radio action failed."
+                return
+            }
+            pendingMusicStyleSelection = nil
+            applySuccessfulActionResponse(response)
+        } catch {
+            guard requestID == musicStyleSelectionRequestID else {
+                return
+            }
+            pendingMusicStyleSelection = nil
+            if let previousStyle {
+                state?.selectedStyleId = previousStyle
+            }
+            statusMessage = error.localizedDescription
+        }
     }
 
     func draftMusicStyle(request: String) async -> RadioStyleDraft? {
@@ -473,6 +508,7 @@ final class RadioAppModel {
     }
 
     private func setState(_ state: RadioStreamState, origin: String, promptModels: [String]? = nil) {
+        let state = statePreservingPendingMusicStyle(state)
         applyStateOptions(state)
         self.state = state
         serverOrigin = origin
@@ -483,6 +519,7 @@ final class RadioAppModel {
 
     private func applySuccessfulActionResponse(_ response: RadioActionResponse) {
         if let state = response.state {
+            let state = statePreservingPendingMusicStyle(state)
             applyStateOptions(state)
             self.state = state
             applyEndpointMode()
@@ -490,6 +527,16 @@ final class RadioAppModel {
         applyPromptModels(response.promptModels)
         applyVoiceOptions(response.voices)
         statusMessage = nil
+    }
+
+    private func statePreservingPendingMusicStyle(_ state: RadioStreamState) -> RadioStreamState {
+        guard let pendingMusicStyleSelection else {
+            return state
+        }
+
+        var state = state
+        state.selectedStyleId = pendingMusicStyleSelection
+        return state
     }
 
     private func applyStateOptions(_ state: RadioStreamState) {
