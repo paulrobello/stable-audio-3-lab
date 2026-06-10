@@ -6,7 +6,7 @@ import { isSafeAudioFilename, metadataPathForAudio, metadataUrlForAudio, outputP
 
 export const AUDIO_ASSESSMENT_LOAD_THRESHOLD = 0.25;
 
-export type AssessmentSource = "library" | "radio";
+export type AssessmentSource = "library" | "radio" | "upload";
 
 export type AudioAssessmentRequest = {
   filename: string;
@@ -110,6 +110,35 @@ export async function assessAudioFile(request: AudioAssessmentRequest) {
   await mkdir(path.dirname(metaPath), { recursive: true });
   await writeFile(metaPath, JSON.stringify(updated, null, 2));
   return { assessment, meta: updated };
+}
+
+export async function assessUploadedAudioFile(request: { audioPath: string; filename: string; title?: string; prompt?: string }) {
+  const assessorCommand = process.env.STABLE_AUDIO_ASSESSOR_COMMAND;
+  if (!assessorCommand) {
+    throw new AudioAssessmentError("Set STABLE_AUDIO_ASSESSOR_COMMAND to a local audio assessment command.", 503);
+  }
+
+  await stat(request.audioPath);
+  const sourceInfo: AudioAssessment["source"] = {
+    filename: request.filename,
+    audioUrl: "",
+    metadataUrl: "",
+    source: "upload",
+    title: readString(request.title) ?? request.filename,
+    prompt: readString(request.prompt),
+  };
+  const commandResult = await runAssessorCommand(assessorCommand, {
+    audioPath: request.audioPath,
+    filename: request.filename,
+    source: sourceInfo,
+    metadata: {},
+    prompt: buildAssessmentPrompt(sourceInfo),
+  }, Number(process.env.STABLE_AUDIO_ASSESSOR_TIMEOUT_MS || 300000));
+  if (commandResult.code !== 0) {
+    throw new AudioAssessmentError("Local audio assessor failed", 500, commandResult);
+  }
+
+  return { assessment: normalizeAssessment(commandResult.stdout, sourceInfo) };
 }
 
 export async function enqueueAudioAssessment(request: AudioAssessmentRequest) {
@@ -375,8 +404,49 @@ function parseAssessorOutput(stdout: string) {
   try {
     return JSON.parse(trimmed) as unknown;
   } catch {
-    return undefined;
+    return parseFirstJsonObject(trimmed);
   }
+}
+
+function parseFirstJsonObject(text: string) {
+  for (let index = text.indexOf("{"); index >= 0; index = text.indexOf("{", index + 1)) {
+    const candidate = readBalancedJsonObject(text, index);
+    if (!candidate) continue;
+    try {
+      return JSON.parse(candidate) as unknown;
+    } catch {
+      // Keep scanning; earlier braces can come from warnings or log text.
+    }
+  }
+  return undefined;
+}
+
+function readBalancedJsonObject(text: string, start: number) {
+  let depth = 0;
+  let inString = false;
+  let escaping = false;
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+    if (escaping) {
+      escaping = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaping = true;
+      continue;
+    }
+    if (char === "\"") {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (char === "{") depth += 1;
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, index + 1);
+    }
+  }
+  return undefined;
 }
 
 function runAssessorCommand(command: string, payload: unknown, timeoutMs: number): Promise<{ code: number | null; stdout: string; stderr: string }> {

@@ -12,6 +12,8 @@ type PlaybackState = { currentTime: number; duration: number; isPlaying?: boolea
 type Result = { ok: boolean; audioUrl?: string; metadataUrl?: string; filename?: string; title?: string; meta?: unknown; error?: string; detail?: unknown };
 type AudioAssessment = { summary?: string; attributes?: { genre?: string[]; instruments?: string[]; mood?: string[]; production?: string[]; positives?: string[]; negatives?: string[]; rhythm?: string; tempoBpm?: number; key?: string }; model?: string; assessedAt?: string };
 type AssessmentResponse = { ok: boolean; assessment?: AudioAssessment; error?: string };
+type UploadAssessmentResponse = AssessmentResponse & { prompt?: string; negativePrompt?: string };
+type ReferenceTrackAnalysis = { filename: string; assessment: AudioAssessment; prompt: string; negativePrompt: string };
 export type LibraryItem = { filename: string; audioUrl: string; downloadUrl: string; metadataUrl?: string; bundleUrl?: string; batchRunId?: string; batchBundleUrl?: string; format: AudioFormat; bytes: number; createdAt: string; favorite?: boolean; notes?: string; rating?: number; title?: string; meta?: unknown };
 type PersistedSettings = {
   mode: "music" | "sfx";
@@ -61,7 +63,12 @@ export default function Home() {
   const [assessmentBusyFilename, setAssessmentBusyFilename] = useState<string | null>(null);
   const [assessmentByFilename, setAssessmentByFilename] = useState<Record<string, AudioAssessment>>({});
   const [assessmentErrorByFilename, setAssessmentErrorByFilename] = useState<Record<string, string>>({});
+  const [referenceAnalysis, setReferenceAnalysis] = useState<ReferenceTrackAnalysis | null>(null);
+  const [referenceAnalysisBusy, setReferenceAnalysisBusy] = useState(false);
+  const [referenceAnalysisDragActive, setReferenceAnalysisDragActive] = useState(false);
+  const [referenceAnalysisError, setReferenceAnalysisError] = useState("");
   const [settingsHydrated, setSettingsHydrated] = useState(false);
+  const referenceInputRef = useRef<HTMLInputElement>(null);
 
   const selectedModel = useMemo(() => modelOptions.find((m) => m.id === model)!, [model]);
   const filteredLibraryItems = useMemo(() => filterLibraryItems(libraryItems, libraryQuery, favoritesOnly, hideRadioUtilityAudio), [libraryItems, libraryQuery, favoritesOnly, hideRadioUtilityAudio]);
@@ -223,6 +230,48 @@ export default function Home() {
     }
   }
 
+  async function analyzeReferenceTrack(file: File) {
+    setReferenceAnalysisBusy(true);
+    setReferenceAnalysisError("");
+    try {
+      if (!/\.(mp3|wav)$/i.test(file.name)) throw new Error("Drop an MP3 or WAV file.");
+      const form = new FormData();
+      form.set("file", file);
+      form.set("title", file.name.replace(/\.(mp3|wav)$/i, ""));
+      const response = await fetch("/api/assess/upload", {
+        method: "POST",
+        body: form,
+      });
+      const json = (await response.json()) as UploadAssessmentResponse;
+      if (!json.ok || !json.assessment || !json.prompt) throw new Error(json.error ?? "Reference track analysis failed");
+      const nextNegativePrompt = json.negativePrompt ?? negativePrompt;
+      setReferenceAnalysis({ filename: file.name, assessment: json.assessment, prompt: json.prompt, negativePrompt: nextNegativePrompt });
+      setMode("music");
+      if (model === "small-sfx") setModel("small-music");
+      setPrompt(json.prompt);
+      setNegativePrompt(nextNegativePrompt);
+      setResult(null);
+    } catch (error) {
+      setReferenceAnalysisError(error instanceof Error ? error.message : "Reference track analysis failed");
+    } finally {
+      setReferenceAnalysisBusy(false);
+      setReferenceAnalysisDragActive(false);
+      if (referenceInputRef.current) referenceInputRef.current.value = "";
+    }
+  }
+
+  function handleReferenceTrackDrop(event: React.DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setReferenceAnalysisDragActive(false);
+    const file = event.dataTransfer.files.item(0);
+    if (file) void analyzeReferenceTrack(file);
+  }
+
+  function handleReferenceTrackInput(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.item(0);
+    if (file) void analyzeReferenceTrack(file);
+  }
+
   function applySettings(settings: ReusableGenerationSettings) {
     setMode(settings.mode);
     setModel(settings.model);
@@ -269,11 +318,15 @@ export default function Home() {
     }
   }
 
-  async function generate() {
+  async function generate(overrides: Partial<{ prompt: string; negativePrompt: string; mode: "music" | "sfx"; model: string }> = {}) {
     setBusy(true);
     setResult(null);
     setBatchProgress("");
     try {
+      const promptForRun = overrides.prompt ?? prompt;
+      const negativePromptForRun = overrides.negativePrompt ?? negativePrompt;
+      const modeForRun = overrides.mode ?? mode;
+      const modelForRun = overrides.model ?? model;
       const parsedSeed = seed.trim() ? Number(seed) : undefined;
       const variationSeeds = parsedSeed !== undefined ? buildVariationSeeds(parsedSeed, batchCount) : Array.from({ length: batchCount }, () => undefined as number | undefined);
       const batchRunId = variationSeeds.length > 1 ? buildClientBatchRunId() : undefined;
@@ -283,7 +336,7 @@ export default function Home() {
         const response = await fetch("/api/generate", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ prompt, negativePrompt, mode, model, duration, steps, cfgScale, format, mock, autoTitle, ...(variationSeeds[index] !== undefined ? { seed: variationSeeds[index] } : {}), ...(batchRunId ? { batchRunId, variationIndex: index, variationCount: variationSeeds.length } : {}) }),
+          body: JSON.stringify({ prompt: promptForRun, negativePrompt: negativePromptForRun, mode: modeForRun, model: modelForRun, duration, steps, cfgScale, format, mock, autoTitle, ...(variationSeeds[index] !== undefined ? { seed: variationSeeds[index] } : {}), ...(batchRunId ? { batchRunId, variationIndex: index, variationCount: variationSeeds.length } : {}) }),
         });
         latest = (await response.json()) as Result;
         setResult(latest);
@@ -392,6 +445,32 @@ export default function Home() {
                 <label className="block text-sm font-medium text-white/70">Negative prompt</label>
                 <input value={negativePrompt} onChange={(e) => setNegativePrompt(e.target.value)} className="input" />
 
+                <ReferenceTrackDropZone
+                  inputRef={referenceInputRef}
+                  analysis={referenceAnalysis}
+                  busy={referenceAnalysisBusy}
+                  dragActive={referenceAnalysisDragActive}
+                  error={referenceAnalysisError}
+                  onBrowse={() => referenceInputRef.current?.click()}
+                  onInputChange={handleReferenceTrackInput}
+                  onDragActiveChange={setReferenceAnalysisDragActive}
+                  onDrop={handleReferenceTrackDrop}
+                  onUsePrompt={(analysis) => {
+                    setMode("music");
+                    if (model === "small-sfx") setModel("small-music");
+                    setPrompt(analysis.prompt);
+                    setNegativePrompt(analysis.negativePrompt);
+                    setResult(null);
+                  }}
+                  onGenerate={(analysis) => {
+                    setMode("music");
+                    if (model === "small-sfx") setModel("small-music");
+                    setPrompt(analysis.prompt);
+                    setNegativePrompt(analysis.negativePrompt);
+                    void generate({ prompt: analysis.prompt, negativePrompt: analysis.negativePrompt, mode: "music", model: model === "small-sfx" ? "small-music" : model });
+                  }}
+                />
+
                 <div className="flex flex-col gap-3 rounded-3xl border border-white/10 bg-black/24 p-4 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <TipLabel title={controlTips.mock.title} tip={controlTips.mock.body} />
@@ -471,7 +550,7 @@ export default function Home() {
                   {seed && batchCount > 1 && <div className="mt-2 text-xs text-white/45">Seeds: {buildVariationSeeds(Number(seed), batchCount).join(", ")}</div>}
                 </Field>
 
-                <button onClick={generate} disabled={busy} className="w-full rounded-full bg-white px-6 py-4 font-bold text-black shadow-[0_0_50px_rgba(255,255,255,.18)] transition hover:scale-[1.01] disabled:cursor-wait disabled:opacity-60">
+                <button onClick={() => void generate()} disabled={busy} className="w-full rounded-full bg-white px-6 py-4 font-bold text-black shadow-[0_0_50px_rgba(255,255,255,.18)] transition hover:scale-[1.01] disabled:cursor-wait disabled:opacity-60">
                   {busy ? (batchProgress || "Generating… audio goblins negotiating royalties") : batchCount > 1 ? `Generate ${batchCount} variations` : `Generate ${format.toUpperCase()}`}
                 </button>
               </div>
@@ -551,6 +630,95 @@ function TipLabel({ title, tip }: { title: string; tip?: string }) {
         </span>
       )}
     </span>
+  );
+}
+
+function ReferenceTrackDropZone({
+  inputRef,
+  analysis,
+  busy,
+  dragActive,
+  error,
+  onBrowse,
+  onInputChange,
+  onDragActiveChange,
+  onDrop,
+  onUsePrompt,
+  onGenerate,
+}: {
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  analysis: ReferenceTrackAnalysis | null;
+  busy: boolean;
+  dragActive: boolean;
+  error: string;
+  onBrowse: () => void;
+  onInputChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  onDragActiveChange: (active: boolean) => void;
+  onDrop: (event: React.DragEvent<HTMLDivElement>) => void;
+  onUsePrompt: (analysis: ReferenceTrackAnalysis) => void;
+  onGenerate: (analysis: ReferenceTrackAnalysis) => void;
+}) {
+  const attrs = analysis?.assessment.attributes;
+  const detailLine = [
+    attrs?.tempoBpm ? `${attrs.tempoBpm} BPM` : undefined,
+    attrs?.key,
+    attrs?.rhythm,
+    attrs?.genre?.join(", "),
+  ].filter(Boolean).join(" / ");
+
+  return (
+    <div
+      className={clsx(
+        "rounded-3xl border border-dashed p-4 transition",
+        dragActive ? "border-emerald-200/70 bg-emerald-200/[0.12]" : "border-sky-200/25 bg-sky-300/[0.06]",
+      )}
+      onDragEnter={(event) => {
+        event.preventDefault();
+        onDragActiveChange(true);
+      }}
+      onDragOver={(event) => {
+        event.preventDefault();
+        onDragActiveChange(true);
+      }}
+      onDragLeave={(event) => {
+        event.preventDefault();
+        if (event.currentTarget === event.target) onDragActiveChange(false);
+      }}
+      onDrop={onDrop}
+    >
+      <input ref={inputRef} type="file" accept=".mp3,.wav,audio/mpeg,audio/wav" className="hidden" onChange={onInputChange} />
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-sky-50">Reference track</div>
+          <p className="mt-1 text-sm leading-6 text-white/55">
+            Drop an MP3 or WAV here to extract audible attributes and turn them into the current music prompt.
+          </p>
+        </div>
+        <button type="button" onClick={onBrowse} disabled={busy} className="inline-flex min-h-10 shrink-0 items-center justify-center rounded-full border border-sky-200/25 bg-sky-300/12 px-4 py-2 text-sm font-bold leading-none text-sky-100 hover:bg-sky-300/20 disabled:cursor-wait disabled:opacity-55">
+          {busy ? "Analyzing..." : "Choose file"}
+        </button>
+      </div>
+      {error && <div className="mt-3 rounded-2xl border border-pink-300/20 bg-pink-500/10 p-3 text-sm text-pink-100">{error}</div>}
+      {analysis && (
+        <div className="mt-3 rounded-2xl border border-white/10 bg-black/24 p-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold text-white/82">{analysis.filename}</div>
+              {detailLine && <div className="mt-1 text-xs font-semibold text-sky-100/70">{detailLine}</div>}
+            </div>
+            <div className="flex shrink-0 flex-wrap gap-2">
+              <button type="button" onClick={() => onUsePrompt(analysis)} className="inline-flex min-h-10 items-center justify-center rounded-full border border-white/10 bg-white/[0.06] px-3 py-2 text-xs font-bold leading-none text-white/70 hover:bg-white/10">
+                Use prompt
+              </button>
+              <button type="button" onClick={() => onGenerate(analysis)} disabled={busy} className="inline-flex min-h-10 items-center justify-center rounded-full bg-emerald-200 px-3 py-2 text-xs font-bold leading-none text-black hover:bg-white disabled:cursor-wait disabled:opacity-55">
+                Generate match
+              </button>
+            </div>
+          </div>
+          <AssessmentSummary assessment={analysis.assessment} />
+        </div>
+      )}
+    </div>
   );
 }
 

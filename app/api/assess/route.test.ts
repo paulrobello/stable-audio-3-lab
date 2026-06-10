@@ -95,6 +95,58 @@ process.stdin.on("end", () => {
     expect(saved.assessments).toHaveLength(1);
   });
 
+  it("parses the assessor JSON when dependency warnings are printed before it", async () => {
+    tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-assess-"));
+    process.chdir(tempCwd);
+    const outputDir = path.join(tempCwd, "public", "outputs");
+    await mkdir(outputDir, { recursive: true });
+    await writeFile(path.join(outputDir, "warning_prefixed.mp3"), Buffer.from("audio"));
+    await writeFile(path.join(outputDir, "warning_prefixed.mp3.json"), JSON.stringify({
+      filename: "warning_prefixed.mp3",
+      title: "Warning Prefixed",
+    }));
+    const command = path.join(tempCwd, "assessor.js");
+    await writeFile(command, `#!/usr/bin/env node
+process.stdin.resume();
+process.stdin.on("end", () => {
+  process.stdout.write("[ERROR] \\\`loss\\\` is part of Qwen2_5OmniThinkerCausalLMOutputWithPast.__init__'s signature, but not documented.\\n");
+  process.stdout.write("[ERROR] \\\`logits\\\` is part of Qwen2_5OmniTalkerCausalLMOutputWithPast.__init__'s signature, but not documented.\\n");
+  process.stdout.write(JSON.stringify({
+    provider: "local-qwen-omni",
+    model: "Qwen/Qwen2.5-Omni-7B",
+    summary: "A chill, laid-back track with smooth vocals.",
+    genre: ["hip-hop", "electronic", "chillout"],
+    instruments: ["drums", "synthesizer", "vocals"],
+    rhythm: "smooth, steady",
+    tempoBpm: 75,
+    mood: ["relaxed", "happy", "positive"],
+    production: ["simple, clean"],
+    positives: ["easy listening", "relaxing", "fun"],
+    negatives: ["slow tempo", "limited variety", "simple arrangement"],
+    rawText: "model returned { nested } text"
+  }));
+});
+`);
+    await chmod(command, 0o755);
+    process.env.STABLE_AUDIO_ASSESSOR_COMMAND = `"${process.execPath}" "${command}"`;
+
+    const response = await POST(new NextRequest("http://localhost:3007/api/assess", {
+      method: "POST",
+      body: JSON.stringify({ filename: "warning_prefixed.mp3", source: "library" }),
+    }));
+    const json = await response.json() as {
+      ok: boolean;
+      assessment?: { model?: string; summary?: string; attributes?: { tempoBpm?: number; instruments?: string[] } };
+    };
+
+    expect(response.status).toBe(200);
+    expect(json.ok).toBe(true);
+    expect(json.assessment?.model).toBe("Qwen/Qwen2.5-Omni-7B");
+    expect(json.assessment?.summary).toBe("A chill, laid-back track with smooth vocals.");
+    expect(json.assessment?.attributes?.tempoBpm).toBe(75);
+    expect(json.assessment?.attributes?.instruments).toEqual(["drums", "synthesizer", "vocals"]);
+  });
+
   it("returns a configuration error when no local assessor command is set", async () => {
     tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-assess-"));
     process.chdir(tempCwd);
