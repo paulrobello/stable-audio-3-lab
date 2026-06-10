@@ -1,7 +1,12 @@
-.PHONY: build test lint fmt typecheck checkall dev pre-commit pre-commit-install pre-commit-update pardora-generate pardora-build pardora-test pardora-checkall pardora-run pardora-archive-testflight pardora-upload-testflight
+.PHONY: build test lint fmt typecheck checkall dev dev-stop dev-restart pre-commit pre-commit-install pre-commit-update pardora-generate pardora-build pardora-test pardora-checkall pardora-run pardora-archive-testflight pardora-upload-testflight
 
 dev:
 	npm run dev
+
+dev-stop:
+	@lsof -ti:3007 | xargs kill -9 2>/dev/null || echo "No process on port 3007"
+
+dev-restart: dev-stop dev
 
 build:
 	npm run build
