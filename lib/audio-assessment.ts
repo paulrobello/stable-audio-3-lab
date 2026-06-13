@@ -132,7 +132,7 @@ export async function assessUploadedAudioFile(request: { audioPath: string; file
     filename: request.filename,
     source: sourceInfo,
     metadata: {},
-    prompt: buildAssessmentPrompt(sourceInfo),
+    prompt: buildUploadAssessmentPrompt(sourceInfo),
   }, Number(process.env.STABLE_AUDIO_ASSESSOR_TIMEOUT_MS || 300000));
   if (commandResult.code !== 0) {
     throw new AudioAssessmentError("Local audio assessor failed", 500, commandResult);
@@ -301,6 +301,17 @@ function buildAssessmentPrompt(source: AudioAssessment["source"]) {
     source.prompt ? `Original generation prompt: ${source.prompt}` : undefined,
     source.seed !== undefined ? `Seed: ${source.seed}` : undefined,
     source.rating !== undefined ? `Known user rating: ${source.rating}` : undefined,
+  ].filter(Boolean).join("\n");
+}
+
+function buildUploadAssessmentPrompt(source: AudioAssessment["source"]) {
+  return [
+    "Listen carefully to this audio and extract every musical attribute needed to recreate a similar track with an AI music generator.",
+    "Return JSON with summary, genre, instruments, rhythm, tempoBpm if confident, key if confident, mood, production, positives, and negatives.",
+    "Be specific about instrumentation (exact instrument types, not categories), production techniques (reverb, delay, compression, stereo width), and arrangement details (intros, breakdowns, drops, layering).",
+    "For rhythm, describe the groove, swing, and drum pattern character — not just the tempo.",
+    "For mood, capture the emotional arc and energy level across the track.",
+    source.title ? `Title: ${source.title}` : undefined,
   ].filter(Boolean).join("\n");
 }
 
