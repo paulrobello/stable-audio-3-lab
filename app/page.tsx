@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import clsx from "clsx";
 import { controlTips, modelOptions, promptPresets, promptTemplateGroups, buildVariationSeeds } from "@/lib/generation";
 import { settingsFromMetadata, type ReusableGenerationSettings } from "@/lib/metadata-settings";
-import { radioStyles, type RadioStyleId } from "@/lib/radio";
+import { radioStyles, type RadioStyleId, type RadioStyle } from "@/lib/radio";
 
 type AudioFormat = "mp3" | "wav";
 type PlaybackState = { currentTime: number; duration: number; isPlaying?: boolean; error?: string };
@@ -61,6 +61,7 @@ export default function Home() {
   const [radioQueuedFilenames, setRadioQueuedFilenames] = useState<Set<string>>(new Set());
   const [radioQueueStyleId, setRadioQueueStyleId] = useState<RadioStyleId>("synthwave");
   const [radioQueueError, setRadioQueueError] = useState("");
+  const [availableRadioStyles, setAvailableRadioStyles] = useState<RadioStyle[]>(radioStyles);
   const [assessmentBusyFilename, setAssessmentBusyFilename] = useState<string | null>(null);
   const [assessmentByFilename, setAssessmentByFilename] = useState<Record<string, AudioAssessment>>({});
   const [assessmentErrorByFilename, setAssessmentErrorByFilename] = useState<Record<string, string>>({});
@@ -102,6 +103,7 @@ export default function Home() {
       setSettingsHydrated(true);
     }
     loadLibrary();
+    loadRadioStyles();
   }, []);
 
   useEffect(() => {
@@ -109,6 +111,12 @@ export default function Home() {
     const settings: PersistedSettings = { mode, model, prompt, negativePrompt, duration, steps, cfgScale, format, mock, autoTitle, hideRadioUtilityAudio, seed, playbackVolume };
     window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   }, [settingsHydrated, mode, model, prompt, negativePrompt, duration, steps, cfgScale, format, mock, autoTitle, hideRadioUtilityAudio, seed, playbackVolume]);
+
+  useEffect(() => {
+    if (availableRadioStyles.length && !availableRadioStyles.some((style) => style.id === radioQueueStyleId)) {
+      setRadioQueueStyleId(availableRadioStyles[0].id);
+    }
+  }, [availableRadioStyles, radioQueueStyleId]);
 
   async function loadLibrary() {
     setLibraryBusy(true);
@@ -118,6 +126,18 @@ export default function Home() {
       if (json.ok) setLibraryItems(json.items ?? []);
     } finally {
       setLibraryBusy(false);
+    }
+  }
+
+  async function loadRadioStyles() {
+    try {
+      const response = await fetch("/api/radio", { cache: "no-store" });
+      const json = (await response.json()) as { ok: boolean; state?: { styles?: RadioStyle[] } };
+      if (json.ok && Array.isArray(json.state?.styles) && json.state!.styles.length) {
+        setAvailableRadioStyles(json.state!.styles);
+      }
+    } catch {
+      // Non-critical — keep built-in styles if the radio state is unavailable.
     }
   }
 
@@ -621,6 +641,7 @@ export default function Home() {
               radioQueueBusyFilename={radioQueueBusyFilename}
               radioQueuedFilenames={radioQueuedFilenames}
               radioQueueStyleId={radioQueueStyleId}
+              availableRadioStyles={availableRadioStyles}
               radioQueueError={radioQueueError}
               assessmentBusyFilename={assessmentBusyFilename}
               assessmentByFilename={assessmentByFilename}
@@ -1231,6 +1252,7 @@ function LibraryPanel({
   radioQueueBusyFilename,
   radioQueuedFilenames,
   radioQueueStyleId,
+  availableRadioStyles,
   radioQueueError,
   assessmentBusyFilename,
   assessmentByFilename,
@@ -1263,6 +1285,7 @@ function LibraryPanel({
   radioQueueBusyFilename: string | null;
   radioQueuedFilenames: Set<string>;
   radioQueueStyleId: RadioStyleId;
+  availableRadioStyles: RadioStyle[];
   radioQueueError: string;
   assessmentBusyFilename: string | null;
   assessmentByFilename: Record<string, AudioAssessment>;
@@ -1356,7 +1379,7 @@ function LibraryPanel({
             <label className="inline-flex min-h-10 items-center gap-2 rounded-full border border-emerald-200/15 bg-emerald-200/[0.07] px-4 py-2 text-sm font-semibold text-emerald-50">
               <span className="whitespace-nowrap">Radio queue</span>
               <select aria-label="Radio queue" value={radioQueueStyleId} onChange={(event) => onRadioQueueStyleChange(event.target.value as RadioStyleId)} className="max-w-48 rounded-full border border-white/10 bg-black/45 px-2 py-1 text-xs text-white outline-none">
-                {radioStyles.map((style) => <option key={style.id} value={style.id}>{style.label}</option>)}
+                {availableRadioStyles.map((style) => <option key={style.id} value={style.id}>{style.label}</option>)}
               </select>
             </label>
             <button
