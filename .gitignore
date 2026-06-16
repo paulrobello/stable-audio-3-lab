@@ -49,6 +49,7 @@ yarn-error.log*
 pnpm-debug.log*
 *.log
 .stable-audio-radio/
+.stable-audio-assessments/
 
 # iOS / Xcode
 DerivedData/
