@@ -13,6 +13,7 @@ type Result = { ok: boolean; audioUrl?: string; metadataUrl?: string; filename?:
 type AudioAssessment = { summary?: string; attributes?: { genre?: string[]; instruments?: string[]; mood?: string[]; production?: string[]; positives?: string[]; negatives?: string[]; rhythm?: string; tempoBpm?: number; key?: string }; model?: string; assessedAt?: string };
 type AssessmentResponse = { ok: boolean; assessment?: AudioAssessment; error?: string };
 type UploadAssessmentResponse = AssessmentResponse & { prompt?: string; negativePrompt?: string };
+type YouTubeAssessmentResponse = UploadAssessmentResponse & { filename?: string; title?: string };
 type ReferenceTrackAnalysis = { filename: string; assessment: AudioAssessment; prompt: string; negativePrompt: string };
 export type LibraryItem = { filename: string; audioUrl: string; downloadUrl: string; metadataUrl?: string; bundleUrl?: string; batchRunId?: string; batchBundleUrl?: string; format: AudioFormat; bytes: number; createdAt: string; favorite?: boolean; notes?: string; rating?: number; title?: string; meta?: unknown };
 type PersistedSettings = {
@@ -67,6 +68,7 @@ export default function Home() {
   const [referenceAnalysisBusy, setReferenceAnalysisBusy] = useState(false);
   const [referenceAnalysisDragActive, setReferenceAnalysisDragActive] = useState(false);
   const [referenceAnalysisError, setReferenceAnalysisError] = useState("");
+  const [referenceYouTubeUrl, setReferenceYouTubeUrl] = useState("");
   const [settingsHydrated, setSettingsHydrated] = useState(false);
   const referenceInputRef = useRef<HTMLInputElement>(null);
 
@@ -234,10 +236,10 @@ export default function Home() {
     setReferenceAnalysisBusy(true);
     setReferenceAnalysisError("");
     try {
-      if (!/\.(mp3|wav)$/i.test(file.name)) throw new Error("Drop an MP3 or WAV file.");
+      if (!/\.(mp3|wav|m4p)$/i.test(file.name)) throw new Error("Drop an MP3, WAV, or M4P file.");
       const form = new FormData();
       form.set("file", file);
-      form.set("title", file.name.replace(/\.(mp3|wav)$/i, ""));
+      form.set("title", file.name.replace(/\.(mp3|wav|m4p)$/i, ""));
       const response = await fetch("/api/assess/upload", {
         method: "POST",
         body: form,
@@ -245,12 +247,7 @@ export default function Home() {
       const json = (await response.json()) as UploadAssessmentResponse;
       if (!json.ok || !json.assessment || !json.prompt) throw new Error(json.error ?? "Reference track analysis failed");
       const nextNegativePrompt = json.negativePrompt ?? negativePrompt;
-      setReferenceAnalysis({ filename: file.name, assessment: json.assessment, prompt: json.prompt, negativePrompt: nextNegativePrompt });
-      setMode("music");
-      if (model === "small-sfx") setModel("small-music");
-      setPrompt(json.prompt);
-      setNegativePrompt(nextNegativePrompt);
-      setResult(null);
+      applyReferenceAnalysis({ filename: file.name, assessment: json.assessment, prompt: json.prompt, negativePrompt: nextNegativePrompt });
     } catch (error) {
       setReferenceAnalysisError(error instanceof Error ? error.message : "Reference track analysis failed");
     } finally {
@@ -260,11 +257,61 @@ export default function Home() {
     }
   }
 
+  async function analyzeReferenceYouTubeUrl(urlInput = referenceYouTubeUrl) {
+    const url = urlInput.trim();
+    if (!url) {
+      setReferenceAnalysisError("Enter a YouTube URL.");
+      return;
+    }
+
+    setReferenceAnalysisBusy(true);
+    setReferenceAnalysisError("");
+    try {
+      const response = await fetch("/api/assess/youtube", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const json = (await response.json()) as YouTubeAssessmentResponse;
+      if (!json.ok || !json.assessment || !json.prompt) throw new Error(json.error ?? "YouTube reference analysis failed");
+      const nextNegativePrompt = json.negativePrompt ?? negativePrompt;
+      applyReferenceAnalysis({
+        filename: json.title ?? json.filename ?? "YouTube reference",
+        assessment: json.assessment,
+        prompt: json.prompt,
+        negativePrompt: nextNegativePrompt,
+      });
+    } catch (error) {
+      setReferenceAnalysisError(error instanceof Error ? error.message : "YouTube reference analysis failed");
+    } finally {
+      setReferenceAnalysisBusy(false);
+      setReferenceAnalysisDragActive(false);
+    }
+  }
+
+  function applyReferenceAnalysis(analysis: ReferenceTrackAnalysis) {
+    setReferenceAnalysis(analysis);
+    setMode("music");
+    if (model === "small-sfx") setModel("small-music");
+    setPrompt(analysis.prompt);
+    setNegativePrompt(analysis.negativePrompt);
+    setResult(null);
+  }
+
   function handleReferenceTrackDrop(event: React.DragEvent<HTMLDivElement>) {
     event.preventDefault();
     setReferenceAnalysisDragActive(false);
     const file = event.dataTransfer.files.item(0);
-    if (file) void analyzeReferenceTrack(file);
+    if (file) {
+      void analyzeReferenceTrack(file);
+      return;
+    }
+
+    const url = extractDraggedUrl(event.dataTransfer);
+    if (url) {
+      setReferenceYouTubeUrl(url);
+      void analyzeReferenceYouTubeUrl(url);
+    }
   }
 
   function handleReferenceTrackInput(event: React.ChangeEvent<HTMLInputElement>) {
@@ -451,8 +498,11 @@ export default function Home() {
                   busy={referenceAnalysisBusy}
                   dragActive={referenceAnalysisDragActive}
                   error={referenceAnalysisError}
+                  youtubeUrl={referenceYouTubeUrl}
                   onBrowse={() => referenceInputRef.current?.click()}
                   onInputChange={handleReferenceTrackInput}
+                  onYouTubeUrlChange={setReferenceYouTubeUrl}
+                  onAnalyzeYouTubeUrl={() => void analyzeReferenceYouTubeUrl()}
                   onDragActiveChange={setReferenceAnalysisDragActive}
                   onDrop={handleReferenceTrackDrop}
                   onUsePrompt={(analysis) => {
@@ -633,14 +683,36 @@ function TipLabel({ title, tip }: { title: string; tip?: string }) {
   );
 }
 
+function extractDraggedUrl(dataTransfer: DataTransfer) {
+  const uriList = dataTransfer.getData("text/uri-list")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line && !line.startsWith("#"));
+  if (uriList) return uriList;
+
+  const plainText = dataTransfer.getData("text/plain").trim();
+  if (plainText) {
+    const match = plainText.match(/https?:\/\/\S+/);
+    return match?.[0] ?? plainText;
+  }
+
+  const html = dataTransfer.getData("text/html");
+  if (!html) return "";
+  const match = html.match(/href=["']([^"']+)["']/i);
+  return match?.[1] ?? "";
+}
+
 function ReferenceTrackDropZone({
   inputRef,
   analysis,
   busy,
   dragActive,
   error,
+  youtubeUrl,
   onBrowse,
   onInputChange,
+  onYouTubeUrlChange,
+  onAnalyzeYouTubeUrl,
   onDragActiveChange,
   onDrop,
   onUsePrompt,
@@ -651,8 +723,11 @@ function ReferenceTrackDropZone({
   busy: boolean;
   dragActive: boolean;
   error: string;
+  youtubeUrl: string;
   onBrowse: () => void;
   onInputChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  onYouTubeUrlChange: (value: string) => void;
+  onAnalyzeYouTubeUrl: () => void;
   onDragActiveChange: (active: boolean) => void;
   onDrop: (event: React.DragEvent<HTMLDivElement>) => void;
   onUsePrompt: (analysis: ReferenceTrackAnalysis) => void;
@@ -686,18 +761,39 @@ function ReferenceTrackDropZone({
       }}
       onDrop={onDrop}
     >
-      <input ref={inputRef} type="file" accept=".mp3,.wav,audio/mpeg,audio/wav" className="hidden" onChange={onInputChange} />
+      <input ref={inputRef} type="file" accept=".mp3,.wav,.m4p,audio/mpeg,audio/wav,audio/m4p" className="hidden" onChange={onInputChange} />
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <div className="text-sm font-semibold text-sky-50">Reference track</div>
           <p className="mt-1 text-sm leading-6 text-white/55">
-            Drop an MP3 or WAV here to extract audible attributes and turn them into the current music prompt.
+            Drop an MP3, WAV, or M4P here to extract audible attributes and turn them into the current music prompt.
           </p>
         </div>
         <button type="button" onClick={onBrowse} disabled={busy} className="inline-flex min-h-10 shrink-0 items-center justify-center rounded-full border border-sky-200/25 bg-sky-300/12 px-4 py-2 text-sm font-bold leading-none text-sky-100 hover:bg-sky-300/20 disabled:cursor-wait disabled:opacity-55">
           {busy ? "Analyzing..." : "Choose file"}
         </button>
       </div>
+      <form
+        className="mt-4 flex flex-col gap-2 sm:flex-row"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onAnalyzeYouTubeUrl();
+        }}
+      >
+        <label className="min-w-0 flex-1">
+          <span className="sr-only">YouTube URL</span>
+          <input
+            value={youtubeUrl}
+            onChange={(event) => onYouTubeUrlChange(event.target.value)}
+            placeholder="Paste YouTube URL"
+            className="input"
+            inputMode="url"
+          />
+        </label>
+        <button type="submit" disabled={busy} className="inline-flex min-h-11 shrink-0 items-center justify-center rounded-full border border-sky-200/25 bg-sky-300/12 px-4 py-2 text-sm font-bold leading-none text-sky-100 hover:bg-sky-300/20 disabled:cursor-wait disabled:opacity-55">
+          {busy ? "Extracting..." : "Extract audio"}
+        </button>
+      </form>
       {error && <div className="mt-3 rounded-2xl border border-pink-300/20 bg-pink-500/10 p-3 text-sm text-pink-100">{error}</div>}
       {analysis && (
         <div className="mt-3 rounded-2xl border border-white/10 bg-black/24 p-3">

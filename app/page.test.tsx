@@ -135,6 +135,101 @@ describe("library playback state", () => {
   });
 });
 
+describe("reference track analysis", () => {
+  it("extracts a YouTube URL for prompt analysis", async () => {
+    window.localStorage.clear();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/library") {
+        return { json: async () => ({ ok: true, items: [] }) } as Response;
+      }
+      if (input === "/api/assess/youtube") {
+        return {
+          json: async () => ({
+            ok: true,
+            title: "YouTube Mix",
+            filename: "youtube-reference-test.mp3",
+            prompt: "matched youtube reference prompt",
+            negativePrompt: "avoid crowded chorus",
+            assessment: {
+              summary: "Bright electro pop with chopped vocals.",
+              attributes: {
+                genre: ["electro pop"],
+                instruments: ["chopped vocal", "sidechain bass"],
+                mood: ["bright"],
+                tempoBpm: 124,
+              },
+            },
+          }),
+        } as Response;
+      }
+      return { arrayBuffer: async () => new ArrayBuffer(0) } as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Home />);
+
+    fireEvent.change(await screen.findByLabelText("YouTube URL"), { target: { value: "https://www.youtube.com/watch?v=abc12345678" } });
+    fireEvent.click(screen.getByRole("button", { name: "Extract audio" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/assess/youtube", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ url: "https://www.youtube.com/watch?v=abc12345678" }),
+    })));
+    expect(await screen.findByText("YouTube Mix")).toBeTruthy();
+    expect(await screen.findByText("Bright electro pop with chopped vocals.")).toBeTruthy();
+    expect(screen.getByDisplayValue("matched youtube reference prompt")).toBeTruthy();
+  });
+
+  it("accepts a dragged browser link as a YouTube reference", async () => {
+    window.localStorage.clear();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (input === "/api/library") {
+        return { json: async () => ({ ok: true, items: [] }) } as Response;
+      }
+      if (input === "/api/assess/youtube") {
+        return {
+          json: async () => ({
+            ok: true,
+            title: "Dragged YouTube Mix",
+            filename: "youtube-reference-dragged.mp3",
+            prompt: "prompt from dragged youtube link",
+            negativePrompt: "avoid harsh splash",
+            assessment: {
+              summary: "Dragged link audio with bright drums.",
+              attributes: {
+                genre: ["dance pop"],
+                instruments: ["drum machine"],
+                mood: ["bright"],
+                tempoBpm: 128,
+              },
+            },
+          }),
+        } as Response;
+      }
+      return { arrayBuffer: async () => new ArrayBuffer(0) } as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Home />);
+
+    const dropTarget = await screen.findByText(/Drop an MP3, WAV, or M4P here/);
+    fireEvent.drop(dropTarget, {
+      dataTransfer: {
+        files: { item: () => null, length: 0 },
+        getData: (type: string) => type === "text/uri-list" ? "https://youtu.be/dragged12345" : "",
+      },
+    });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/assess/youtube", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ url: "https://youtu.be/dragged12345" }),
+    })));
+    expect(await screen.findByText("Dragged YouTube Mix")).toBeTruthy();
+    expect(await screen.findByText("Dragged link audio with bright drums.")).toBeTruthy();
+    expect(screen.getByDisplayValue("prompt from dragged youtube link")).toBeTruthy();
+  });
+});
+
 describe("main page radio lineup action", () => {
   it("hides radio utility audio by default and shows it when toggled", async () => {
     window.localStorage.clear();

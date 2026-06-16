@@ -8,7 +8,7 @@ import { assessUploadedAudioFile, AudioAssessmentError } from "@/lib/audio-asses
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-const ALLOWED_EXTENSIONS = new Set([".mp3", ".wav"]);
+const ALLOWED_EXTENSIONS = new Set([".mp3", ".wav", ".m4p"]);
 
 export async function POST(request: NextRequest) {
   let uploadPath: string | undefined;
@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
     const originalName = file.name.trim() || "uploaded-audio";
     const extension = path.extname(originalName).toLowerCase();
     if (!ALLOWED_EXTENSIONS.has(extension)) {
-      return NextResponse.json({ ok: false, error: "Upload an MP3 or WAV file" }, { status: 400 });
+      return NextResponse.json({ ok: false, error: "Upload an MP3, WAV, or M4P file" }, { status: 400 });
     }
 
     const uploadDir = path.join(process.cwd(), ".stable-audio-assessments", "uploads");
@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
     uploadPath = path.join(uploadDir, `${randomUUID()}${extension}`);
     await writeFile(uploadPath, Buffer.from(await file.arrayBuffer()));
 
-    const title = readFormString(form.get("title")) ?? originalName.replace(/\.(mp3|wav)$/i, "");
+    const title = readFormString(form.get("title")) ?? originalName.replace(/\.(mp3|wav|m4p)$/i, "");
     const result = await assessUploadedAudioFile({
       audioPath: uploadPath,
       filename: originalName,
