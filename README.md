@@ -55,6 +55,7 @@ The app was built for Paul's M4 Max MacBook Pro with 128GB unified memory and us
 - **Model Selection**: Test Stable Audio 3 Small Music, Small SFX, and Medium from one interface.
 - **Generation Controls**: Adjust prompt, negative prompt, duration, steps, CFG, seed, format, and backend-backed mock/real behavior.
 - **MP3 and WAV Output**: MP3 is the default for smaller shareable renders; WAV is available for raw/editable output.
+- **Reference Track Prompting**: Drop MP3/WAV/M4P files, paste YouTube URLs, or drag browser links into the Reference track panel to analyze audible traits and turn them into a music prompt.
 - **Persistent Settings**: UI settings are saved in `localStorage` under `stable-audio-3-lab:settings:v1`.
 - **Global Playback Volume**: Every preview player and library waveform player uses one shared persisted volume setting, because surprise goblin volume is rude.
 
@@ -85,6 +86,7 @@ The app was built for Paul's M4 Max MacBook Pro with 128GB unified memory and us
 - **Next.js App Router**: Browser UI plus API routes for generation and library management.
 - **Typed Request Validation**: Zod schemas validate generation requests.
 - **Python Bridge**: A small Python bridge handles mock generation, real Stable Audio invocation, MP3 conversion, and metadata-safe output.
+- **Codex-Assisted YouTube Extraction**: YouTube reference links run through the repo-local `youtube-audio-extract` skill, which uses `yt-dlp` and `ffmpeg` to create a temporary MP3 for assessment.
 - **Test Coverage**: Vitest tests cover UI/backend helpers; Python unittests cover process cleanup and backend normalization.
 - **Pre-commit Hooks**: Formatting, linting, secret checks, and build/test gates are wired through the Makefile.
 
@@ -105,6 +107,7 @@ Sound FX mode with SFX-focused prompts and the same local generation workflow.
 * Python 3.11 or newer.
 * `uv` for the vendored Stable Audio 3 Python environment.
 * `ffmpeg` and `ffprobe` for MP3 conversion, crop rendering, and real media-duration validation.
+* `codex`, `yt-dlp`, and `ffmpeg` if you want the Reference track panel to extract audio from YouTube URLs.
 * Hugging Face CLI (`hf`) or `HF_TOKEN` if you want higher download limits.
 * A Hugging Face account with Stability's gated model terms accepted only if you use the standard Torch checkpoints.
 
@@ -247,6 +250,27 @@ QWEN_OMNI_MAX_AUDIO_SECONDS=120
 
 Restart the Next.js server after changing these values. The first assessment may take a while because `uv` resolves Python packages and Hugging Face downloads the model weights.
 
+### Configure YouTube reference extraction
+
+The Reference track panel can analyze YouTube audio without adding it to `public/outputs/`. Paste a YouTube URL, drag a browser link into the panel, or drop a supported local audio file. YouTube URLs call `/api/assess/youtube`, which runs `codex exec` against [`skills/youtube-audio-extract/SKILL.md`](./skills/youtube-audio-extract/SKILL.md), writes a temporary MP3 under `.stable-audio-assessments/uploads/`, runs the configured audio assessor, builds a generation prompt, and deletes the temporary audio.
+
+Install the extraction tools if they are missing:
+
+```bash
+which yt-dlp >/dev/null 2>&1 || brew install yt-dlp
+which ffmpeg >/dev/null 2>&1 || brew install ffmpeg
+```
+
+Optional `.env.local` overrides:
+
+```bash
+STABLE_AUDIO_YOUTUBE_CODEX_BIN=codex
+STABLE_AUDIO_YOUTUBE_CODEX_MODEL=gpt-5.5
+STABLE_AUDIO_YOUTUBE_CODEX_TIMEOUT_MS=300000
+```
+
+Only download and analyze media you have the rights to use.
+
 ## Environment Variables
 
 ### Variables are loaded in the following order, last one to set a var wins
@@ -266,6 +290,9 @@ Restart the Next.js server after changing these values. The first assessment may
 * `STABLE_AUDIO_TIMEOUT_MS` - Generation timeout for the API route. Defaults to `900000` ms.
 * `STABLE_AUDIO_ASSESSOR_COMMAND` - Local command used by `/api/assess`. Defaults in this repo to the Qwen2.5-Omni wrapper.
 * `STABLE_AUDIO_ASSESSOR_TIMEOUT_MS` - Timeout for local audio assessment. Defaults to `300000` ms in the route; use `900000` for first-run model downloads.
+* `STABLE_AUDIO_YOUTUBE_CODEX_BIN` - Optional Codex CLI executable for YouTube reference extraction. Defaults to `codex`.
+* `STABLE_AUDIO_YOUTUBE_CODEX_MODEL` - Optional Codex model for YouTube reference extraction. Defaults to `gpt-5.5`.
+* `STABLE_AUDIO_YOUTUBE_CODEX_TIMEOUT_MS` - Timeout for YouTube extraction via Codex. Defaults to `300000` ms.
 * `QWEN_OMNI_MODEL` - Hugging Face model id for the Qwen Omni assessor. Defaults to `Qwen/Qwen2.5-Omni-7B`.
 * `QWEN_OMNI_MAX_AUDIO_SECONDS` - Optional max audio duration passed to the assessor after ffmpeg conversion. Use `0` to send the full file.
 
@@ -303,6 +330,7 @@ make pardora-run
 * Select **Music** mode.
 * Choose **Small Music** for fast sketches or **Medium** for higher-quality passes.
 * Pick MP3 for shareable output or WAV for raw/editable output.
+* Optionally drop an MP3/WAV/M4P reference track, paste a YouTube URL, or drag a browser link into the Reference track panel to populate the prompt from analyzed audio.
 * Enter a musical prompt such as tempo, genre, instruments, mix style, and mood.
 * Use the prompt template drawers for loops, ambience, trailer hits, or music beds when you want a fast starting point.
 * Start around 8 steps and CFG 1–2.
@@ -435,6 +463,9 @@ make pre-commit-install # install pre-commit and pre-push git hooks
 
 ```text
 app/
+  api/assess/route.ts      # Assess generated audio with the configured local audio-language model
+  api/assess/upload/route.ts # Temporary local reference-track upload analysis
+  api/assess/youtube/route.ts # Codex-backed YouTube reference extraction + analysis
   api/generate/route.ts    # POST endpoint that calls scripts/generate_audio.py
   api/library/route.ts     # GET/PATCH/DELETE endpoint for generated audio library
   api/library/bundle/route.ts # Single-item and batch-run ZIP exports
@@ -450,6 +481,8 @@ lib/
   metadata-settings.ts     # Metadata → reusable UI settings parser
 scripts/
   generate_audio.py        # Python bridge for mock and real Stable Audio 3 generation
+skills/
+  youtube-audio-extract/   # Codex skill used by /api/assess/youtube
 public/outputs/            # Runtime audio + .json sidecars; ignored except .gitkeep
 RESEARCH.md                # Research notes and M4 Max fit verdict
 ```
@@ -488,6 +521,7 @@ make pre-commit
 * **Batch Variation Workflow** - Generate up to 8 variations from the same prompt; fixed seeds increment deterministically and selected renders can be compared side by side.
 * **Favorite Keepers** - Starred library renders persist favorite state in metadata sidecars and can be filtered in the library.
 * **Prompt Template Drawers** - Foley, UI stings, loops, trailer hits, ambience, and music bed templates are built into the prompt UI.
+* **Reference Track Analysis** - Local audio drops, YouTube URL paste, and dragged browser links can be analyzed into reusable music prompts without adding source audio to the generated library.
 * **Export Bundles** - Library rows can export a `.bundle.zip` with audio, metadata, an analysis summary, and a rendered screenshot card for sharing experiments.
 * **Waveform Library Player** - Native media chrome is hidden in library rows; the waveform provides Play/Pause, global volume, click/keyboard seeking, crop markers, playback-error feedback, and a live cyan playhead.
 * **Audio Cropping** - Library rows can trim clips into new audio files with metadata preserving source/crop lineage.
@@ -506,4 +540,4 @@ make pre-commit
 
 ### v0.1.0
 
-* Initial Stable Audio 3 Lab app with Next.js UI, mock mode, real MLX inference, library management, metadata sidecars, seed controls, global playback volume, waveform/spectrogram previews, waveform-as-player library rows, keyboard seeking, playback-error feedback, stale playback-state pruning after refresh/delete, batch variations, comparison view, prompt templates, favorites, notes/ratings, crop controls, rendered screenshot cards in bundles, single-item bundles, batch-run ZIP exports, and README screenshots.
+* Initial Stable Audio 3 Lab app with Next.js UI, mock mode, real MLX inference, library management, metadata sidecars, seed controls, global playback volume, waveform/spectrogram previews, waveform-as-player library rows, keyboard seeking, playback-error feedback, stale playback-state pruning after refresh/delete, batch variations, comparison view, prompt templates, reference-track upload and YouTube-link analysis, favorites, notes/ratings, crop controls, rendered screenshot cards in bundles, single-item bundles, batch-run ZIP exports, and README screenshots.

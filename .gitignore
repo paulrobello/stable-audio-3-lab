@@ -87,3 +87,4 @@ docs/playgrounds
 .claude/statusline-*
 .pi/status-footer.json
 .worktrees/
+.claude/worktrees/
