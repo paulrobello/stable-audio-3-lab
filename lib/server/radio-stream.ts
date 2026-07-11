@@ -9,6 +9,41 @@
 // State reads use `readSynchronizedRadioState` (which writes back the
 // playback-clock sync inside the state lock) and advancements go through
 // `mutateRadioState` — no direct `fs` touches of the state file.
+//
+// ── Design assumption: single-listener / single-household LAN ───────────────
+// The streaming model assumes ONE concurrent listener (or a small handful on a
+// trusted LAN). Two consequences flow from that assumption and are acceptable
+// for the LAN/Pardora use case but become problems at scale on the public
+// stream (`radio.pardev.net`):
+//
+//   1. Per-listener memory. Each listener's `pull()` reads an entire segment
+//      (the announcement + track, transcoded to a single MP3 via ffmpeg concat)
+//      into a single `Uint8Array` (`activeAudio`) and then slices+paces it at
+//      `RADIO_STREAM_BYTES_PER_SECOND`. A typical 2-minute track at ~128 kbps
+//      is ~2 MB, so each connected listener holds roughly that much in memory
+//      for the duration of the track. For 1–3 LAN listeners this is trivial;
+//      for dozens of public listeners it adds up. Replacing the full-buffer
+//      read with an `fs.createReadStream`-based pipe would lower this, but the
+//      pacing, ICY-metadata byte-interleaving, and mid-track resume-offset
+//      logic are all coupled to having the full buffer (`activeAudio.length`,
+//      slicing, offset math), and the multi-segment path must buffer ffmpeg's
+//      concat output regardless — so it is a non-trivial redesign left as a
+//      future item.
+//
+//   2. Listener-driven state advancement. Each listener advances the GLOBAL
+//      station state on its own track end (`advanceStreamStateAfterTrack` →
+//      `mutateRadioState` guarded by `completedTrackFilename`). The locked
+//      mutator makes this race-safe, but with many simultaneous listeners each
+//      one independently drives advancement, so listeners started at different
+//      times can disagree about what "now playing" means and the station
+//      advances at the pace of the fastest listener. The robust fix is a
+//      single station "ticker" that owns advancement while listeners become
+//      read-only subscribers — a behavior-changing redesign explicitly deferred
+//      (tracked as ARC-012 / future work).
+//
+// Until those two items land, treat public multi-listener streaming as
+// best-effort: fine for a single household and a couple of devices, not built
+// for many simultaneous remote listeners.
 
 import { NextResponse } from "next/server";
 import { readFile } from "node:fs/promises";
