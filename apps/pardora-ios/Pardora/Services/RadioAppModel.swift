@@ -507,9 +507,9 @@ final class RadioAppModel {
         }
         switch endpointMode {
         case .auto, .local:
-            true
+            return true
         case .publicInternet, .custom:
-            false
+            return false
         }
     }
 
