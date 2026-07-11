@@ -19,7 +19,8 @@ typecheck:
 	npx tsc --noEmit
 
 lint: typecheck
-	@echo "No separate linter configured; TypeScript check passed."
+	npx eslint .
+	@echo "Lint passed (tsc + eslint)."
 
 fmt:
 	@echo "No formatter configured."
