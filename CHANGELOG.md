@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Security boundary** — opt-in shared-secret bearer-token auth on mutating `/api/*` routes via `middleware.ts` (`STABLE_AUDIO_ADMIN_TOKEN`). Read-only GET routes, including `GET /api/radio` and the `?stream=1` MP3 stream, remain public. Unset by default for localhost/single-user mode.
+- **Security boundary** — opt-in shared-secret bearer-token auth on mutating `/api/*` routes via `proxy.ts` (`STABLE_AUDIO_ADMIN_TOKEN`). Read-only GET routes, including `GET /api/radio` and the `?stream=1` MP3 stream, remain public. Unset by default for localhost/single-user mode.
 - **Concurrency control** — a single shared generation-slot semaphore (`STABLE_AUDIO_MAX_CONCURRENT`, default 1) across `/api/generate`, the radio queue, and assessments, pinned to `globalThis` so it survives Next.js HMR.
 - **Rate limiting** — per-client token-bucket rate limit on mutating routes (`STABLE_AUDIO_MUTATING_RATE_PER_MINUTE`, default 30; fail-open on cold restart).
 - **Deterministic YouTube extraction** — `POST /api/assess/youtube` now runs a fixed-argument `yt-dlp` + `ffmpeg` subprocess (`STABLE_AUDIO_YOUTUBE_YTDLP_BIN` / `STABLE_AUDIO_YOUTUBE_TIMEOUT_MS`), replacing the autonomous Codex agent.

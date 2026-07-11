@@ -666,7 +666,7 @@ app/
     radio/route.ts               # GET /api/radio (JSON + ?stream=1) and POST actions
   radio.m3u/route.ts             # M3U playlist for the stream
   radio.pls/route.ts             # PLS playlist for the stream
-middleware.ts                    # Opt-in bearer-token auth (STABLE_AUDIO_ADMIN_TOKEN)
+proxy.ts                    # Opt-in bearer-token auth (STABLE_AUDIO_ADMIN_TOKEN)
 docs/                            # Documentation (style guide, reference, architecture, troubleshooting, specs)
   DOCUMENTATION_STYLE_GUIDE.md
   reference/api.md               # HTTP API reference

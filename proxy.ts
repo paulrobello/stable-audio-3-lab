@@ -22,7 +22,7 @@ import { checkMutatingRateLimit } from "@/lib/server/concurrency";
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const AUTH_REALM = 'Bearer realm="stable-audio-3-lab"';
 
-export function middleware(request: NextRequest): NextResponse {
+export function proxy(request: NextRequest): NextResponse {
   if (!MUTATING_METHODS.has(request.method.toUpperCase())) {
     return NextResponse.next();
   }
@@ -129,7 +129,7 @@ function resolveClientId(request: NextRequest): string {
 // so a length mismatch does not leak via an early return, and never branches on
 // secret data. Good enough for a high-entropy shared secret already protected
 // by TLS in transit; avoids depending on node:crypto.timingSafeEqual, which is
-// unavailable in the Edge runtime where middleware runs.
+// unavailable in the Edge runtime where the proxy runs.
 function constantTimeEqual(a: string, b: string): boolean {
   const len = Math.max(a.length, b.length);
   let diff = a.length ^ b.length;

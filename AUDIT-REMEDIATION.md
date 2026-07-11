@@ -116,7 +116,7 @@
 - The Swift changes (SEC-009 opt-in LAN scan, QA-017 force-unwrap guard) could not be verified here (no Xcode toolchain in this env). Run `make pardora-checkall` before shipping.
 
 ### Minor follow-ups
-- **`middleware.ts` → `proxy.ts`**: Next.js 16 emits a deprecation warning ("middleware" → "proxy"). The auth file works; rename when convenient.
+- **`middleware.ts` → `proxy.ts`**: ✅ Done — renamed the file and the `middleware()` → `proxy()` export (no behavior change; auth + origin check intact). The Next.js 16 deprecation warning is gone.
 - **ESLint backlog**: 15 warnings (12 `react-hooks/set-state-in-effect` in the god components, resolved by QA-009; 3 benign) — triage over time.
 
 ---

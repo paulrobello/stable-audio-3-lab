@@ -66,7 +66,7 @@ No formatter is configured (`make fmt` is a no-op).
 
 ## Security and concurrency
 
-- Opt-in bearer-token auth gates mutating `/api/*` routes via `middleware.ts` (`STABLE_AUDIO_ADMIN_TOKEN`); read-only GET routes (including `GET /api/radio` and `?stream=1`) are never gated.
+- Opt-in bearer-token auth gates mutating `/api/*` routes via `proxy.ts` (`STABLE_AUDIO_ADMIN_TOKEN`); read-only GET routes (including `GET /api/radio` and `?stream=1`) are never gated.
 - A single generation-slot semaphore (`lib/server/concurrency.ts`, `STABLE_AUDIO_MAX_CONCURRENT`, default 1) is shared across `/api/generate`, the radio queue, and assessments.
 - Per-client rate limiting on mutating routes (`STABLE_AUDIO_MUTATING_RATE_PER_MINUTE`, default 30).
 
