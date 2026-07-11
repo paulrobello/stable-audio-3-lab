@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Centralized configuration** — `lib/server/config.ts` collects every `STABLE_AUDIO_*` / `RADIO_*` / `OLLAMA_*` / ffmpeg / port env read with typed, defaulted accessors.
 - **Shared subprocess runner** — `lib/server/subprocess.ts` (`runCommand`) with SIGTERM→SIGKILL escalation and an `error` handler, used by generation, crop, assessment, and YouTube extraction.
 - **Minimal logger** — `lib/server/logger.ts` for behavior-changing fallback paths (replaces silent empty catches on hot paths).
+- **Linter** — `make lint` now runs `tsc --noEmit` + ESLint (Next.js + TypeScript ruleset via `eslint.config.mjs`); previously there was no linter.
+- **CI** — `.github/workflows/ci.yml` runs typecheck + tests + build on push/PR to `main`.
 - **Documentation** — API reference (`docs/reference/api.md`), architecture overview (`docs/architecture/system-overview.md`), troubleshooting guide (`docs/troubleshooting/common-errors.md`), Pardora iOS README (`apps/pardora-ios/README.md`), `CONTRIBUTING.md`, a full environment-variable reference, a README Radio Station section, and JSDoc across `lib/radio/`, `lib/audio-assessment.ts`, and `lib/library.ts`.
 
 ### Changed
@@ -28,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`lib/radio.ts` split** — the radio domain is now a barrel under `lib/radio/` (`types.ts`, `styles.ts`, `state.ts`, `prompts.ts`, `tts.ts`, `urls.ts`). The `@/lib/radio` import path still works.
 - **Ollama client consolidated** — `generateTitle` / `cleanTitle` and the Ollama URL builders moved into `lib/server/ollama.ts`; route files import from there.
 - **TTS key resolution** — provider TTS keys resolve from the app's own `.env.local` / process env only (SEC-006); the app no longer reads `~/.claude/.env`.
+- **Radio streaming model** — playback advancement is now owned by a single listener-gated, wall-clock station ticker (`lib/server/radio-ticker.ts`); stream listeners are read-only subscribers, so concurrent listeners agree on "now playing" instead of advancing at the fastest listener's pace (ARC-012).
+- **Default radio prompt model** — `phi4-mini` (installed by default) is now the radio's prompt model; the previous default `llama3.1:8b` was not installed and 404'd, degrading prompts to the fallback.
 - **Project layout & roadmap** — README layout, roadmap ("Where we are" / "Where we're going"), and project structure refreshed to reflect the post-refactor tree.
 
 ### Fixed
@@ -36,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Radio stream pacing** — a single shared bitrate constant now drives both the ffmpeg transcode args and the stream pacing math, fixing announcement pacing and mid-track resume offsets.
 - **Silent radio degradation** — TTS, taste distillation, queue refill, and Ollama draft fallbacks now log warnings instead of swallowing errors.
 - **Vitest exclude** — `.claude/worktrees/**` is excluded so `make checkall` no longer runs stale duplicate test suites from worktrees.
+- **TTS announcements under Next/Turbopack** — the TTS module loader failed at runtime ("expression is too dynamic"); it now loads via a bundler-safe path, so DJ announcements synthesize again.
+- **React dev CSP** — the strict CSP blocked `eval()`, which React requires in development; `'unsafe-eval'` is now allowed in development only (production stays strict).
+- **Real MLX generation** — the bridge passed a relative `--out` to the `sa3` wrapper (run from `optimized/mlx`), so the intermediate WAV landed in the wrong place and the MP3 transcode failed; now passed absolute. Previously masked because mock mode bypassed `sa3`.
+- **Pardora iOS build** — `shouldDiscoverLAN` had a missing return and failed to compile under Xcode 26.5; fixed (SEC-009 follow-up).
+- **Next.js 16 deprecation** — renamed `middleware.ts` → `proxy.ts` (and `middleware()` → `proxy()`), removing the startup deprecation warning.
 
 ## [0.1.0]
 
