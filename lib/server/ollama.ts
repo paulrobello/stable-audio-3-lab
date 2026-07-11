@@ -15,6 +15,7 @@
 // All env reads go through `@/lib/server/config` (ARC-016).
 
 import { ollamaBaseUrl as configuredOllamaBaseUrl, ollamaHost, ollamaPort, ollamaTitleModel } from "./config";
+import { logWarn } from "./logger";
 
 const TITLE_SYSTEM_PROMPT = `You are a creative music title generator. Given a description of audio, generate a short, evocative title (2-6 words). Return ONLY the title text with no quotes, no punctuation at the end, no explanation. Be creative and concise. The mode is {mode}.`;
 
@@ -66,7 +67,15 @@ export async function generateTitle(prompt: string, mode: string): Promise<strin
       body: JSON.stringify({ model, system: systemPrompt, prompt, stream: false }),
       signal: controller.signal,
     });
-  } catch {
+  } catch (error) {
+    // Behavior-changing fallback: the caller (generate route / title route)
+    // falls back to a slug-derived filename when no title comes back. Warn so a
+    // down/misconfigured Ollama is diagnosable rather than silently disabling
+    // auto-title (QA-006).
+    logWarn("Ollama title generation request failed; falling back to default title", {
+      error: error instanceof Error ? error.message : String(error),
+      model,
+    });
     return null;
   } finally {
     clearTimeout(timeout);

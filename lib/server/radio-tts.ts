@@ -29,6 +29,7 @@ import {
 } from "@/lib/radio";
 import { metadataPathForAudio, outputPathForAudio } from "@/lib/library";
 import { spawnProcess } from "./subprocess";
+import { logError, logWarn } from "./logger";
 import { ffmpegBin, parTtsConfigPath, radioTtsModel, radioTtsModulePath, radioTtsNodeModulePath, RADIO_STREAM_BITRATE_KBPS } from "./config";
 
 type TtsModule = {
@@ -57,7 +58,14 @@ export async function createAnnouncementIfEnabled(track: RadioTrackRecord, state
     await mkdir(outputDir(), { recursive: true });
     await writeFile(finalPath, Buffer.from(bytes));
     return filename;
-  } catch {
+  } catch (error) {
+    // Behavior-changing fallback: the track plays without a DJ announcement.
+    // Surface the failure so a misconfigured TTS provider/path is diagnosable
+    // instead of degrading silently (QA-006).
+    logError("Radio TTS announcement synthesis failed; track will play without an announcement", error, {
+      provider: state.ttsProvider,
+      trackFilename: track.filename,
+    });
     return undefined;
   }
 }
@@ -152,7 +160,14 @@ export async function listTtsVoiceOptions(provider: string, currentVoice: string
       ...(voice.labels?.length ? { description: voice.labels.join(", ") } : voice.category ? { description: voice.category } : {}),
     }));
     return mergeCurrentVoiceOption(options, currentVoice);
-  } catch {
+  } catch (error) {
+    // Behavior-changing fallback: the voice picker degrades to the static
+    // catalog. Warn (not error) because this is a cosmetic listing helper and
+    // elevenlabs being unreachable is a common transient state (QA-006).
+    logWarn("Elevenlabs voice list fetch failed; falling back to static voice catalog", {
+      error: error instanceof Error ? error.message : String(error),
+      provider,
+    });
     return fallback;
   }
 }

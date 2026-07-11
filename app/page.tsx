@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import clsx from "clsx";
 import { modelOptions, promptPresets, buildVariationSeeds, GENERATION_LIMITS } from "@/lib/generation";
+import { runGenerationBatch } from "@/lib/generation-batch";
 import { controlTips, promptTemplateGroups } from "@/lib/ui-presets";
 import { settingsFromMetadata, type ReusableGenerationSettings } from "@/lib/metadata-settings";
 import { radioStyles, type RadioStyleId, type RadioStyle } from "@/lib/radio";
@@ -391,27 +392,43 @@ export default function Home() {
     setResult(null);
     setBatchProgress("");
     try {
-      const promptForRun = overrides.prompt ?? prompt;
-      const negativePromptForRun = overrides.negativePrompt ?? negativePrompt;
-      const modeForRun = overrides.mode ?? mode;
-      const modelForRun = overrides.model ?? model;
-      const parsedSeed = seed.trim() ? Number(seed) : undefined;
-      const variationSeeds = parsedSeed !== undefined ? buildVariationSeeds(parsedSeed, batchCount) : Array.from({ length: batchCount }, () => undefined as number | undefined);
-      const batchRunId = variationSeeds.length > 1 ? buildClientBatchRunId() : undefined;
-      let latest: Result | null = null;
-      for (let index = 0; index < variationSeeds.length; index += 1) {
-        setBatchProgress(variationSeeds.length > 1 ? `Variation ${index + 1}/${variationSeeds.length}${variationSeeds[index] !== undefined ? ` • seed ${variationSeeds[index]}` : ""}` : "");
-        const response = await fetch("/api/generate", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ prompt: promptForRun, negativePrompt: negativePromptForRun, mode: modeForRun, model: modelForRun, duration, steps, cfgScale, format, mock, autoTitle, ...(variationSeeds[index] !== undefined ? { seed: variationSeeds[index] } : {}), ...(batchRunId ? { batchRunId, variationIndex: index, variationCount: variationSeeds.length } : {}) }),
-        });
-        latest = (await response.json()) as Result;
-        setResult(latest);
-        if (!latest.ok) break;
-        await loadLibrary();
-      }
-      if (latest?.ok) await loadLibrary();
+      const { results } = await runGenerationBatch(
+        {
+          prompt: overrides.prompt ?? prompt,
+          negativePrompt: overrides.negativePrompt ?? negativePrompt,
+          mode: overrides.mode ?? mode,
+          model: overrides.model ?? model,
+          duration,
+          steps,
+          cfgScale,
+          format,
+          mock,
+          autoTitle,
+          seed,
+          batchCount,
+        },
+        async (variation) => {
+          const response = await fetch("/api/generate", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(variation.body),
+          });
+          const latest = (await response.json()) as Result;
+          setResult(latest);
+          if (!latest.ok) return latest;
+          await loadLibrary();
+          return latest;
+        },
+        {
+          onProgress: (variation) => setBatchProgress(
+            variation.total > 1
+              ? `Variation ${variation.index + 1}/${variation.total}${variation.seed !== undefined ? ` • seed ${variation.seed}` : ""}`
+              : "",
+          ),
+        },
+      );
+      const lastResult = results[results.length - 1];
+      if (lastResult?.ok) await loadLibrary();
     } catch (error) {
       setResult({ ok: false, error: error instanceof Error ? error.message : "Unknown request failure" });
     } finally {
@@ -1522,12 +1539,6 @@ function AssessmentSummary({ assessment, error }: { assessment?: AudioAssessment
       {attrs.mood?.length ? <div className="mt-1 text-xs text-white/48">Mood: {attrs.mood.join(", ")}</div> : null}
     </div>
   );
-}
-
-function buildClientBatchRunId() {
-  const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
-  const random = Math.random().toString(36).slice(2, 8);
-  return `batch-${stamp}-${random}`;
 }
 
 function AnnotationControls({ item, onSave }: { item: LibraryItem; onSave: (filename: string, notes: string, rating: number | null) => void }) {

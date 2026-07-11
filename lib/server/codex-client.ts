@@ -23,6 +23,7 @@ import {
 } from "@/lib/radio";
 import { statePath } from "./radio-state-store";
 import { runCommand } from "./subprocess";
+import { logError } from "./logger";
 import { radioCodexBin, radioCodexStyleModel, radioCodexTasteModel, radioCodexTasteTimeoutMs } from "./config";
 
 // Runs the (slow) Codex taste distillation and returns the distilled profile +
@@ -35,7 +36,15 @@ export async function distillRadioTasteProfile(state: RadioState, styleId: Retur
     const model = normalizeCodexTasteModel(radioCodexTasteModel());
     const profile = await runCodexTasteDistillation(state, styleId, model);
     return profile ? { profile, model } : undefined;
-  } catch {
+  } catch (error) {
+    // Behavior-changing fallback: taste feedback is not distilled, so future
+    // prompts are not adjusted toward/away from the listener's likes/dislikes.
+    // Surface it so a broken/absent `codex` binary doesn't silently disable
+    // taste learning (QA-006).
+    logError("Radio Codex taste distillation failed; taste profile unchanged", error, {
+      styleId,
+      model: radioCodexTasteModel() ?? "unset",
+    });
     return undefined;
   }
 }

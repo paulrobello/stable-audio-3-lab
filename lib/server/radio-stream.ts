@@ -64,6 +64,7 @@ import { mutateRadioState, readRadioState } from "./radio-state-store";
 import { registerStarredLibraryFallbackTrack, startRadioQueueMaintenance, writeTrackRadioMetadata } from "./radio-queue-service";
 import { createAnnouncementIfEnabled } from "./radio-tts";
 import { spawnProcess } from "./subprocess";
+import { logWarn } from "./logger";
 import { ffmpegBin, RADIO_STREAM_BITRATE_KBPS } from "./config";
 
 const outputDir = () => path.join(process.cwd(), "public", "outputs");
@@ -313,7 +314,16 @@ async function readRadioStreamSegment(filePaths: string[]) {
   if (filePaths.length === 1) return stripLeadingId3Tag(new Uint8Array(await readFile(filePaths[0])));
   try {
     return stripLeadingId3Tag(await transcodeFilesToRadioMp3(filePaths));
-  } catch {
+  } catch (error) {
+    // Behavior-changing fallback: ffmpeg concat failed, so the announcement +
+    // track are spliced as raw bytes without a re-transcode. This can produce a
+    // slightly discontinuous seam (and skips the shared ID3 strip-and-concat
+    // normalization). Warn so a broken/absent ffmpeg is diagnosable rather
+    // than silently degrading every announcement join (QA-006).
+    logWarn("Radio stream ffmpeg concat failed; falling back to raw byte concatenation", {
+      error: error instanceof Error ? error.message : String(error),
+      segmentCount: filePaths.length,
+    });
     const chunks = await Promise.all(filePaths.map(async (filePath) => stripLeadingId3Tag(new Uint8Array(await readFile(filePath)))));
     const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
     const output = new Uint8Array(totalLength);

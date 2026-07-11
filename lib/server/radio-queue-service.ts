@@ -37,6 +37,7 @@ import { mutateRadioState, readRadioState, statePath } from "./radio-state-store
 import { ollamaGenerateUrl } from "./ollama";
 import { createAnnouncementIfEnabled } from "./radio-tts";
 import { runCommand } from "./subprocess";
+import { logError, logWarn } from "./logger";
 import {
   radioQueueAutoFillDisabled,
   radioOllamaTimeoutMs,
@@ -87,7 +88,14 @@ async function maintainRadioQueue(initialState?: RadioState) {
     const draft = await draftWithOllama(state, state.selectedStyleId, state.promptModel);
     try {
       state = await generateAndRegisterRadioTrack(state, draft);
-    } catch {
+    } catch (error) {
+      // Behavior-changing fallback: a failed queue generation is replaced by a
+      // starred library track (if any). Log so a chronically failing generator
+      // (model OOM, bad config) is visible instead of the station quietly
+      // replaying favorites forever (QA-006).
+      logError("Radio queue generation failed; substituting a starred library fallback track", error, {
+        styleId: state.selectedStyleId,
+      });
       const fallback = await registerStarredLibraryFallbackTrack(state, "server_queue_refill_failed");
       if (!fallback) break;
       state = fallback.state;
@@ -127,7 +135,15 @@ export async function draftWithOllama(state: RadioState, styleId: ReturnType<typ
     if (!response.ok) throw new Error(`Ollama prompt generation failed: ${response.status}`);
     const data = await response.json() as { response?: string };
     return parseRadioPromptDraft(data.response ?? "", state, styleId, promptModel);
-  } catch {
+  } catch (error) {
+    // Behavior-changing fallback: the Ollama-drafted prompt is replaced by a
+    // deterministic fallback draft so the queue keeps filling, but the station
+    // becomes repetitive. Warn so Ollama being down is diagnosable (QA-006).
+    logWarn("Radio Ollama prompt draft failed; using fallback prompt draft", {
+      error: error instanceof Error ? error.message : String(error),
+      styleId,
+      promptModel,
+    });
     return createFallbackRadioPromptDraft(state, styleId, promptModel);
   } finally {
     clearTimeout(timeout);
