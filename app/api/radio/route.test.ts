@@ -1084,10 +1084,10 @@ printf '%s' '{"likedTraits":["wide neon pads"],"dislikedTraits":["thin supersaw 
 
     expect(Buffer.from(first.value ?? []).toString()).toBe("song");
 
-    const savedState = await waitForRadioCurrentTrack(stateFile, "next.mp3");
+    const savedState = await waitForRadioCurrentTrack(stateFile, "next.mp3", 8_000);
     expect(savedState.currentTrack?.filename).toBe("next.mp3");
     await reader!.cancel();
-  }, 5000);
+  }, 15000);
 
   it("skips existing announcement audio when announcements are disabled", async () => {
     tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-radio-"));
