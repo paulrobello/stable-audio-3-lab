@@ -1173,7 +1173,7 @@ printf '%s' '{"likedTraits":["wide neon pads"],"dislikedTraits":["thin supersaw 
     // MP3-like buffer (first byte 0xff) for both the per-file transcode and the
     // announcement+track concat, which is what the ICY first-chunk assertions
     // check. Mirrors the mock-ffmpeg pattern used by the "repairs WAV" test.
-    await writeFile(ffmpegPath, "#!/bin/sh\nprintf '\\xff'; yes a | head -c 23999\n");
+    await writeFile(ffmpegPath, "#!/bin/sh\nprintf '\\377'; yes a | head -c 23999\n");
     await chmod(ffmpegPath, 0o755);
     process.env.FFMPEG_PATH = ffmpegPath;
     await writeFile(path.join(outputDir, "radio_announce_current.mp3"), Buffer.concat([Buffer.from("ID3"), Buffer.alloc(icyMetaInterval - 3, "a")]));
