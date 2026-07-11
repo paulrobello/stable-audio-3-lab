@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type { ChildProcessWithoutNullStreams, SpawnOptions } from "node:child_process";
-import { mkdir, rm } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { mkdir, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { buildGenerationPromptFromAssessment } from "@/lib/assessment-prompt";
@@ -11,7 +11,20 @@ export const maxDuration = 300;
 
 const YOUTUBE_HOSTS = new Set(["youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"]);
 
+// Deterministic YouTube reference-track extraction.
+//
+// This replaces an autonomous `codex exec` agent (workspace-write sandbox,
+// approvals disabled, attacker-controlled URL embedded in the prompt) with a
+// fixed-argument yt-dlp + ffmpeg subprocess — no LLM, no agent, no prompt
+// surface that a crafted URL or page title could inject into (SEC-002).
+//
+// Binaries are resolved via the same env vars the rest of the app uses:
+//   STABLE_AUDIO_YOUTUBE_YTDLP_BIN  (default "yt-dlp")
+//   FFMPEG_PATH                      (optional; its directory is passed to
+//                                    yt-dlp via --ffmpeg-location)
+
 export async function POST(request: NextRequest) {
+  let intermediateMp3: string | undefined;
   let uploadPath: string | undefined;
   try {
     const body = await request.json() as unknown;
@@ -25,7 +38,7 @@ export async function POST(request: NextRequest) {
     const filename = `youtube-reference-${randomUUID()}.mp3`;
     uploadPath = path.join(uploadDir, filename);
 
-    await runCodexYouTubeExtraction(url, uploadPath);
+    intermediateMp3 = await extractYouTubeAudio(url, uploadPath, uploadDir);
 
     const result = await assessUploadedAudioFile({
       audioPath: uploadPath,
@@ -38,9 +51,12 @@ export async function POST(request: NextRequest) {
     if (error instanceof AudioAssessmentError) {
       return NextResponse.json({ ok: false, error: error.message, detail: error.detail }, { status: error.status });
     }
-    return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Unknown error" }, { status: 500 });
+    // Subprocess detail (host paths, yt-dlp output) is logged server-side only.
+    console.error("[youtube] extraction/assessment failed", error);
+    return NextResponse.json({ ok: false, error: "YouTube audio extraction failed" }, { status: 500 });
   } finally {
     if (uploadPath) await rm(uploadPath, { force: true });
+    if (intermediateMp3) await rm(intermediateMp3, { force: true });
   }
 }
 
@@ -60,89 +76,89 @@ function parseYouTubeUrl(body: unknown) {
   }
 }
 
-async function runCodexYouTubeExtraction(url: string, outputPath: string) {
-  const codexBin = process.env.STABLE_AUDIO_YOUTUBE_CODEX_BIN || "codex";
-  const model = normalizeCodexModel(process.env.STABLE_AUDIO_YOUTUBE_CODEX_MODEL);
-  const timeoutMs = normalizeTimeout(process.env.STABLE_AUDIO_YOUTUBE_CODEX_TIMEOUT_MS, 300000);
-  const args = [
-    "exec",
-    "-m",
-    model,
-    "--cd",
-    process.cwd(),
-    "--sandbox",
-    "workspace-write",
-    "--config",
-    "approval_policy=\"never\"",
-    "--ephemeral",
-    "--ignore-rules",
-    "-",
-  ];
-  const prompt = buildCodexExtractionPrompt(url, outputPath);
-  const child = await spawnRuntimeProcess(codexBin, args, {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      YOUTUBE_AUDIO_EXTRACT_URL: url,
-      YOUTUBE_AUDIO_EXTRACT_OUTPUT_PATH: outputPath,
-    },
-    stdio: ["pipe", "ignore", "pipe"],
-  });
+/**
+ * Download and convert a YouTube URL to an MP3 at `outputPath` using yt-dlp +
+ * ffmpeg with a fixed argument array. Returns the intermediate file path so the
+ * caller can clean it up separately from the final output.
+ */
+async function extractYouTubeAudio(url: string, outputPath: string, uploadDir: string): Promise<string> {
+  const ytdlp = process.env.STABLE_AUDIO_YOUTUBE_YTDLP_BIN || "yt-dlp";
+  const intermediateBase = path.join(uploadDir, `ytdl-${randomUUID()}`);
+  const intermediateMp3 = `${intermediateBase}.mp3`;
 
-  return new Promise<void>((resolve, reject) => {
-    const stderr: Buffer[] = [];
+  const args = [
+    "--no-playlist",
+    "--no-warnings",
+    "--no-progress",
+    "--newline",
+    "-x",
+    "--audio-format", "mp3",
+    "--audio-quality", "0",
+    ...ffmpegLocationArgs(),
+    "-o", `${intermediateBase}.%(ext)s`,
+    url,
+  ];
+
+  const result = await runCommand(ytdlp, args, resolveTimeoutMs());
+  if (result.code !== 0) {
+    throw new Error(`yt-dlp exited with code ${result.code}`);
+  }
+
+  try {
+    await stat(intermediateMp3);
+  } catch {
+    throw new Error("yt-dlp did not produce an MP3 output file");
+  }
+
+  await rename(intermediateMp3, outputPath);
+  return intermediateMp3;
+}
+
+function ffmpegLocationArgs(): string[] {
+  const ffmpegPath = process.env.FFMPEG_PATH;
+  if (!ffmpegPath) return [];
+  // Only hint yt-dlp when FFMPEG_PATH points at an actual file location; a bare
+  // binary name on PATH (no separator) needs no --ffmpeg-location.
+  if (ffmpegPath.includes("/") || ffmpegPath.includes("\\")) {
+    const dir = path.dirname(ffmpegPath);
+    if (dir && dir !== ".") return ["--ffmpeg-location", dir];
+  }
+  return [];
+}
+
+function resolveTimeoutMs(): number {
+  const raw = process.env.STABLE_AUDIO_YOUTUBE_TIMEOUT_MS ?? process.env.STABLE_AUDIO_YOUTUBE_CODEX_TIMEOUT_MS;
+  const parsed = typeof raw === "string" ? Number(raw) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 300_000;
+}
+
+/** Spawn a subprocess with timeout (SIGTERM then SIGKILL) and an error handler. */
+function runCommand(command: string, args: string[], timeoutMs: number): Promise<{ code: number | null; stderr: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, { cwd: process.cwd(), env: { ...process.env }, stdio: ["ignore", "pipe", "pipe"] });
+    let stderr = "";
     let timedOut = false;
-    let forceKillTimeout: ReturnType<typeof setTimeout> | undefined;
-    const timeout = setTimeout(() => {
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
+    const timer = setTimeout(() => {
       timedOut = true;
+      stderr += `\nTimed out after ${timeoutMs}ms`;
       child.kill("SIGTERM");
-      forceKillTimeout = setTimeout(() => child.kill("SIGKILL"), 1000);
+      killTimer = setTimeout(() => child.kill("SIGKILL"), 2_000);
     }, timeoutMs);
 
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+    child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+
+    const finish = (code: number | null) => {
+      clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
+      resolve({ code, stderr: stderr.slice(-8_000) });
+    };
+    child.on("close", (code) => finish(timedOut ? 1 : code));
+    // `error` fires for ENOENT (missing binary) without a `close`; handle it so
+    // the promise can never hang (matching the assessor runner pattern).
     child.on("error", (error) => {
-      clearTimeout(timeout);
-      if (forceKillTimeout) clearTimeout(forceKillTimeout);
-      reject(error);
+      stderr += `\n${error.message}`;
+      finish(1);
     });
-    child.on("close", (code) => {
-      clearTimeout(timeout);
-      if (forceKillTimeout) clearTimeout(forceKillTimeout);
-      if (timedOut) {
-        reject(new Error("YouTube audio extraction timed out"));
-        return;
-      }
-      if (code === 0) resolve();
-      else reject(new Error(`YouTube audio extraction failed: ${Buffer.concat(stderr).toString("utf8").trim()}`));
-    });
-    child.stdin.end(prompt);
   });
-}
-
-async function spawnRuntimeProcess(command: string, args: string[], options?: SpawnOptions): Promise<ChildProcessWithoutNullStreams> {
-  const { spawn } = await import("node:child_process");
-  return spawn(command, args, options ?? {}) as ChildProcessWithoutNullStreams;
-}
-
-function buildCodexExtractionPrompt(url: string, outputPath: string) {
-  return [
-    "Use the local YouTube audio extraction skill at skills/youtube-audio-extract/SKILL.md.",
-    "Extract audio from this YouTube URL as MP3.",
-    `URL: ${url}`,
-    `Output MP3 path: ${outputPath}`,
-    "Save the final converted MP3 exactly at the output path above.",
-    "If you use yt-dlp with an output template, use the same path without the .mp3 suffix plus .%(ext)s, then ensure the finished MP3 is moved to the exact output path.",
-    "Do not write anything into public/outputs or the generated audio library.",
-  ].join("\n");
-}
-
-function normalizeCodexModel(value: unknown) {
-  if (typeof value !== "string") return "gpt-5.5";
-  const model = value.trim();
-  return model && model.length <= 80 && !/[\s"'<>]/.test(model) ? model : "gpt-5.5";
-}
-
-function normalizeTimeout(value: unknown, fallback: number) {
-  const timeout = typeof value === "string" ? Number(value) : undefined;
-  return timeout && Number.isFinite(timeout) && timeout > 0 ? timeout : fallback;
 }

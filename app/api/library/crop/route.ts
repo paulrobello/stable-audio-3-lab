@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { buildCropFilename, buildCropMetadata, isSafeAudioFilename, metadataPathForAudio, normalizeCropWindow, validateCropFitsDuration } from "@/lib/library";
+import { withGenerationSlot } from "@/lib/server/concurrency";
 
 export const runtime = "nodejs";
 export const maxDuration = 900;
@@ -27,9 +28,11 @@ export async function POST(request: NextRequest) {
     const cropPath = path.join(outputDir(), cropFilename);
     const args = buildFfmpegCropArgs({ sourcePath, cropPath, crop, format: cropFilename.endsWith(".mp3") ? "mp3" : "wav" });
     const ffmpeg = process.env.FFMPEG_PATH || "ffmpeg";
-    const result = await runProcess(ffmpeg, args, Number(process.env.STABLE_AUDIO_TIMEOUT_MS || 900000));
+    const result = await withGenerationSlot(() => runProcess(ffmpeg, args, Number(process.env.STABLE_AUDIO_TIMEOUT_MS || 900000)));
     if (result.code !== 0) {
-      return NextResponse.json({ ok: false, error: "ffmpeg crop failed", detail: result }, { status: 500 });
+      // Log subprocess detail server-side only; return a generic message.
+      console.error("[crop] ffmpeg crop failed", { code: result.code, stdout: result.stdout, stderr: result.stderr });
+      return NextResponse.json({ ok: false, error: "Crop failed" }, { status: 500 });
     }
 
     let sourceMetadata: unknown = {};
@@ -43,9 +46,16 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ ok: true, filename: cropFilename, audioUrl: `/outputs/${cropFilename}`, metadataUrl: meta.metadataUrl, meta });
   } catch (error) {
+    // Validation messages (filename/crop-window checks) are safe and user-facing;
+    // everything else (filesystem paths, ffprobe output) is logged server-side
+    // only and replaced with a generic message.
+    console.error("[crop] request failed", error);
     const code = error && typeof error === "object" && "code" in error ? (error as { code?: unknown }).code : undefined;
-    const status = code === "ENOENT" ? 404 : 400;
-    return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Unknown error" }, { status });
+    if (code === "ENOENT") return NextResponse.json({ ok: false, error: "Source audio not found" }, { status: 404 });
+    if (error instanceof Error && /^Invalid /.test(error.message)) {
+      return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
+    }
+    return NextResponse.json({ ok: false, error: "Crop request failed" }, { status: 500 });
   }
 }
 
@@ -57,7 +67,10 @@ function buildFfmpegCropArgs({ sourcePath, cropPath, crop, format }: { sourcePat
 async function probeAudioDuration(sourcePath: string) {
   const ffprobe = process.env.FFPROBE_PATH || "ffprobe";
   const result = await runProcess(ffprobe, ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", sourcePath], 30000);
-  if (result.code !== 0) throw new Error(`ffprobe duration failed: ${result.stderr || result.stdout}`);
+  if (result.code !== 0) {
+    console.error("[crop] ffprobe duration failed", { code: result.code, stdout: result.stdout, stderr: result.stderr });
+    throw new Error("Unable to determine source audio duration");
+  }
   const duration = Number.parseFloat(result.stdout.trim());
   if (!Number.isFinite(duration) || duration <= 0) throw new Error("Unable to determine source audio duration");
   return duration;

@@ -5,6 +5,13 @@ import type { GenerationBackend } from "./generator-backend";
 
 export type ProcessResult = { code: number | null; stdout: string; stderr: string };
 
+// Minimal, non-revealing process status persisted into metadata sidecars.
+// The full ProcessResult (stdout/stderr) is intentionally NOT persisted: it can
+// carry absolute host paths, tracebacks, and backend config that should not be
+// served back via GET /api/library or bundle ZIPs (SEC-004). Callers still pass
+// the full ProcessResult to buildLibraryMetadata; only the exit code is kept.
+export type GenerationProcessStatus = { exitCode: number | null };
+
 export type GenerationMetadata = {
   filename: string;
   audioUrl: string;
@@ -26,7 +33,7 @@ export type GenerationMetadata = {
     seed?: number;
     mock: boolean;
   };
-  python: ProcessResult;
+  python: GenerationProcessStatus;
 };
 
 export function isSafeAudioFilename(filename: string) {
@@ -113,7 +120,7 @@ export function buildLibraryMetadata({
       mock: input.mock,
     },
     ...(input.batchRunId ? { batch: { batchRunId: input.batchRunId, variationIndex: input.variationIndex ?? 0, variationCount: input.variationCount ?? 1 } } : {}),
-    python,
+    python: { exitCode: python.code },
   };
 }
 

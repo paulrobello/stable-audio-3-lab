@@ -3,6 +3,7 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { cpus, loadavg } from "node:os";
 import path from "node:path";
 import { isSafeAudioFilename, metadataPathForAudio, metadataUrlForAudio, outputPathForAudio } from "./library";
+import { withGenerationSlot } from "./server/concurrency";
 
 export const AUDIO_ASSESSMENT_LOAD_THRESHOLD = 0.25;
 
@@ -94,13 +95,13 @@ export async function assessAudioFile(request: AudioAssessmentRequest) {
     body: request,
     metadata,
   });
-  const commandResult = await runAssessorCommand(assessorCommand, {
+  const commandResult = await withGenerationSlot(() => runAssessorCommand(assessorCommand, {
     audioPath,
     filename,
     source: sourceInfo,
     metadata,
     prompt: buildAssessmentPrompt(sourceInfo),
-  }, Number(process.env.STABLE_AUDIO_ASSESSOR_TIMEOUT_MS || 300000));
+  }, Number(process.env.STABLE_AUDIO_ASSESSOR_TIMEOUT_MS || 300000)));
   if (commandResult.code !== 0) {
     throw new AudioAssessmentError("Local audio assessor failed", 500, commandResult);
   }
@@ -127,13 +128,13 @@ export async function assessUploadedAudioFile(request: { audioPath: string; file
     title: readString(request.title) ?? request.filename,
     prompt: readString(request.prompt),
   };
-  const commandResult = await runAssessorCommand(assessorCommand, {
+  const commandResult = await withGenerationSlot(() => runAssessorCommand(assessorCommand, {
     audioPath: request.audioPath,
     filename: request.filename,
     source: sourceInfo,
     metadata: {},
     prompt: buildUploadAssessmentPrompt(sourceInfo),
-  }, Number(process.env.STABLE_AUDIO_ASSESSOR_TIMEOUT_MS || 300000));
+  }, Number(process.env.STABLE_AUDIO_ASSESSOR_TIMEOUT_MS || 300000)));
   if (commandResult.code !== 0) {
     throw new AudioAssessmentError("Local audio assessor failed", 500, commandResult);
   }

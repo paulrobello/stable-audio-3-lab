@@ -7,38 +7,43 @@ import { POST } from "./route";
 
 const originalCwd = process.cwd();
 const originalCommand = process.env.STABLE_AUDIO_ASSESSOR_COMMAND;
-const originalCodexBin = process.env.STABLE_AUDIO_YOUTUBE_CODEX_BIN;
-const originalCodexModel = process.env.STABLE_AUDIO_YOUTUBE_CODEX_MODEL;
-const originalCodexTimeout = process.env.STABLE_AUDIO_YOUTUBE_CODEX_TIMEOUT_MS;
+const originalYtdlpBin = process.env.STABLE_AUDIO_YOUTUBE_YTDLP_BIN;
+const originalTimeout = process.env.STABLE_AUDIO_YOUTUBE_TIMEOUT_MS;
 let tempCwd: string | undefined;
 
 describe("YouTube audio assessment route", () => {
   afterEach(async () => {
     process.chdir(originalCwd);
     restoreEnv("STABLE_AUDIO_ASSESSOR_COMMAND", originalCommand);
-    restoreEnv("STABLE_AUDIO_YOUTUBE_CODEX_BIN", originalCodexBin);
-    restoreEnv("STABLE_AUDIO_YOUTUBE_CODEX_MODEL", originalCodexModel);
-    restoreEnv("STABLE_AUDIO_YOUTUBE_CODEX_TIMEOUT_MS", originalCodexTimeout);
+    restoreEnv("STABLE_AUDIO_YOUTUBE_YTDLP_BIN", originalYtdlpBin);
+    restoreEnv("STABLE_AUDIO_YOUTUBE_TIMEOUT_MS", originalTimeout);
     if (tempCwd) {
       await rm(tempCwd, { recursive: true, force: true });
       tempCwd = undefined;
     }
   });
 
-  it("extracts YouTube audio through Codex CLI before assessing it", async () => {
+  it("extracts YouTube audio through yt-dlp before assessing it", async () => {
     tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-youtube-assess-"));
     process.chdir(tempCwd);
 
-    const codexPath = path.join(tempCwd, "codex");
-    await writeFile(codexPath, `#!/bin/sh
-printf '%s\\n' "$@" > codex-args.txt
-cat > codex-stdin.txt
-mkdir -p "$(dirname "$YOUTUBE_AUDIO_EXTRACT_OUTPUT_PATH")"
-printf 'fake mp3 audio' > "$YOUTUBE_AUDIO_EXTRACT_OUTPUT_PATH"
+    // Deterministic yt-dlp mock: parse the -o template, write fake MP3 audio to
+    // <template-without-.%(ext)s>.mp3, and record the URL we received.
+    const ytdlpPath = path.join(tempCwd, "yt-dlp");
+    await writeFile(ytdlpPath, `#!/bin/sh
+printf '%s\\n' "$@" > ytdlp-args.txt
+template=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "-o" ]; then template="$arg"; fi
+  prev="$arg"
+done
+base="\${template%.%(ext)s}"
+mkdir -p "$(dirname "$base")"
+printf 'fake mp3 audio' > "$base.mp3"
 `);
-    await chmod(codexPath, 0o755);
-    process.env.STABLE_AUDIO_YOUTUBE_CODEX_BIN = codexPath;
-    process.env.STABLE_AUDIO_YOUTUBE_CODEX_MODEL = "gpt-5.5";
+    await chmod(ytdlpPath, 0o755);
+    process.env.STABLE_AUDIO_YOUTUBE_YTDLP_BIN = ytdlpPath;
 
     const assessorPath = path.join(tempCwd, "assessor.js");
     await writeFile(assessorPath, `#!/usr/bin/env node
@@ -87,13 +92,14 @@ process.stdin.on("end", () => {
     expect(json.prompt).toContain("124 BPM");
     expect(json.negativePrompt).toContain("crowded chorus");
 
-    const args = await readFile(path.join(tempCwd, "codex-args.txt"), "utf8");
-    const stdin = await readFile(path.join(tempCwd, "codex-stdin.txt"), "utf8");
-    expect(args).toContain("-m\ngpt-5.5");
-    expect(args).toContain("--sandbox\nworkspace-write");
-    expect(args).toContain("--config\napproval_policy=\"never\"");
-    expect(stdin).toContain("Use the local YouTube audio extraction skill");
-    expect(stdin).toContain("https://www.youtube.com/watch?v=abc12345678");
+    // The deterministic extractor is invoked with a fixed argument array and no
+    // LLM/agent prompt: only the URL and the -o template reach yt-dlp.
+    const args = await readFile(path.join(tempCwd, "ytdlp-args.txt"), "utf8");
+    expect(args).toContain("--audio-format\nmp3");
+    expect(args).toContain("-x");
+    expect(args).toContain("--no-playlist");
+    expect(args).toContain("https://www.youtube.com/watch?v=abc12345678");
+    // The final assessed MP3 is removed after the request; the intermediate too.
     await expect(stat(path.join(tempCwd, ".stable-audio-assessments", "uploads", json.filename!))).rejects.toThrow();
   });
 
@@ -106,6 +112,32 @@ process.stdin.on("end", () => {
 
     expect(response.status).toBe(400);
     expect(json).toEqual({ ok: false, error: "Enter a YouTube URL" });
+  });
+
+  it("returns a generic error without leaking subprocess output on failure", async () => {
+    tempCwd = await mkdtemp(path.join(tmpdir(), "stable-audio-youtube-fail-"));
+    process.chdir(tempCwd);
+    // A yt-dlp mock that exits non-zero with revealing stderr.
+    const ytdlpPath = path.join(tempCwd, "yt-dlp");
+    await writeFile(ytdlpPath, `#!/bin/sh
+echo 'ERROR: /Users/secret/internal/path detail' >&2
+exit 2
+`);
+    await chmod(ytdlpPath, 0o755);
+    process.env.STABLE_AUDIO_YOUTUBE_YTDLP_BIN = ytdlpPath;
+
+    const response = await POST(new NextRequest("http://localhost:3007/api/assess/youtube", {
+      method: "POST",
+      body: JSON.stringify({ url: "https://www.youtube.com/watch?v=abc12345678" }),
+    }));
+    const json = await response.json() as { ok: boolean; error?: string; detail?: unknown };
+
+    expect(response.status).toBe(500);
+    expect(json.ok).toBe(false);
+    expect(json.error).toBe("YouTube audio extraction failed");
+    // No internal path or stderr must reach the client.
+    expect(JSON.stringify(json)).not.toContain("/Users/secret");
+    expect(json.detail).toBeUndefined();
   });
 });
 

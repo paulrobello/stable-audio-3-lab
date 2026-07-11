@@ -63,6 +63,7 @@ import { normalizeGenerationRequest } from "@/lib/generation";
 import { buildGeneratorArgs, resolveGenerationBackend } from "@/lib/generator-backend";
 import { buildLibraryMetadata, isFavoriteMetadata, isSafeAudioFilename, metadataPathForAudio, outputPathForAudio, titleToFilename } from "@/lib/library";
 import { enqueueAudioAssessment, getAudioAssessmentQueueStatus, startAudioAssessmentQueueProcessing } from "@/lib/audio-assessment";
+import { withGenerationSlot } from "@/lib/server/concurrency";
 
 export const runtime = "nodejs";
 export const maxDuration = 180;
@@ -574,7 +575,7 @@ async function generateAndRegisterRadioTrack(state: RadioState, draft: Awaited<R
     mock,
   });
   const startedAt = Date.now();
-  const result = await runStableAudioGeneratorProcess(python, args, Number(process.env.STABLE_AUDIO_TIMEOUT_MS || 900000));
+  const result = await withGenerationSlot(() => runStableAudioGeneratorProcess(python, args, Number(process.env.STABLE_AUDIO_TIMEOUT_MS || 900000)));
   const generationDurationMs = Date.now() - startedAt;
   if (result.code !== 0) throw new Error("Stable Audio queue generation failed");
   const meta = buildLibraryMetadata({ filename, input, python: result, backend, generationDurationMs, title: draft.title });

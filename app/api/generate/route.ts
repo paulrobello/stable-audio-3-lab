@@ -5,6 +5,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { normalizeGenerationRequest } from "@/lib/generation";
 import { buildGeneratorArgs, resolveGenerationBackend } from "@/lib/generator-backend";
 import { buildLibraryMetadata, metadataPathForAudio, titleToFilename } from "@/lib/library";
+import { withGenerationSlot } from "@/lib/server/concurrency";
 import { generateTitle } from "@/app/api/generate-title/route";
 
 export const runtime = "nodejs";
@@ -38,17 +39,33 @@ export async function POST(request: NextRequest) {
     });
 
     const startedAt = Date.now();
-    const result = await runProcess(python, args, Number(process.env.STABLE_AUDIO_TIMEOUT_MS || 900000));
+    const result = await withGenerationSlot(() => runProcess(python, args, Number(process.env.STABLE_AUDIO_TIMEOUT_MS || 900000)));
     const generationDurationMs = Date.now() - startedAt;
     if (result.code !== 0) {
-      return NextResponse.json({ ok: false, error: "Python generator failed", detail: { ...result, generationDurationMs } }, { status: 500 });
+      // Log the full subprocess output server-side only; never echo it to the
+      // client, where it could leak absolute host paths or backend config.
+      console.error("[generate] Python generator failed", { code: result.code, generationDurationMs, stdout: result.stdout, stderr: result.stderr });
+      return NextResponse.json({ ok: false, error: "Generation failed", generationDurationMs }, { status: 500 });
     }
     const meta = buildLibraryMetadata({ filename, input, python: result, backend, generationDurationMs, title });
     await writeFile(metadataPathForAudio(outPath), JSON.stringify(meta, null, 2));
     return NextResponse.json({ ok: true, audioUrl: `/outputs/${filename}`, metadataUrl: meta.metadataUrl, filename, title, meta });
   } catch (error) {
-    return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Unknown error" }, { status: 400 });
+    // Validation messages (Zod) are safe and user-facing; everything else
+    // (filesystem paths, tracebacks) is logged server-side only and replaced
+    // with a generic message so internal detail is not disclosed.
+    console.error("[generate] request failed", error);
+    if (isValidationError(error)) {
+      return NextResponse.json({ ok: false, error: (error as Error).message }, { status: 400 });
+    }
+    return NextResponse.json({ ok: false, error: "Generation request failed" }, { status: 500 });
   }
+}
+
+function isValidationError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const record = error as { name?: unknown; issues?: unknown };
+  return record.name === "ZodError" || Array.isArray(record.issues);
 }
 
 function runProcess(command: string, args: string[], timeoutMs: number): Promise<{ code: number | null; stdout: string; stderr: string }> {
