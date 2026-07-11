@@ -14,6 +14,9 @@ coverage/
 playwright-report/
 test-results/
 
+# Root-level Playwright/tooling output (not the Next 'out/' export dir)
+/output/
+
 # Environment / local config
 .env
 .env.*
