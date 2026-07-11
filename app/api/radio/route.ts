@@ -22,7 +22,6 @@ import {
   createRadioStyle,
   createRadioTrackRecord,
   deleteRadioStyle,
-  defaultRadioState,
   findDuplicateRadioTitleTracks,
   findRadioTracksForCleanup,
   normalizeRadioState,
@@ -64,6 +63,7 @@ import { buildGeneratorArgs, resolveGenerationBackend } from "@/lib/generator-ba
 import { buildLibraryMetadata, isFavoriteMetadata, isSafeAudioFilename, metadataPathForAudio, outputPathForAudio, titleToFilename } from "@/lib/library";
 import { enqueueAudioAssessment, getAudioAssessmentQueueStatus, startAudioAssessmentQueueProcessing } from "@/lib/audio-assessment";
 import { withGenerationSlot } from "@/lib/server/concurrency";
+import { mutateRadioState, readRadioState, statePath } from "@/lib/server/radio-state-store";
 
 export const runtime = "nodejs";
 export const maxDuration = 180;
@@ -80,7 +80,6 @@ type TtsPipeline = {
 };
 
 const outputDir = () => path.join(process.cwd(), "public", "outputs");
-const statePath = () => path.join(process.cwd(), ".stable-audio-radio", "state.json");
 const RADIO_STREAM_IDLE_WAIT_MS = 1200;
 const RADIO_STREAM_BYTES_PER_SECOND = 24_000;
 const RADIO_STREAM_CHUNK_BYTES = 24_000;
@@ -127,9 +126,13 @@ export async function POST(request: NextRequest) {
         negativePrompt: body.negativePrompt,
       });
       if (!result) return NextResponse.json({ ok: false, error: "Style name and prompt are required" }, { status: 400 });
-      await writeRadioState(result.state);
-      startRadioQueueMaintenance(result.state);
-      return NextResponse.json({ ok: true, style: result.style, state: await buildRadioResponseState(result.state, request) });
+      const nextState = await mutateRadioState((s) => createRadioStyle(s, {
+        label: body.label,
+        seedPrompt: body.seedPrompt,
+        negativePrompt: body.negativePrompt,
+      })?.state ?? s);
+      startRadioQueueMaintenance(nextState);
+      return NextResponse.json({ ok: true, style: result.style, state: await buildRadioResponseState(nextState, request) });
     }
 
     if (action === "draftStyle") {
@@ -146,36 +149,40 @@ export async function POST(request: NextRequest) {
         negativePrompt: body.negativePrompt,
       });
       if (!result) return NextResponse.json({ ok: false, error: "Custom style was not found or the style fields are invalid" }, { status: 400 });
-      await writeRadioState(result.state);
-      startRadioQueueMaintenance(result.state);
-      return NextResponse.json({ ok: true, style: result.style, state: await buildRadioResponseState(result.state, request) });
+      const nextState = await mutateRadioState((s) => updateRadioStyle(s, {
+        styleId: body.styleId,
+        label: body.label,
+        seedPrompt: body.seedPrompt,
+        negativePrompt: body.negativePrompt,
+      })?.state ?? s);
+      startRadioQueueMaintenance(nextState);
+      return NextResponse.json({ ok: true, style: result.style, state: await buildRadioResponseState(nextState, request) });
     }
 
     if (action === "deleteStyle") {
       const result = deleteRadioStyle(state, body.styleId);
       if (!result) return NextResponse.json({ ok: false, error: "Custom style was not found" }, { status: 404 });
-      await writeRadioState(result.state);
-      startRadioQueueMaintenance(result.state);
-      return NextResponse.json({ ok: true, deletedStyle: result.deletedStyle, state: await buildRadioResponseState(result.state, request) });
+      const nextState = await mutateRadioState((s) => deleteRadioStyle(s, body.styleId)?.state ?? s);
+      startRadioQueueMaintenance(nextState);
+      return NextResponse.json({ ok: true, deletedStyle: result.deletedStyle, state: await buildRadioResponseState(nextState, request) });
     }
 
     if (action === "configure") {
-      const nextState = selectRadioStyle({
-        ...state,
-        selectedStyleId: normalizeRadioStyleId(body.styleId ?? state.selectedStyleId, state.customStyles, state.deletedStyleIds),
-        promptModel: normalizeOllamaPromptModel(body.promptModel ?? state.promptModel),
-        announceEnabled: typeof body.announceEnabled === "boolean" ? body.announceEnabled : state.announceEnabled,
-        songLengthMinutes: normalizeRadioSongLengthMinutes(body.songLengthMinutes ?? state.songLengthMinutes),
-        unlikedTrackExpirationHours: normalizeRadioUnlikedTrackExpirationHours(body.unlikedTrackExpirationHours ?? state.unlikedTrackExpirationHours),
+      const nextState = await mutateRadioState((s) => selectRadioStyle({
+        ...s,
+        selectedStyleId: normalizeRadioStyleId(body.styleId ?? s.selectedStyleId, s.customStyles, s.deletedStyleIds),
+        promptModel: normalizeOllamaPromptModel(body.promptModel ?? s.promptModel),
+        announceEnabled: typeof body.announceEnabled === "boolean" ? body.announceEnabled : s.announceEnabled,
+        songLengthMinutes: normalizeRadioSongLengthMinutes(body.songLengthMinutes ?? s.songLengthMinutes),
+        unlikedTrackExpirationHours: normalizeRadioUnlikedTrackExpirationHours(body.unlikedTrackExpirationHours ?? s.unlikedTrackExpirationHours),
         ...normalizeRadioTtsConfig({
-          ttsProvider: body.ttsProvider ?? state.ttsProvider,
-          ttsVoice: body.ttsVoice ?? state.ttsVoice,
-          announcementPrefix: body.announcementPrefix ?? state.announcementPrefix,
-          announcementSuffix: body.announcementSuffix ?? state.announcementSuffix,
+          ttsProvider: body.ttsProvider ?? s.ttsProvider,
+          ttsVoice: body.ttsVoice ?? s.ttsVoice,
+          announcementPrefix: body.announcementPrefix ?? s.announcementPrefix,
+          announcementSuffix: body.announcementSuffix ?? s.announcementSuffix,
         }),
         updatedAt: new Date().toISOString(),
-      }, body.styleId ?? state.selectedStyleId);
-      await writeRadioState(nextState);
+      }, body.styleId ?? s.selectedStyleId));
       startRadioQueueMaintenance(nextState);
       return NextResponse.json({ ok: true, state: await buildRadioResponseState(nextState, request) });
     }
@@ -206,8 +213,7 @@ export async function POST(request: NextRequest) {
       const styleId = normalizeRadioStyleId(body.styleId ?? state.selectedStyleId, state.customStyles, state.deletedStyleIds);
       const promptModel = normalizeOllamaPromptModel(body.promptModel ?? state.promptModel);
       const draft = await draftWithOllama(state, styleId, promptModel);
-      const nextState = { ...state, selectedStyleId: styleId, promptModel, currentDraft: draft, updatedAt: new Date().toISOString() };
-      await writeRadioState(nextState);
+      const nextState = await mutateRadioState((s) => ({ ...s, selectedStyleId: styleId, promptModel, currentDraft: draft, updatedAt: new Date().toISOString() }));
       return NextResponse.json({ ok: true, draft, state: await buildRadioResponseState(nextState, request) });
     }
 
@@ -232,8 +238,7 @@ export async function POST(request: NextRequest) {
       const announcementFilename = await createAnnouncementIfEnabled(track, state);
       const finalTrack = announcementFilename ? { ...track, announcementFilename } : track;
       await writeTrackRadioMetadata(finalTrack, state);
-      const nextState = registerRadioTrack({ ...state, currentDraft: undefined }, finalTrack);
-      await writeRadioState(nextState);
+      const nextState = await mutateRadioState((s) => registerRadioTrack({ ...s, currentDraft: undefined }, finalTrack));
       startRadioQueueMaintenance(nextState);
       return NextResponse.json({ ok: true, track: finalTrack, state: await buildRadioResponseState(nextState, request) });
     }
@@ -248,16 +253,18 @@ export async function POST(request: NextRequest) {
     if (action === "selectTrack") {
       const result = selectRadioTrack(state, body.filename);
       if (!result.selectedTrack) return NextResponse.json({ ok: false, error: "Track is not in the radio lineup" }, { status: 404 });
-      await writeRadioState(result.state);
-      startRadioQueueMaintenance(result.state);
-      return NextResponse.json({ ok: true, track: result.selectedTrack, state: await buildRadioResponseState(result.state, request) });
+      const nextState = await mutateRadioState((s) => selectRadioTrack(s, body.filename).state ?? s);
+      startRadioQueueMaintenance(nextState);
+      return NextResponse.json({ ok: true, track: result.selectedTrack, state: await buildRadioResponseState(nextState, request) });
     }
 
     if (action === "skipTrack") {
       const previousTrack = state.currentTrack;
-      const nextState = advanceRadioCurrentTrack(state);
+      const nextState = await mutateRadioState((s) => {
+        const advanced = advanceRadioCurrentTrack(s);
+        return advanced.currentTrack?.filename !== s.currentTrack?.filename ? advanced : s;
+      });
       const skippedTrack = previousTrack && nextState.currentTrack?.filename !== previousTrack.filename ? previousTrack : undefined;
-      if (skippedTrack) await writeRadioState(nextState);
       startRadioQueueMaintenance(nextState);
       return NextResponse.json({ ok: true, skippedTrack, state: await buildRadioResponseState(nextState, request) });
     }
@@ -267,9 +274,8 @@ export async function POST(request: NextRequest) {
       if (!isSafeAudioFilename(filename)) return NextResponse.json({ ok: false, error: "Invalid track filename" }, { status: 400 });
       const deletedTrack = state.history.find((track) => track.filename === filename);
       if (!deletedTrack) return NextResponse.json({ ok: false, error: "Track is not in the radio lineup" }, { status: 404 });
-      const nextState = removeRadioTracksFromLineup(state, [deletedTrack]);
       await removeDeletedTrackAudio(deletedTrack, state);
-      await writeRadioState(nextState);
+      const nextState = await mutateRadioState((s) => removeRadioTracksFromLineup(s, [deletedTrack]));
       startRadioQueueMaintenance(nextState);
       return NextResponse.json({ ok: true, deletedTrack, state: await buildRadioResponseState(nextState, request) });
     }
@@ -283,7 +289,6 @@ export async function POST(request: NextRequest) {
       const phrase = typeof body.phrase === "string" && body.phrase.trim()
         ? body.phrase
         : ratedTrack?.prompt ?? state.currentTrack?.prompt ?? state.currentDraft?.prompt ?? "";
-      const ratedState = recordRadioRating(state, styleId, phrase, body.rating);
       const rating = normalizeRadioRatingPayload(body.rating);
       const assessmentTrack = findRatedAssessmentTrack(ratedTrack ?? state.currentTrack, rating);
       if (assessmentTrack && rating) {
@@ -297,13 +302,27 @@ export async function POST(request: NextRequest) {
         });
         void startAudioAssessmentQueueProcessing();
       }
+      // The rating + reject transforms are decided on the seed snapshot; the
+      // expensive taste distillation runs against that snapshot too. Their
+      // *effects* are re-applied to the freshest state inside the lock below so
+      // a concurrent writer (queue loop, another POST) cannot be clobbered by
+      // this handler's stale write.
+      const ratedState = recordRadioRating(state, styleId, phrase, body.rating);
       const shouldRejectCurrentTrack = body.rating === "down" && (!ratedTrack || ratedTrack.filename === state.currentTrack?.filename);
-      const rejectResult = shouldRejectCurrentTrack ? rejectCurrentRadioTrack(ratedState) : { state: ratedState, rejectedTrack: undefined };
-      if (rejectResult.rejectedTrack) await removeRejectedTrackAudio(rejectResult.rejectedTrack);
-      const nextState = await distillRadioTasteIfPossible(rejectResult.state, styleId);
-      await writeRadioState(nextState);
+      const rejectResult = shouldRejectCurrentTrack ? rejectCurrentRadioTrack(ratedState) : undefined;
+      if (rejectResult?.rejectedTrack) await removeRejectedTrackAudio(rejectResult.rejectedTrack);
+      const taste = await distillRadioTasteProfile(ratedState, styleId);
+      const rejectFilename = rejectResult?.rejectedTrack?.filename;
+      const nextState = await mutateRadioState((s) => {
+        let next = recordRadioRating(s, styleId, phrase, body.rating);
+        if (rejectFilename && next.currentTrack?.filename === rejectFilename) {
+          next = rejectCurrentRadioTrack(next).state;
+        }
+        if (taste) next = updateRadioTasteProfile(next, styleId, taste.profile, taste.model);
+        return next;
+      });
       startRadioQueueMaintenance(nextState);
-      return NextResponse.json({ ok: true, rejectedTrack: rejectResult.rejectedTrack, state: await buildRadioResponseState(nextState, request) });
+      return NextResponse.json({ ok: true, rejectedTrack: rejectResult?.rejectedTrack, state: await buildRadioResponseState(nextState, request) });
     }
 
     if (action === "deleteFeedback") {
@@ -311,8 +330,7 @@ export async function POST(request: NextRequest) {
       const phrase = typeof body.phrase === "string" ? body.phrase.trim().slice(0, 180) : "";
       if (!rating || !phrase) return NextResponse.json({ ok: false, error: "Feedback rating and phrase are required" }, { status: 400 });
       const styleId = normalizeRadioStyleId(body.styleId ?? state.selectedStyleId, state.customStyles, state.deletedStyleIds);
-      const nextState = removeRadioFeedback(state, styleId, phrase, rating);
-      await writeRadioState(nextState);
+      const nextState = await mutateRadioState((s) => removeRadioFeedback(s, styleId, phrase, rating));
       startRadioQueueMaintenance(nextState);
       return NextResponse.json({ ok: true, state: await buildRadioResponseState(nextState, request) });
     }
@@ -331,8 +349,9 @@ export async function POST(request: NextRequest) {
       for (const track of duplicateTracks) {
         await removeDuplicateTrackAudio(track);
       }
-      const nextState = duplicateTracks.length ? removeRadioTracksFromLineup(cleanupBaseState, duplicateTracks) : cleanupBaseState;
-      if (cleanedTracks.length) await writeRadioState(nextState);
+      const nextState = cleanedTracks.length
+        ? await mutateRadioState((s) => removeRadioTracksFromLineup(s, cleanedTracks))
+        : state;
       startRadioQueueMaintenance(nextState);
       return NextResponse.json({ ok: true, cleanedTracks, state: await buildRadioResponseState(nextState, request) });
     }
@@ -544,8 +563,9 @@ async function cleanRadioQueue(state: RadioState) {
   for (const track of duplicateTracks) {
     await removeDuplicateTrackAudio(track);
   }
-  const nextState = removeRadioTracksFromLineup(state, cleanedTracks);
-  if (cleanedTracks.length) await writeRadioState(nextState);
+  const nextState = cleanedTracks.length
+    ? await mutateRadioState((s) => removeRadioTracksFromLineup(s, cleanedTracks))
+    : state;
   return nextState;
 }
 
@@ -595,8 +615,10 @@ async function generateAndRegisterRadioTrack(state: RadioState, draft: Awaited<R
   const announcementFilename = await createAnnouncementIfEnabled(track, state);
   const finalTrack = announcementFilename ? { ...track, announcementFilename } : track;
   await writeTrackRadioMetadata(finalTrack, state);
-  const nextState = registerRadioTrack({ ...state, currentDraft: undefined }, finalTrack);
-  await writeRadioState(nextState);
+  // Re-read state INSIDE the lock so a thumbs-up / taste change recorded by a
+  // POST during this multi-minute generation is preserved rather than
+  // overwritten by the stale snapshot held across `withGenerationSlot`.
+  const nextState = await mutateRadioState((s) => registerRadioTrack({ ...s, currentDraft: undefined }, finalTrack));
   return nextState;
 }
 
@@ -702,9 +724,12 @@ async function streamCurrentTrack(state: RadioState, options: { icyMetadataEnabl
 
           streamState = resolveStreamStyleState(await readSynchronizedRadioState(), options.styleId);
           if (completedTrackFilename && streamState.currentTrack?.filename === completedTrackFilename) {
-            const advanced = advanceRadioCurrentTrack(streamState);
+            const advanced = await mutateRadioState((s) => {
+              if (s.currentTrack?.filename !== completedTrackFilename) return s;
+              const next = advanceRadioCurrentTrack(s);
+              return next.currentTrack?.filename !== s.currentTrack?.filename ? next : s;
+            });
             if (advanced.currentTrack?.filename !== streamState.currentTrack?.filename) {
-              await writeRadioState(advanced);
               streamState = advanced;
               completedTrackFilename = undefined;
             }
@@ -727,7 +752,7 @@ async function streamCurrentTrack(state: RadioState, options: { icyMetadataEnabl
           if (playableTrack !== track) {
             streamState = replaceRadioTrackInLineup(streamState, playableTrack);
             await writeTrackRadioMetadata(playableTrack, streamState);
-            await writeRadioState(streamState);
+            streamState = await mutateRadioState((s) => replaceRadioTrackInLineup(s, playableTrack));
           }
 
           pendingTrack = playableTrack;
@@ -829,7 +854,15 @@ async function advanceStreamStateAfterTrack(track: RadioTrackRecord, styleId: Re
   const latestState = resolveStreamStyleState(await readRadioState(), styleId);
   if (latestState.currentTrack?.filename !== track.filename) return latestState;
   const advanced = advanceRadioCurrentTrack(latestState);
-  if (advanced.currentTrack?.filename !== latestState.currentTrack?.filename) await writeRadioState(advanced);
+  if (advanced.currentTrack?.filename !== latestState.currentTrack?.filename) {
+    // Re-apply the advance inside the lock against the freshest state so a
+    // concurrent POST (rating/taste/select) isn't clobbered.
+    await mutateRadioState((s) => {
+      if (s.currentTrack?.filename !== track.filename) return s;
+      const next = advanceRadioCurrentTrack(s);
+      return next.currentTrack?.filename !== s.currentTrack?.filename ? next : s;
+    });
+  }
   startRadioQueueMaintenance(advanced);
   return advanced;
 }
@@ -846,15 +879,18 @@ function resolveStreamStyleState(state: RadioState, styleId: ReturnType<typeof n
   return styleId ? normalizeRadioState({ ...state, selectedStyleId: styleId }) : state;
 }
 
-async function distillRadioTasteIfPossible(state: RadioState, styleId: ReturnType<typeof normalizeRadioStyleId>) {
+// Runs the (slow) Codex taste distillation and returns the distilled profile +
+// model so the caller can apply it to the freshest state inside the state lock.
+// Returns undefined when there is no feedback to distill or distillation fails.
+async function distillRadioTasteProfile(state: RadioState, styleId: ReturnType<typeof normalizeRadioStyleId>): Promise<{ profile: RadioTasteProfileInput; model: string } | undefined> {
   const preference = state.preferences[styleId];
-  if (!preference || preference.likes.length + preference.dislikes.length === 0) return state;
+  if (!preference || preference.likes.length + preference.dislikes.length === 0) return undefined;
   try {
     const model = normalizeCodexTasteModel(process.env.RADIO_CODEX_TASTE_MODEL);
     const profile = await runCodexTasteDistillation(state, styleId, model);
-    return profile ? updateRadioTasteProfile(state, styleId, profile, model) : state;
+    return profile ? { profile, model } : undefined;
   } catch {
-    return state;
+    return undefined;
   }
 }
 
@@ -996,30 +1032,21 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function readRadioState(): Promise<RadioState> {
-  try {
-    const parsed = JSON.parse(await readFile(statePath(), "utf8")) as Partial<RadioState>;
-    return normalizeRadioState(parsed);
-  } catch {
-    return defaultRadioState();
-  }
-}
+// readRadioState / writeRadioState / statePath are imported from
+// @/lib/server/radio-state-store, which owns atomic, serialized persistence
+// of `.stable-audio-radio/state.json`.
 
+// Synchronize playback inside the state lock so concurrent POST writers and
+// the background queue loop can't be clobbered. When nothing changed the
+// mutator returns the same reference it was handed and the store skips the
+// write (matching the previous conditional-write behavior).
 async function readSynchronizedRadioState(): Promise<RadioState> {
-  const state = await readRadioState();
-  const synchronized = synchronizeRadioPlayback(state);
-  if (
-    synchronized.currentTrack?.filename !== state.currentTrack?.filename
-    || synchronized.currentTrackStartedAt !== state.currentTrackStartedAt
-  ) {
-    await writeRadioState(synchronized);
-  }
-  return synchronized;
-}
-
-async function writeRadioState(state: RadioState) {
-  await mkdir(path.dirname(statePath()), { recursive: true });
-  await writeFile(statePath(), JSON.stringify(buildRadioStreamState(state), null, 2));
+  return mutateRadioState((state) => {
+    const synchronized = synchronizeRadioPlayback(state);
+    const changed = synchronized.currentTrack?.filename !== state.currentTrack?.filename
+      || synchronized.currentTrackStartedAt !== state.currentTrackStartedAt;
+    return changed ? synchronized : state;
+  });
 }
 
 function normalizePromptProvider(value: unknown): RadioPromptProvider | undefined {
@@ -1037,8 +1064,7 @@ async function registerStarredLibraryFallbackTrack(state: RadioState, reason: st
   const announcementFilename = await createAnnouncementIfEnabled(track, state);
   const finalTrack = announcementFilename ? { ...track, announcementFilename } : track;
   await writeTrackRadioMetadata(finalTrack, state);
-  const nextState = registerRadioTrack({ ...state, currentDraft: undefined }, finalTrack);
-  await writeRadioState(nextState);
+  const nextState = await mutateRadioState((s) => registerRadioTrack({ ...s, currentDraft: undefined }, finalTrack));
   return { track: finalTrack, state: nextState };
 }
 
@@ -1362,6 +1388,12 @@ async function synthesizeTtsMp3(text: string, state: RadioState) {
   const apiKey = await providerApiKey(state.ttsProvider);
   if (!apiKey && !isKokoroTtsProvider(state.ttsProvider)) throw new Error(`Missing API key for ${state.ttsProvider} TTS`);
   const modulePath = resolveRadioTtsModulePath(state.ttsProvider);
+  if (!modulePath) {
+    const envVar = isKokoroTtsProvider(state.ttsProvider) ? "RADIO_TTS_NODE_MODULE_PATH" : "RADIO_TTS_MODULE_PATH";
+    const message = `Radio TTS is not configured: set ${envVar} to the par-tts-core-ts module entry (e.g. /path/to/par-tts-core-ts/dist/index.cjs).`;
+    console.error(`[radio-tts] ${message}`);
+    throw new Error(message);
+  }
   const tts = loadTtsModule(modulePath);
   const provider = state.ttsProvider;
   const voice = state.ttsVoice;
@@ -1455,7 +1487,9 @@ async function listTtsVoiceOptions(provider: string, currentVoice: string): Prom
   try {
     const apiKey = await providerApiKey(provider);
     if (!apiKey) return fallback;
-    const tts = loadTtsModule(resolveRadioTtsModulePath(provider));
+    const modulePath = resolveRadioTtsModulePath(provider);
+    if (!modulePath) return fallback;
+    const tts = loadTtsModule(modulePath);
     const pipeline = tts.createSpeechPipeline({ provider, apiKey, voice: currentVoice, options: { format: "mp3" } });
     if (!pipeline.listVoices) return fallback;
     const voices = await pipeline.listVoices();
@@ -1475,9 +1509,14 @@ function mergeCurrentVoiceOption(options: RadioTtsVoiceOption[], currentVoice: s
   return [{ id: currentVoice, label: currentVoice }, ...options];
 }
 
-function loadTtsModule(modulePath: string) {
-  const loadModule = new Function("createRequireFn", "moduleUrl", "specifier", "return createRequireFn(moduleUrl)(specifier);") as (createRequireFn: typeof createRequire, moduleUrl: string, specifier: string) => TtsModule;
-  return loadModule(createRequire, import.meta.url, modulePath);
+// Load the configured TTS module via a standard dynamic require resolved from
+// `import.meta.url`. The previous implementation built the require call with
+// `new Function` to hide it from bundler static analysis; `createRequire` is
+// the documented Node escape hatch for the same thing without `eval`, so the
+// dependency is visible to tooling while still resolving a runtime path.
+function loadTtsModule(modulePath: string): TtsModule {
+  const moduleRequire = createRequire(import.meta.url);
+  return moduleRequire(modulePath) as TtsModule;
 }
 
 async function existingTrackAnnouncementFilename(track: RadioTrackRecord) {
@@ -1531,11 +1570,15 @@ function isKokoroTtsProvider(provider: string) {
   return provider === "kokoro-onnx" || provider === "kokoro";
 }
 
-function resolveRadioTtsModulePath(provider: string) {
+// Resolve the TTS module path from configuration ONLY — never a hardcoded
+// machine-specific default. Returns undefined when TTS is not configured; the
+// caller fails with a clear message and the station degrades gracefully (no
+// announcement) rather than crashing the stream.
+function resolveRadioTtsModulePath(provider: string): string | undefined {
   if (isKokoroTtsProvider(provider)) {
-    return process.env.RADIO_TTS_NODE_MODULE_PATH || path.join(path.sep, "Users", "probello", "Repos", "par-tts-core-ts", "dist", "node", "index.cjs");
+    return process.env.RADIO_TTS_NODE_MODULE_PATH;
   }
-  return process.env.RADIO_TTS_MODULE_PATH || path.join(path.sep, "Users", "probello", "Repos", "par-tts-core-ts", "dist", "index.cjs");
+  return process.env.RADIO_TTS_MODULE_PATH;
 }
 
 async function readParTtsConfigApiKey(keys: string[]) {

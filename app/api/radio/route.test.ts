@@ -1143,8 +1143,17 @@ printf '%s' '{"likedTraits":["wide neon pads"],"dislikedTraits":["thin supersaw 
     process.chdir(tempCwd);
     const outputDir = path.join(tempCwd, "public", "outputs");
     const stateFile = path.join(tempCwd, ".stable-audio-radio", "state.json");
+    const ffmpegPath = path.join(tempCwd, "mock-ffmpeg.sh");
     await mkdir(outputDir, { recursive: true });
     await mkdir(path.dirname(stateFile), { recursive: true });
+    // Deterministic mock ffmpeg so this test no longer depends on a real
+    // TTS module path / real OpenAI call / real ffmpeg: it emits a 24000-byte
+    // MP3-like buffer (first byte 0xff) for both the per-file transcode and the
+    // announcement+track concat, which is what the ICY first-chunk assertions
+    // check. Mirrors the mock-ffmpeg pattern used by the "repairs WAV" test.
+    await writeFile(ffmpegPath, "#!/bin/sh\nprintf '\\xff'; yes a | head -c 23999\n");
+    await chmod(ffmpegPath, 0o755);
+    process.env.FFMPEG_PATH = ffmpegPath;
     await writeFile(path.join(outputDir, "radio_announce_current.mp3"), Buffer.concat([Buffer.from("ID3"), Buffer.alloc(icyMetaInterval - 3, "a")]));
     await writeFile(path.join(outputDir, "current.mp3"), Buffer.alloc(icyMetaInterval, "s"));
     await writeFile(path.join(outputDir, "current.mp3.json"), JSON.stringify({

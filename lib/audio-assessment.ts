@@ -3,6 +3,7 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { cpus, loadavg } from "node:os";
 import path from "node:path";
 import { isSafeAudioFilename, metadataPathForAudio, metadataUrlForAudio, outputPathForAudio } from "./library";
+import { readJsonWithBackup, writeJsonAtomic } from "./server/atomic-json-store";
 import { withGenerationSlot } from "./server/concurrency";
 
 export const AUDIO_ASSESSMENT_LOAD_THRESHOLD = 0.25;
@@ -387,17 +388,20 @@ async function writeAssessmentQueueMetadata(
 }
 
 async function readAssessmentQueue(): Promise<AssessmentQueueJob[]> {
-  try {
-    const parsed = JSON.parse(await readFile(queuePath(), "utf8")) as unknown;
-    return Array.isArray(parsed) ? parsed.filter(isAssessmentQueueJob) : [];
-  } catch {
-    return [];
+  const result = await readJsonWithBackup(queuePath());
+  if (result.status === "ok") {
+    const parsed = result.data;
+    return Array.isArray(parsed) ? (parsed as unknown[]).filter(isAssessmentQueueJob) : [];
   }
+  // `missing` (first run) and `corrupt` (already backed up + logged by the
+  // shared reader) both fall back to an empty queue so processing continues.
+  return [];
 }
 
 async function writeAssessmentQueue(queue: AssessmentQueueJob[]) {
-  await mkdir(path.dirname(queuePath()), { recursive: true });
-  await writeFile(queuePath(), JSON.stringify(queue, null, 2));
+  // Atomic (tmp + rename) and serialized with concurrent queue writers via the
+  // shared per-path lock.
+  await writeJsonAtomic(queuePath(), queue);
 }
 
 function isAssessmentQueueJob(value: unknown): value is AssessmentQueueJob {
