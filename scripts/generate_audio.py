@@ -144,13 +144,16 @@ def generate_mlx(args: argparse.Namespace) -> None:
         "--seconds", str(args.duration),
         "--steps", str(args.steps),
         "--cfg", str(args.cfg_scale),
-        "--out", str(args.out),
+        "--out", str(Path(args.out).resolve()),
     ]
     if args.negative_prompt:
         command.extend(["--negative-prompt", args.negative_prompt])
     if args.seed is not None:
         command.extend(["--seed", str(args.seed)])
 
+    # sa3 resolves a relative --out under its own REPO/output/ dir, and it runs
+    # with cwd=mlx_dir here — so pass an absolute path so the WAV lands exactly
+    # where the caller's ffmpeg transcode step expects it.
     result = run_process_tree(command, cwd=mlx_dir, timeout_seconds=mlx_timeout_seconds())
     if result.returncode != 0:
         raise RuntimeError(
