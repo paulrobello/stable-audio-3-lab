@@ -36,9 +36,16 @@ const nextConfig: NextConfig = {
   // `frame-ancestors 'none'` (+ X-Frame-Options: DENY) stops clickjacking;
   // object-src 'none' / base-uri 'self' block plugin and <base> hijacks.
   async headers() {
+    // React dev mode requires eval() for stack-frame reconstruction (it never
+    // uses eval in production). Allow 'unsafe-eval' only in development so the
+    // production CSP stays strict.
+    const isDev = process.env.NODE_ENV !== "production";
+    const scriptSrc = isDev
+      ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+      : "script-src 'self' 'unsafe-inline'";
     const contentSecurityPolicy = [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline'",
+      scriptSrc,
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob:",
       "font-src 'self' data:",
