@@ -11,7 +11,6 @@
 // `mutateRadioState` — no direct `fs` touches of the state file.
 
 import { NextResponse } from "next/server";
-import type { ChildProcessWithoutNullStreams, SpawnOptions } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -29,6 +28,8 @@ import { isSafeAudioFilename, outputPathForAudio } from "@/lib/library";
 import { mutateRadioState, readRadioState } from "./radio-state-store";
 import { registerStarredLibraryFallbackTrack, startRadioQueueMaintenance, writeTrackRadioMetadata } from "./radio-queue-service";
 import { createAnnouncementIfEnabled } from "./radio-tts";
+import { spawnProcess } from "./subprocess";
+import { ffmpegBin } from "./config";
 
 const outputDir = () => path.join(process.cwd(), "public", "outputs");
 const RADIO_STREAM_IDLE_WAIT_MS = 1200;
@@ -289,10 +290,10 @@ async function readRadioStreamSegment(filePaths: string[]) {
 }
 
 async function transcodeFilesToRadioMp3(filePaths: string[]) {
-  const ffmpeg = process.env.FFMPEG_PATH || "ffmpeg";
+  const ffmpeg = ffmpegBin();
   const inputArgs = filePaths.flatMap((filePath) => ["-i", filePath]);
   const concatInputs = filePaths.map((_, index) => `[${index}:a]`).join("");
-  const child = await spawnRuntimeProcess(ffmpeg, [
+  const child = spawnProcess(ffmpeg, [
     "-hide_banner",
     "-loglevel",
     "error",
@@ -334,11 +335,4 @@ function isNotFoundError(error: unknown) {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-// NOTE: duplicated spawn helper — see codex-client.ts note. Consolidated by
-// ARC-007 / QA-010.
-async function spawnRuntimeProcess(command: string, args: string[], options?: SpawnOptions): Promise<ChildProcessWithoutNullStreams> {
-  const { spawn } = await import("node:child_process");
-  return spawn(command, args, options ?? {}) as ChildProcessWithoutNullStreams;
 }

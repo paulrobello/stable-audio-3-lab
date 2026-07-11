@@ -11,22 +11,26 @@
 // Environment fallbacks are preserved exactly:
 //   * `OLLAMA_BASE_URL` wins; otherwise `http://${OLLAMA_HOST ?? "127.0.0.1"}:${OLLAMA_PORT ?? "11434"}`
 //   * `OLLAMA_TITLE_MODEL` (default `phi4-mini`) selects the title-generation model.
+//
+// All env reads go through `@/lib/server/config` (ARC-016).
+
+import { ollamaBaseUrl as configuredOllamaBaseUrl, ollamaHost, ollamaPort, ollamaTitleModel } from "./config";
 
 const TITLE_SYSTEM_PROMPT = `You are a creative music title generator. Given a description of audio, generate a short, evocative title (2-6 words). Return ONLY the title text with no quotes, no punctuation at the end, no explanation. Be creative and concise. The mode is {mode}.`;
 
 /** Resolve the configured Ollama base URL (no trailing slash). */
-function ollamaBaseUrl(): string {
-  return process.env.OLLAMA_BASE_URL ?? `http://${process.env.OLLAMA_HOST ?? "127.0.0.1"}:${process.env.OLLAMA_PORT ?? "11434"}`;
+function resolveOllamaBaseUrl(): string {
+  return configuredOllamaBaseUrl() ?? `http://${ollamaHost()}:${ollamaPort()}`;
 }
 
 /** Full URL for the Ollama `/api/generate` completion endpoint. */
 export function ollamaGenerateUrl(): string {
-  return new URL("/api/generate", ollamaBaseUrl()).toString();
+  return new URL("/api/generate", resolveOllamaBaseUrl()).toString();
 }
 
 /** Full URL for the Ollama `/api/tags` model-list endpoint. */
 export function ollamaTagsUrl(): string {
-  return new URL("/api/tags", ollamaBaseUrl()).toString();
+  return new URL("/api/tags", resolveOllamaBaseUrl()).toString();
 }
 
 /** Strip surrounding quotes and trailing punctuation from a model-generated title. */
@@ -48,7 +52,7 @@ export function cleanTitle(raw: string): string {
  * fall back to a slug. Timeout is fixed at 15s, matching the original behavior.
  */
 export async function generateTitle(prompt: string, mode: string): Promise<string | null> {
-  const model = process.env.OLLAMA_TITLE_MODEL || "phi4-mini";
+  const model = ollamaTitleModel();
   const systemPrompt = TITLE_SYSTEM_PROMPT.replace("{mode}", mode);
 
   const controller = new AbortController();

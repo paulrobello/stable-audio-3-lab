@@ -1,16 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { spawn } from "node:child_process";
 import path from "node:path";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { buildCropFilename, buildCropMetadata, isSafeAudioFilename, metadataPathForAudio, normalizeCropWindow, validateCropFitsDuration } from "@/lib/library";
 import { withGenerationSlot } from "@/lib/server/concurrency";
+import { runCommand } from "@/lib/server/subprocess";
+import { ffmpegBin, ffprobeBin, stableAudioTimeoutMs } from "@/lib/server/config";
 
 export const runtime = "nodejs";
 export const maxDuration = 900;
 
 const outputDir = () => path.join(process.cwd(), "public", "outputs");
-
-type ProcessResult = { code: number | null; stdout: string; stderr: string };
 
 export async function POST(request: NextRequest) {
   try {
@@ -27,8 +26,8 @@ export async function POST(request: NextRequest) {
     const cropFilename = buildCropFilename(filename, crop.start, crop.end);
     const cropPath = path.join(outputDir(), cropFilename);
     const args = buildFfmpegCropArgs({ sourcePath, cropPath, crop, format: cropFilename.endsWith(".mp3") ? "mp3" : "wav" });
-    const ffmpeg = process.env.FFMPEG_PATH || "ffmpeg";
-    const result = await withGenerationSlot(() => runProcess(ffmpeg, args, Number(process.env.STABLE_AUDIO_TIMEOUT_MS || 900000)));
+    const ffmpeg = ffmpegBin();
+    const result = await withGenerationSlot(() => runCommand(ffmpeg, args, { timeoutMs: stableAudioTimeoutMs() }));
     if (result.code !== 0) {
       // Log subprocess detail server-side only; return a generic message.
       console.error("[crop] ffmpeg crop failed", { code: result.code, stdout: result.stdout, stderr: result.stderr });
@@ -65,8 +64,8 @@ function buildFfmpegCropArgs({ sourcePath, cropPath, crop, format }: { sourcePat
 }
 
 async function probeAudioDuration(sourcePath: string) {
-  const ffprobe = process.env.FFPROBE_PATH || "ffprobe";
-  const result = await runProcess(ffprobe, ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", sourcePath], 30000);
+  const ffprobe = ffprobeBin();
+  const result = await runCommand(ffprobe, ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", sourcePath], { timeoutMs: 30_000 });
   if (result.code !== 0) {
     console.error("[crop] ffprobe duration failed", { code: result.code, stdout: result.stdout, stderr: result.stderr });
     throw new Error("Unable to determine source audio duration");
@@ -74,26 +73,4 @@ async function probeAudioDuration(sourcePath: string) {
   const duration = Number.parseFloat(result.stdout.trim());
   if (!Number.isFinite(duration) || duration <= 0) throw new Error("Unable to determine source audio duration");
   return duration;
-}
-
-function runProcess(command: string, args: string[], timeoutMs: number): Promise<ProcessResult> {
-  return new Promise((resolve) => {
-    const child = spawn(command, args, { env: { ...process.env }, cwd: process.cwd() });
-    let stdout = "";
-    let stderr = "";
-    const timer = setTimeout(() => {
-      stderr += `\nTimed out after ${timeoutMs}ms`;
-      child.kill("SIGTERM");
-    }, timeoutMs);
-    child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
-    child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ code, stdout: stdout.slice(-8000), stderr: stderr.slice(-8000) });
-    });
-    child.on("error", (error) => {
-      clearTimeout(timer);
-      resolve({ code: 1, stdout, stderr: `${stderr}\n${error.message}`.slice(-8000) });
-    });
-  });
 }

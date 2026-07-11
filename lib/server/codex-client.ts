@@ -10,7 +10,6 @@
 //
 // Extracted verbatim from `app/api/radio/route.ts`; behavior is unchanged.
 
-import type { ChildProcessWithoutNullStreams, SpawnOptions } from "node:child_process";
 import { mkdir, readFile, unlink } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -23,6 +22,8 @@ import {
   type RadioTasteProfileInput,
 } from "@/lib/radio";
 import { statePath } from "./radio-state-store";
+import { runCommand } from "./subprocess";
+import { radioCodexBin, radioCodexStyleModel, radioCodexTasteModel, radioCodexTasteTimeoutMs } from "./config";
 
 // Runs the (slow) Codex taste distillation and returns the distilled profile +
 // model so the caller can apply it to the freshest state inside the state lock.
@@ -31,7 +32,7 @@ export async function distillRadioTasteProfile(state: RadioState, styleId: Retur
   const preference = state.preferences[styleId];
   if (!preference || preference.likes.length + preference.dislikes.length === 0) return undefined;
   try {
-    const model = normalizeCodexTasteModel(process.env.RADIO_CODEX_TASTE_MODEL);
+    const model = normalizeCodexTasteModel(radioCodexTasteModel());
     const profile = await runCodexTasteDistillation(state, styleId, model);
     return profile ? { profile, model } : undefined;
   } catch {
@@ -42,7 +43,7 @@ export async function distillRadioTasteProfile(state: RadioState, styleId: Retur
 export async function draftRadioStyleWithCodex(requestInput: unknown): Promise<RadioStyleDraft | undefined> {
   const request = typeof requestInput === "string" ? requestInput.trim() : "";
   if (request.length < 3) return undefined;
-  const model = normalizeCodexTasteModel(process.env.RADIO_CODEX_STYLE_MODEL ?? process.env.RADIO_CODEX_TASTE_MODEL);
+  const model = normalizeCodexTasteModel(radioCodexStyleModel());
   const stateDir = path.dirname(statePath());
   await mkdir(stateDir, { recursive: true });
   const outputPath = path.join(stateDir, `codex-style-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`);
@@ -74,8 +75,11 @@ async function runCodexTasteDistillation(state: RadioState, styleId: ReturnType<
 }
 
 async function runCodexCli(prompt: string, outputPath: string, model: string, taskLabel = "Codex taste distillation") {
-  const codexBin = process.env.RADIO_CODEX_BIN || "codex";
-  const timeoutMs = Number(process.env.RADIO_CODEX_TASTE_TIMEOUT_MS || 120000);
+  const codexBin = radioCodexBin();
+  const rawTimeout = radioCodexTasteTimeoutMs();
+  // Preserve the original finite/positive guard so a malformed env value still
+  // falls back to the 2-minute default rather than firing immediately.
+  const timeoutMs = Number.isFinite(rawTimeout) && rawTimeout > 0 ? rawTimeout : 120_000;
   const args = [
     "exec",
     "-m",
@@ -92,48 +96,18 @@ async function runCodexCli(prompt: string, outputPath: string, model: string, ta
     outputPath,
     "-",
   ];
-  const child = await spawnRuntimeProcess(codexBin, args, { cwd: process.cwd(), stdio: ["pipe", "ignore", "pipe"] });
-
-  return new Promise<void>((resolve, reject) => {
-    const stderr: Buffer[] = [];
-    let timedOut = false;
-    let forceKillTimeout: ReturnType<typeof setTimeout> | undefined;
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGTERM");
-      forceKillTimeout = setTimeout(() => {
-        child.kill("SIGKILL");
-      }, 1000);
-    }, Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 120000);
-
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-    child.on("error", (error) => {
-      clearTimeout(timeout);
-      if (forceKillTimeout) clearTimeout(forceKillTimeout);
-      reject(error);
-    });
-    child.on("close", (code) => {
-      clearTimeout(timeout);
-      if (forceKillTimeout) clearTimeout(forceKillTimeout);
-      if (timedOut) {
-        reject(new Error(`${taskLabel} timed out`));
-        return;
-      }
-      if (code === 0) resolve();
-      else reject(new Error(`${taskLabel} failed: ${Buffer.concat(stderr).toString("utf8").trim()}`));
-    });
-    child.stdin.end(prompt);
+  // Delegates to the shared runner (ARC-007), keeping codex's own 1s SIGTERM →
+  // SIGKILL grace and its `ignore`-stdout stdio arrangement. The runner attaches
+  // the `error` handler (QA-002) and resolves `{ code, stderr, timedOut }`.
+  const result = await runCommand(codexBin, args, {
+    timeoutMs,
+    cwd: process.cwd(),
+    stdin: prompt,
+    killGraceMs: 1_000,
+    spawnOptions: { stdio: ["pipe", "ignore", "pipe"] },
   });
-}
-
-// NOTE: `spawnRuntimeProcess` is duplicated across the extracted radio service
-// modules (codex-client, radio-tts, radio-stream, radio-queue-service) because
-// each was moved verbatim from the route. ARC-007 / QA-010 consolidate the five
-// subprocess runners into one `lib/server/subprocess.ts`; until then the
-// duplication is intentional and matches the pre-refactor state.
-async function spawnRuntimeProcess(command: string, args: string[], options?: SpawnOptions): Promise<ChildProcessWithoutNullStreams> {
-  const { spawn } = await import("node:child_process");
-  return spawn(command, args, options ?? {}) as ChildProcessWithoutNullStreams;
+  if (result.timedOut) throw new Error(`${taskLabel} timed out`);
+  if (result.code !== 0) throw new Error(`${taskLabel} failed: ${result.stderr.trim()}`);
 }
 
 function parseCodexTasteProfile(value: string): RadioTasteProfileInput | undefined {

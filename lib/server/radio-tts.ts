@@ -12,7 +12,6 @@
 // `readLocalEnvApiKey` is preserved exactly — it is the `~/.claude/.env`
 // fallback flagged for manual review by SEC-006 and is NOT changed here.
 
-import type { ChildProcessWithoutNullStreams, SpawnOptions } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
@@ -29,6 +28,8 @@ import {
   type RadioTtsVoiceOption,
 } from "@/lib/radio";
 import { metadataPathForAudio, outputPathForAudio } from "@/lib/library";
+import { spawnProcess } from "./subprocess";
+import { ffmpegBin, parTtsConfigPath, radioTtsModel, radioTtsModulePath, radioTtsNodeModulePath } from "./config";
 
 type TtsModule = {
   createSpeechPipeline: (config: { provider: string; apiKey?: string; model?: string; voice?: string; options?: Record<string, unknown> }) => TtsPipeline;
@@ -45,7 +46,7 @@ const outputDir = () => path.join(process.cwd(), "public", "outputs");
 
 export async function createAnnouncementIfEnabled(track: RadioTrackRecord, state: RadioState) {
   if (!track.announce) return undefined;
-  const model = process.env.RADIO_TTS_MODEL;
+  const model = radioTtsModel();
   const previousAnnouncementFilename = await existingTrackAnnouncementFilename(track);
   if (previousAnnouncementFilename && await ensureMp3File(outputPathForAudio(outputDir(), previousAnnouncementFilename))) return previousAnnouncementFilename;
   const filename = buildRadioAnnouncementFilename(track, { ...state, ttsModel: model });
@@ -71,7 +72,7 @@ export async function createTestVoiceAudio(state: RadioState) {
 }
 
 async function synthesizeTtsMp3(text: string, state: RadioState) {
-  const model = process.env.RADIO_TTS_MODEL;
+  const model = radioTtsModel();
   const apiKey = await providerApiKey(state.ttsProvider);
   if (!apiKey && !isKokoroTtsProvider(state.ttsProvider)) throw new Error(`Missing API key for ${state.ttsProvider} TTS`);
   const modulePath = resolveRadioTtsModulePath(state.ttsProvider);
@@ -103,8 +104,8 @@ async function ensureMp3File(filePath: string) {
 }
 
 async function transcodeToRadioMp3(bytes: Uint8Array) {
-  const ffmpeg = process.env.FFMPEG_PATH || "ffmpeg";
-  const child = await spawnRuntimeProcess(ffmpeg, ["-hide_banner", "-loglevel", "error", "-i", "pipe:0", "-vn", "-ar", "44100", "-ac", "2", "-codec:a", "libmp3lame", "-b:a", "128k", "-f", "mp3", "pipe:1"]);
+  const ffmpeg = ffmpegBin();
+  const child = spawnProcess(ffmpeg, ["-hide_banner", "-loglevel", "error", "-i", "pipe:0", "-vn", "-ar", "44100", "-ac", "2", "-codec:a", "libmp3lame", "-b:a", "128k", "-f", "mp3", "pipe:1"]);
   return new Promise<Buffer>((resolve, reject) => {
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
@@ -223,9 +224,9 @@ function isKokoroTtsProvider(provider: string) {
 // announcement) rather than crashing the stream.
 function resolveRadioTtsModulePath(provider: string): string | undefined {
   if (isKokoroTtsProvider(provider)) {
-    return process.env.RADIO_TTS_NODE_MODULE_PATH;
+    return radioTtsNodeModulePath();
   }
-  return process.env.RADIO_TTS_MODULE_PATH;
+  return radioTtsModulePath();
 }
 
 async function readParTtsConfigApiKey(keys: string[]) {
@@ -243,7 +244,7 @@ async function readParTtsConfigApiKey(keys: string[]) {
 
 function parTtsConfigPaths() {
   return [
-    process.env.PAR_TTS_CONFIG_PATH,
+    parTtsConfigPath(),
     path.join(homedir(), "Library", "Application Support", "par-tts", "config.yaml"),
     path.join(homedir(), ".config", "par-tts", "config.yaml"),
   ].filter((filePath): filePath is string => Boolean(filePath));
@@ -256,11 +257,4 @@ async function readLocalEnvApiKey(keys: string[]) {
   } catch {
     return undefined;
   }
-}
-
-// NOTE: duplicated spawn helper — see codex-client.ts note. Consolidated by
-// ARC-007 / QA-010.
-async function spawnRuntimeProcess(command: string, args: string[], options?: SpawnOptions): Promise<ChildProcessWithoutNullStreams> {
-  const { spawn } = await import("node:child_process");
-  return spawn(command, args, options ?? {}) as ChildProcessWithoutNullStreams;
 }

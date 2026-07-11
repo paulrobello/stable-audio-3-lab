@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { spawn } from "node:child_process";
 import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 import { normalizeGenerationRequest } from "@/lib/generation";
@@ -7,6 +6,8 @@ import { buildGeneratorArgs, resolveGenerationBackend } from "@/lib/generator-ba
 import { buildLibraryMetadata, metadataPathForAudio, titleToFilename } from "@/lib/library";
 import { withGenerationSlot } from "@/lib/server/concurrency";
 import { generateTitle } from "@/lib/server/ollama";
+import { runCommand } from "@/lib/server/subprocess";
+import { stableAudioBackend, stableAudioMock, stableAudioPython, stableAudioTimeoutMs } from "@/lib/server/config";
 
 export const runtime = "nodejs";
 export const maxDuration = 900;
@@ -27,9 +28,9 @@ export async function POST(request: NextRequest) {
       ? await titleToFilename(title, input.format, outputDir, input.mode)
       : `sa3-${input.mode}-${Date.now()}.${input.format}`;
     const outPath = path.join(outputDir, filename);
-    const python = process.env.STABLE_AUDIO_PYTHON || "python3";
-    const mock = input.mock || process.env.STABLE_AUDIO_MOCK === "true";
-    const backend = resolveGenerationBackend({ envBackend: process.env.STABLE_AUDIO_BACKEND, mock });
+    const python = stableAudioPython();
+    const mock = input.mock || stableAudioMock();
+    const backend = resolveGenerationBackend({ envBackend: stableAudioBackend(), mock });
     const args = buildGeneratorArgs({
       scriptPath: path.join(process.cwd(), "scripts", "generate_audio.py"),
       outputPath: outPath,
@@ -39,7 +40,7 @@ export async function POST(request: NextRequest) {
     });
 
     const startedAt = Date.now();
-    const result = await withGenerationSlot(() => runProcess(python, args, Number(process.env.STABLE_AUDIO_TIMEOUT_MS || 900000)));
+    const result = await withGenerationSlot(() => runCommand(python, args, { timeoutMs: stableAudioTimeoutMs() }));
     const generationDurationMs = Date.now() - startedAt;
     if (result.code !== 0) {
       // Log the full subprocess output server-side only; never echo it to the
@@ -66,22 +67,4 @@ function isValidationError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const record = error as { name?: unknown; issues?: unknown };
   return record.name === "ZodError" || Array.isArray(record.issues);
-}
-
-function runProcess(command: string, args: string[], timeoutMs: number): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  return new Promise((resolve) => {
-    const child = spawn(command, args, { env: { ...process.env }, cwd: process.cwd() });
-    let stdout = "";
-    let stderr = "";
-    const timer = setTimeout(() => {
-      stderr += `\nTimed out after ${timeoutMs}ms`;
-      child.kill("SIGTERM");
-    }, timeoutMs);
-    child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
-    child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ code, stdout: stdout.slice(-8000), stderr: stderr.slice(-8000) });
-    });
-  });
 }

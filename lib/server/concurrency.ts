@@ -15,6 +15,12 @@
 // Both controls are env-tunable. They never reject configuration: bad values
 // fall back to the documented default, and any internal error fails open so a
 // restart cannot wedge the app.
+//
+// Raw env values are read through `@/lib/server/config` (ARC-016) so this module
+// holds no direct `process.env` references; the clamp/fallback logic stays here
+// because it is specific to admission control.
+
+import { envStringOptional } from "./config";
 
 const DEFAULT_MAX_CONCURRENT = 1;
 const DEFAULT_RATE_PER_MINUTE = 30; // 0 disables rate limiting
@@ -44,7 +50,7 @@ function clampInt(raw: string | undefined, fallback: number, min: number, max: n
 
 /** Maximum number of heavy subprocesses that may run concurrently. */
 function maxConcurrent(): number {
-  return clampInt(process.env.STABLE_AUDIO_MAX_CONCURRENT, DEFAULT_MAX_CONCURRENT, 1, 8);
+  return clampInt(envStringOptional("STABLE_AUDIO_MAX_CONCURRENT"), DEFAULT_MAX_CONCURRENT, 1, 8);
 }
 
 /**
@@ -87,7 +93,7 @@ export async function withGenerationSlot<T>(fn: () => Promise<T>): Promise<T> {
  */
 export function checkMutatingRateLimit(clientId: string): { ok: true } | { ok: false; retryAfterMs: number } {
   try {
-    const ratePerMinute = clampInt(process.env.STABLE_AUDIO_MUTATING_RATE_PER_MINUTE, DEFAULT_RATE_PER_MINUTE, 0, 600);
+    const ratePerMinute = clampInt(envStringOptional("STABLE_AUDIO_MUTATING_RATE_PER_MINUTE"), DEFAULT_RATE_PER_MINUTE, 0, 600);
     if (ratePerMinute <= 0 || !clientId) return { ok: true };
 
     const store = getStore();

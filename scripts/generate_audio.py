@@ -20,16 +20,16 @@ import wave
 from pathlib import Path
 from types import SimpleNamespace
 
+# Hugging Face repo name for the torch path (StableAudioModel.from_pretrained).
+# Python is authoritative for the torch repo name; the MLX DiT/decoder routing
+# is NOT mapped here anymore — it is resolved by the TS bridge
+# (lib/generator-backend.ts::stableAudioModelToMlx) and passed as explicit
+# --dit / --decoder args so the model->MLX mapping exists in only one place
+# (ARC-008).
 MODEL_MAP = {
     "small-sfx": "small-sfx",
     "small-music": "small-music",
     "medium": "medium",
-}
-
-MLX_MODEL_MAP = {
-    "small-sfx": ("sm-sfx", "same-s"),
-    "small-music": ("sm-music", "same-s"),
-    "medium": ("medium", "same-l"),
 }
 
 
@@ -125,7 +125,13 @@ def generate_mlx(args: argparse.Namespace) -> None:
     if not sa3.exists():
         raise RuntimeError(f"Stable Audio 3 MLX wrapper not found at {sa3}. Run vendor/stable-audio-3/optimized/mlx/install.sh first.")
 
-    dit, decoder = MLX_MODEL_MAP[args.model]
+    if not args.dit or not args.decoder:
+        raise RuntimeError(
+            "MLX backend requires --dit and --decoder. The TS bridge passes these "
+            "explicitly (lib/generator-backend.ts is the authoritative model->MLX "
+            "mapping); Python no longer keeps a duplicate map (ARC-008)."
+        )
+    dit, decoder = args.dit, args.decoder
     command = [
         str(sa3),
         "--prompt", args.prompt,
@@ -250,6 +256,10 @@ def main() -> int:
     parser.add_argument("--negative-prompt", default="")
     parser.add_argument("--mode", choices=["music", "sfx"], required=True)
     parser.add_argument("--model", choices=sorted(MODEL_MAP), default="small-music")
+    # MLX routing is resolved authoritatively by the TS bridge and passed
+    # explicitly; required only for the MLX backend (ARC-008).
+    parser.add_argument("--dit", help="MLX DiT model id (e.g. sm-music). Required for the mlx backend.")
+    parser.add_argument("--decoder", help="MLX decoder id (e.g. same-s). Required for the mlx backend.")
     parser.add_argument("--duration", type=float, default=8)
     parser.add_argument("--steps", type=int, default=8)
     parser.add_argument("--cfg-scale", type=float, default=1.0)

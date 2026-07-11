@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { controlTips, normalizeGenerationRequest, promptPresets } from "./generation";
+import { normalizeGenerationRequest, promptPresets } from "./generation";
+import { controlTips } from "./ui-presets";
 
 describe("normalizeGenerationRequest", () => {
   it("caps duration to the selected model limit", () => {

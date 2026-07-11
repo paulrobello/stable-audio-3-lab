@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildVariationSeeds, promptTemplateGroups } from "./generation";
+import { buildVariationSeeds } from "./generation";
+import { promptTemplateGroups } from "./ui-presets";
 import { applyLibraryAnnotationMetadata, buildAnalysisSummary, buildAnalysisSummaryFilename, buildBatchBundleFilename, buildBatchManifest, buildBundleFilename, buildCropFilename, buildCropMetadata, buildRenderScreenshotFilename, buildRenderScreenshotSvg, buildStoredZip, isFavoriteMetadata, isSafeBatchRunId, normalizeCropWindow, normalizeLibraryAnnotation, validateCropFitsDuration, toggleFavoriteMetadata } from "./library";
 
 describe("prompt templates", () => {

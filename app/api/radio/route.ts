@@ -56,6 +56,8 @@ import {
   writeTrackRadioMetadata,
 } from "@/lib/server/radio-queue-service";
 import { readSynchronizedRadioState, resolveStreamStyleState, streamCurrentTrack } from "@/lib/server/radio-stream";
+import { lanIp, radioLanHost, radioOllamaModelsTimeoutMs, radioPublicOrigin, serverPort } from "@/lib/server/config";
+import { radioActionRequestSchema } from "@/lib/server/radio-actions";
 
 export const runtime = "nodejs";
 export const maxDuration = 180;
@@ -91,11 +93,18 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json() as Record<string, unknown>;
-    const action = typeof body.action === "string" ? body.action : "";
+    // Single Zod-validated parse of the action payload (ARC-009). An unknown or
+    // missing action is rejected here with the same 400 the previous sequential
+    // fall-through returned. Payload fields stay `unknown` and are normalized at
+    // each handler — `.passthrough()` preserves every key the handlers read.
+    const parsed = radioActionRequestSchema.safeParse(await request.json());
+    if (!parsed.success) {
+      return NextResponse.json({ ok: false, error: "Unknown radio action" }, { status: 400 });
+    }
+    const body = parsed.data;
     const state = await readRadioState();
 
-    if (action === "createStyle") {
+    if (body.action === "createStyle") {
       const result = createRadioStyle(state, {
         label: body.label,
         seedPrompt: body.seedPrompt,
@@ -111,13 +120,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, style: result.style, state: await buildRadioResponseState(nextState, request) });
     }
 
-    if (action === "draftStyle") {
+    if (body.action === "draftStyle") {
       const styleDraft = await draftRadioStyleWithCodex(body.request);
       if (!styleDraft) return NextResponse.json({ ok: false, error: "Could not draft a music style from that request" }, { status: 500 });
       return NextResponse.json({ ok: true, styleDraft });
     }
 
-    if (action === "updateStyle") {
+    if (body.action === "updateStyle") {
       const result = updateRadioStyle(state, {
         styleId: body.styleId,
         label: body.label,
@@ -135,7 +144,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, style: result.style, state: await buildRadioResponseState(nextState, request) });
     }
 
-    if (action === "deleteStyle") {
+    if (body.action === "deleteStyle") {
       const result = deleteRadioStyle(state, body.styleId);
       if (!result) return NextResponse.json({ ok: false, error: "Custom style was not found" }, { status: 404 });
       const nextState = await mutateRadioState((s) => deleteRadioStyle(s, body.styleId)?.state ?? s);
@@ -143,7 +152,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, deletedStyle: result.deletedStyle, state: await buildRadioResponseState(nextState, request) });
     }
 
-    if (action === "configure") {
+    if (body.action === "configure") {
       const nextState = await mutateRadioState((s) => selectRadioStyle({
         ...s,
         selectedStyleId: normalizeRadioStyleId(body.styleId ?? s.selectedStyleId, s.customStyles, s.deletedStyleIds),
@@ -163,7 +172,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, state: await buildRadioResponseState(nextState, request) });
     }
 
-    if (action === "testVoice") {
+    if (body.action === "testVoice") {
       const ttsConfig = normalizeRadioTtsConfig({
         ttsProvider: body.ttsProvider ?? state.ttsProvider,
         ttsVoice: body.ttsVoice ?? state.ttsVoice,
@@ -174,7 +183,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, audioUrl });
     }
 
-    if (action === "ttsVoices") {
+    if (body.action === "ttsVoices") {
       const ttsConfig = normalizeRadioTtsConfig({
         ttsProvider: body.ttsProvider ?? state.ttsProvider,
         ttsVoice: body.ttsVoice ?? state.ttsVoice,
@@ -185,7 +194,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, voices });
     }
 
-    if (action === "draft") {
+    if (body.action === "draft") {
       const styleId = normalizeRadioStyleId(body.styleId ?? state.selectedStyleId, state.customStyles, state.deletedStyleIds);
       const promptModel = normalizeOllamaPromptModel(body.promptModel ?? state.promptModel);
       const draft = await draftWithOllama(state, styleId, promptModel);
@@ -193,7 +202,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, draft, state: await buildRadioResponseState(nextState, request) });
     }
 
-    if (action === "track") {
+    if (body.action === "track") {
       const filename = typeof body.filename === "string" ? body.filename : "";
       if (!isSafeAudioFilename(filename)) return NextResponse.json({ ok: false, error: "Invalid track filename" }, { status: 400 });
       const styleId = normalizeRadioStyleId(body.styleId ?? state.selectedStyleId, state.customStyles, state.deletedStyleIds);
@@ -219,14 +228,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, track: finalTrack, state: await buildRadioResponseState(nextState, request) });
     }
 
-    if (action === "fallbackTrack") {
+    if (body.action === "fallbackTrack") {
       const fallback = await registerStarredLibraryFallbackTrack(state, normalizeFallbackReason(body.reason));
       if (!fallback) return NextResponse.json({ ok: false, error: "No starred library MP3 fallback is available" }, { status: 404 });
       startRadioQueueMaintenance(fallback.state);
       return NextResponse.json({ ok: true, fallbackTrack: fallback.track, state: await buildRadioResponseState(fallback.state, request) });
     }
 
-    if (action === "selectTrack") {
+    if (body.action === "selectTrack") {
       const result = selectRadioTrack(state, body.filename);
       if (!result.selectedTrack) return NextResponse.json({ ok: false, error: "Track is not in the radio lineup" }, { status: 404 });
       const nextState = await mutateRadioState((s) => selectRadioTrack(s, body.filename).state ?? s);
@@ -234,7 +243,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, track: result.selectedTrack, state: await buildRadioResponseState(nextState, request) });
     }
 
-    if (action === "skipTrack") {
+    if (body.action === "skipTrack") {
       const previousTrack = state.currentTrack;
       const nextState = await mutateRadioState((s) => {
         const advanced = advanceRadioCurrentTrack(s);
@@ -245,7 +254,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, skippedTrack, state: await buildRadioResponseState(nextState, request) });
     }
 
-    if (action === "deleteTrack") {
+    if (body.action === "deleteTrack") {
       const filename = typeof body.filename === "string" ? body.filename.trim() : "";
       if (!isSafeAudioFilename(filename)) return NextResponse.json({ ok: false, error: "Invalid track filename" }, { status: 400 });
       const deletedTrack = state.history.find((track) => track.filename === filename);
@@ -256,7 +265,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, deletedTrack, state: await buildRadioResponseState(nextState, request) });
     }
 
-    if (action === "rating") {
+    if (body.action === "rating") {
       const ratedFilename = typeof body.filename === "string" ? body.filename.trim() : "";
       const ratedTrack = ratedFilename && isSafeAudioFilename(ratedFilename)
         ? state.history.find((track) => track.filename === ratedFilename)
@@ -301,7 +310,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, rejectedTrack: rejectResult?.rejectedTrack, state: await buildRadioResponseState(nextState, request) });
     }
 
-    if (action === "deleteFeedback") {
+    if (body.action === "deleteFeedback") {
       const rating = normalizeRadioRatingPayload(body.rating);
       const phrase = typeof body.phrase === "string" ? body.phrase.trim().slice(0, 180) : "";
       if (!rating || !phrase) return NextResponse.json({ ok: false, error: "Feedback rating and phrase are required" }, { status: 400 });
@@ -311,7 +320,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, state: await buildRadioResponseState(nextState, request) });
     }
 
-    if (action === "cleanup") {
+    if (body.action === "cleanup") {
       const expiredTracks = findRadioTracksForCleanup(state);
       const cleanupBaseState = removeRadioTracksFromLineup(state, expiredTracks);
       const cleanupBaseStreamState = buildRadioStreamState(cleanupBaseState);
@@ -340,7 +349,7 @@ export async function POST(request: NextRequest) {
 
 async function buildRadioResponseState(state: RadioState, request: NextRequest) {
   await enqueueMissingRatedTrackAssessments(state);
-  const port = request.nextUrl.port || process.env.PORT || "3007";
+  const port = request.nextUrl.port || serverPort();
   const publicOrigin = resolvePublicRadioOrigin(request);
   const publicStreamUrl = buildRadioPublicStreamUrl(publicOrigin);
   const publicPlaylistUrls = buildRadioPlaylistUrls(resolveConfiguredPublicRadioOrigin(request));
@@ -432,11 +441,11 @@ function resolvePublicRadioOrigin(request: NextRequest) {
 
 function resolveConfiguredPublicRadioOrigin(request: NextRequest) {
   const requestOrigin = resolvePublicRadioOrigin(request);
-  return process.env.RADIO_PUBLIC_ORIGIN || (requestOrigin?.includes("radio.pardev.net") ? requestOrigin : "https://radio.pardev.net");
+  return radioPublicOrigin() || (requestOrigin?.includes("radio.pardev.net") ? requestOrigin : "https://radio.pardev.net");
 }
 
 function resolveLanIp() {
-  const override = process.env.RADIO_LAN_HOST || process.env.LAN_IP;
+  const override = radioLanHost() ?? lanIp();
   if (override) return override;
   for (const addresses of Object.values(networkInterfaces())) {
     for (const address of addresses ?? []) {
@@ -448,7 +457,7 @@ function resolveLanIp() {
 
 async function listOllamaPromptModels() {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), Number(process.env.RADIO_OLLAMA_MODELS_TIMEOUT_MS || 1000));
+  const timeout = setTimeout(() => controller.abort(), radioOllamaModelsTimeoutMs());
   try {
     const response = await fetch(ollamaTagsUrl(), { signal: controller.signal, cache: "no-store" });
     if (!response.ok) return [];

@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import clsx from "clsx";
-import { controlTips, modelOptions, promptPresets, promptTemplateGroups, buildVariationSeeds } from "@/lib/generation";
+import { modelOptions, promptPresets, buildVariationSeeds } from "@/lib/generation";
+import { controlTips, promptTemplateGroups } from "@/lib/ui-presets";
 import { settingsFromMetadata, type ReusableGenerationSettings } from "@/lib/metadata-settings";
 import { radioStyles, type RadioStyleId, type RadioStyle } from "@/lib/radio";
 

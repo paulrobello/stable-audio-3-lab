@@ -1,10 +1,11 @@
-import { spawn } from "node:child_process";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { cpus, loadavg } from "node:os";
 import path from "node:path";
 import { isSafeAudioFilename, metadataPathForAudio, metadataUrlForAudio, outputPathForAudio } from "./library";
 import { readJsonWithBackup, writeJsonAtomic } from "./server/atomic-json-store";
 import { withGenerationSlot } from "./server/concurrency";
+import { runCommand } from "./server/subprocess";
+import { stableAudioAssessorCommand, stableAudioAssessorTimeoutMs } from "./server/config";
 
 export const AUDIO_ASSESSMENT_LOAD_THRESHOLD = 0.25;
 
@@ -73,15 +74,30 @@ export class AudioAssessmentError extends Error {
   }
 }
 
-let queueProcessor: Promise<void> | undefined;
-let retryTimer: ReturnType<typeof setTimeout> | undefined;
+// The "only one processor" / "only one retry timer" invariants must survive
+// Next.js dev HMR, which re-instantiates module scope and would otherwise spawn
+// a parallel processor loop against the same persisted queue file. Pin both to
+// globalThis keyed by a stable name, mirroring the admission-control singleton
+// in `concurrency.ts`. Behavior is identical; only the storage moves.
+const ASSESSMENT_SINGLETON_KEY = "__stableAudioAssessment__";
+type AssessmentSingletons = {
+  queueProcessor: Promise<void> | undefined;
+  retryTimer: ReturnType<typeof setTimeout> | undefined;
+};
+function assessmentStore(): AssessmentSingletons {
+  const g = globalThis as unknown as Partial<Record<typeof ASSESSMENT_SINGLETON_KEY, AssessmentSingletons>>;
+  if (!g[ASSESSMENT_SINGLETON_KEY]) {
+    g[ASSESSMENT_SINGLETON_KEY] = { queueProcessor: undefined, retryTimer: undefined };
+  }
+  return g[ASSESSMENT_SINGLETON_KEY]!;
+}
 
 const outputDir = () => path.join(process.cwd(), "public", "outputs");
 const queuePath = () => path.join(process.cwd(), ".stable-audio-assessments", "queue.json");
 
 export async function assessAudioFile(request: AudioAssessmentRequest) {
   const filename = normalizeSafeFilename(request.filename);
-  const assessorCommand = process.env.STABLE_AUDIO_ASSESSOR_COMMAND;
+  const assessorCommand = stableAudioAssessorCommand();
   if (!assessorCommand) {
     throw new AudioAssessmentError("Set STABLE_AUDIO_ASSESSOR_COMMAND to a local audio assessment command.", 503);
   }
@@ -102,7 +118,7 @@ export async function assessAudioFile(request: AudioAssessmentRequest) {
     source: sourceInfo,
     metadata,
     prompt: buildAssessmentPrompt(sourceInfo),
-  }, Number(process.env.STABLE_AUDIO_ASSESSOR_TIMEOUT_MS || 300000)));
+  }, stableAudioAssessorTimeoutMs()));
   if (commandResult.code !== 0) {
     throw new AudioAssessmentError("Local audio assessor failed", 500, commandResult);
   }
@@ -115,7 +131,7 @@ export async function assessAudioFile(request: AudioAssessmentRequest) {
 }
 
 export async function assessUploadedAudioFile(request: { audioPath: string; filename: string; title?: string; prompt?: string }) {
-  const assessorCommand = process.env.STABLE_AUDIO_ASSESSOR_COMMAND;
+  const assessorCommand = stableAudioAssessorCommand();
   if (!assessorCommand) {
     throw new AudioAssessmentError("Set STABLE_AUDIO_ASSESSOR_COMMAND to a local audio assessment command.", 503);
   }
@@ -135,7 +151,7 @@ export async function assessUploadedAudioFile(request: { audioPath: string; file
     source: sourceInfo,
     metadata: {},
     prompt: buildUploadAssessmentPrompt(sourceInfo),
-  }, Number(process.env.STABLE_AUDIO_ASSESSOR_TIMEOUT_MS || 300000)));
+  }, stableAudioAssessorTimeoutMs()));
   if (commandResult.code !== 0) {
     throw new AudioAssessmentError("Local audio assessor failed", 500, commandResult);
   }
@@ -173,8 +189,9 @@ export async function enqueueAudioAssessment(request: AudioAssessmentRequest) {
 }
 
 export function startAudioAssessmentQueueProcessing() {
-  if (queueProcessor) return queueProcessor;
-  queueProcessor = processAudioAssessmentQueue()
+  const store = assessmentStore();
+  if (store.queueProcessor) return store.queueProcessor;
+  store.queueProcessor = processAudioAssessmentQueue()
     .then((result) => {
       if (result.deferred) scheduleAssessmentQueueRetry();
     })
@@ -182,13 +199,13 @@ export function startAudioAssessmentQueueProcessing() {
       scheduleAssessmentQueueRetry();
     })
     .finally(() => {
-      queueProcessor = undefined;
+      store.queueProcessor = undefined;
     });
-  return queueProcessor;
+  return store.queueProcessor;
 }
 
 export async function processAudioAssessmentQueue(options: { loadRatio?: number } = {}) {
-  if (!process.env.STABLE_AUDIO_ASSESSOR_COMMAND) return { processed: 0, deferred: false };
+  if (!stableAudioAssessorCommand()) return { processed: 0, deferred: false };
 
   let processed = 0;
   while (true) {
@@ -239,12 +256,13 @@ export async function getAudioAssessmentQueueStatus(options: { loadRatio?: numbe
 }
 
 function scheduleAssessmentQueueRetry() {
-  if (retryTimer) return;
-  retryTimer = setTimeout(() => {
-    retryTimer = undefined;
+  const store = assessmentStore();
+  if (store.retryTimer) return;
+  store.retryTimer = setTimeout(() => {
+    store.retryTimer = undefined;
     void startAudioAssessmentQueueProcessing();
   }, 60_000);
-  retryTimer.unref?.();
+  store.retryTimer.unref?.();
 }
 
 function currentSystemLoadRatio() {
@@ -466,27 +484,12 @@ function readBalancedJsonObject(text: string, start: number) {
 }
 
 function runAssessorCommand(command: string, payload: unknown, timeoutMs: number): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  return new Promise((resolve) => {
-    const { file, args } = parseAssessorCommand(command);
-    const child = spawn(file, args, { cwd: process.cwd(), env: { ...process.env } });
-    let stdout = "";
-    let stderr = "";
-    const timer = setTimeout(() => {
-      stderr += `\nTimed out after ${timeoutMs}ms`;
-      child.kill("SIGTERM");
-    }, timeoutMs);
-    child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
-    child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
-    child.on("error", (error) => {
-      clearTimeout(timer);
-      resolve({ code: 1, stdout, stderr: `${stderr}${error.message}`.slice(-8000) });
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ code, stdout: stdout.slice(-16000), stderr: stderr.slice(-8000) });
-    });
-    child.stdin.end(JSON.stringify(payload));
-  });
+  const { file, args } = parseAssessorCommand(command);
+  // Delegates to the shared runner (ARC-007): the assessor is the reference
+  // pattern that already had an `error` handler, so behavior is preserved on the
+  // success/failure paths and timeout now escalates SIGTERM → SIGKILL instead of
+  // only signaling SIGTERM (matching the Python side's `terminate_process_tree`).
+  return runCommand(file, args, { timeoutMs, stdin: JSON.stringify(payload), stdoutLimit: 16_000 });
 }
 
 function parseAssessorCommand(command: string) {

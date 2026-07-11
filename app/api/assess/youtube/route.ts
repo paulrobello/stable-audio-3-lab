@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
 import { mkdir, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { buildGenerationPromptFromAssessment } from "@/lib/assessment-prompt";
 import { assessUploadedAudioFile, AudioAssessmentError } from "@/lib/audio-assessment";
+import { runCommand } from "@/lib/server/subprocess";
+import { ffmpegBin, stableAudioYoutubeTimeoutMs, stableAudioYoutubeYtdlpBin } from "@/lib/server/config";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -82,7 +83,7 @@ function parseYouTubeUrl(body: unknown) {
  * caller can clean it up separately from the final output.
  */
 async function extractYouTubeAudio(url: string, outputPath: string, uploadDir: string): Promise<string> {
-  const ytdlp = process.env.STABLE_AUDIO_YOUTUBE_YTDLP_BIN || "yt-dlp";
+  const ytdlp = stableAudioYoutubeYtdlpBin();
   const intermediateBase = path.join(uploadDir, `ytdl-${randomUUID()}`);
   const intermediateMp3 = `${intermediateBase}.mp3`;
 
@@ -99,7 +100,10 @@ async function extractYouTubeAudio(url: string, outputPath: string, uploadDir: s
     url,
   ];
 
-  const result = await runCommand(ytdlp, args, resolveTimeoutMs());
+  // Delegates to the shared runner (ARC-007): stdin ignored (yt-dlp reads none),
+  // matching this route's previous stdio arrangement; the runner's `error`
+  // handler and SIGTERM → SIGKILL escalation are now shared everywhere.
+  const result = await runCommand(ytdlp, args, { timeoutMs: stableAudioYoutubeTimeoutMs(), stdin: "ignore" });
   if (result.code !== 0) {
     throw new Error(`yt-dlp exited with code ${result.code}`);
   }
@@ -115,50 +119,14 @@ async function extractYouTubeAudio(url: string, outputPath: string, uploadDir: s
 }
 
 function ffmpegLocationArgs(): string[] {
-  const ffmpegPath = process.env.FFMPEG_PATH;
-  if (!ffmpegPath) return [];
+  const ffmpegPath = ffmpegBin();
   // Only hint yt-dlp when FFMPEG_PATH points at an actual file location; a bare
-  // binary name on PATH (no separator) needs no --ffmpeg-location.
+  // binary name on PATH (no separator) needs no --ffmpeg-location. `ffmpegBin()`
+  // returns "ffmpeg" when unset, which contains no separator and correctly yields
+  // no hint (matching the previous unset behavior).
   if (ffmpegPath.includes("/") || ffmpegPath.includes("\\")) {
     const dir = path.dirname(ffmpegPath);
     if (dir && dir !== ".") return ["--ffmpeg-location", dir];
   }
   return [];
-}
-
-function resolveTimeoutMs(): number {
-  const raw = process.env.STABLE_AUDIO_YOUTUBE_TIMEOUT_MS ?? process.env.STABLE_AUDIO_YOUTUBE_CODEX_TIMEOUT_MS;
-  const parsed = typeof raw === "string" ? Number(raw) : NaN;
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 300_000;
-}
-
-/** Spawn a subprocess with timeout (SIGTERM then SIGKILL) and an error handler. */
-function runCommand(command: string, args: string[], timeoutMs: number): Promise<{ code: number | null; stderr: string }> {
-  return new Promise((resolve) => {
-    const child = spawn(command, args, { cwd: process.cwd(), env: { ...process.env }, stdio: ["ignore", "pipe", "pipe"] });
-    let stderr = "";
-    let timedOut = false;
-    let killTimer: ReturnType<typeof setTimeout> | undefined;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      stderr += `\nTimed out after ${timeoutMs}ms`;
-      child.kill("SIGTERM");
-      killTimer = setTimeout(() => child.kill("SIGKILL"), 2_000);
-    }, timeoutMs);
-
-    child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
-
-    const finish = (code: number | null) => {
-      clearTimeout(timer);
-      if (killTimer) clearTimeout(killTimer);
-      resolve({ code, stderr: stderr.slice(-8_000) });
-    };
-    child.on("close", (code) => finish(timedOut ? 1 : code));
-    // `error` fires for ENOENT (missing binary) without a `close`; handle it so
-    // the promise can never hang (matching the assessor runner pattern).
-    child.on("error", (error) => {
-      stderr += `\n${error.message}`;
-      finish(1);
-    });
-  });
 }

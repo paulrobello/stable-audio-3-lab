@@ -11,7 +11,6 @@
 // registers a track so a thumbs-up recorded by a POST during that window is
 // preserved rather than clobbered (the ARC-002 fix).
 
-import type { ChildProcessWithoutNullStreams, SpawnOptions } from "node:child_process";
 import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -37,16 +36,35 @@ import { withGenerationSlot } from "./concurrency";
 import { mutateRadioState, readRadioState, statePath } from "./radio-state-store";
 import { ollamaGenerateUrl } from "./ollama";
 import { createAnnouncementIfEnabled } from "./radio-tts";
+import { runCommand } from "./subprocess";
+import {
+  radioQueueAutoFillDisabled,
+  radioOllamaTimeoutMs,
+  stableAudioBackend,
+  stableAudioMock,
+  stableAudioPython,
+  stableAudioTimeoutMs,
+} from "./config";
 
 const outputDir = () => path.join(process.cwd(), "public", "outputs");
 
-// In-flight maintenance tasks keyed by state-file path. A module-level Map is
-// sufficient for the single-process radio station; the generation slot
-// semaphore (@/lib/server/concurrency) is what actually bounds concurrency.
-const radioQueueMaintenance = new Map<string, Promise<void>>();
+// In-flight maintenance tasks keyed by state-file path. The Map is pinned to
+// globalThis so the "only one maintenance loop per state file" invariant
+// survives Next.js dev HMR (which re-evaluates module scope and would otherwise
+// build a fresh Map and spawn a parallel loop against the same state file). The
+// generation slot semaphore (@/lib/server/concurrency) bounds actual
+// concurrency; this Map only deduplicates the loop.
+const RADIO_QUEUE_SINGLETON_KEY = "__stableAudioRadioQueue__";
+type RadioQueueSingletons = { maintenance: Map<string, Promise<void>> };
+function radioQueueStore(): RadioQueueSingletons {
+  const g = globalThis as unknown as Partial<Record<typeof RADIO_QUEUE_SINGLETON_KEY, RadioQueueSingletons>>;
+  if (!g[RADIO_QUEUE_SINGLETON_KEY]) g[RADIO_QUEUE_SINGLETON_KEY] = { maintenance: new Map() };
+  return g[RADIO_QUEUE_SINGLETON_KEY]!;
+}
+const radioQueueMaintenance = radioQueueStore().maintenance;
 
 export function startRadioQueueMaintenance(state: RadioState) {
-  if (process.env.RADIO_QUEUE_AUTO_FILL === "false") return;
+  if (radioQueueAutoFillDisabled()) return;
   if (!buildRadioStreamState(state).needsQueueFill) return;
   const key = statePath();
   if (radioQueueMaintenance.has(key)) return;
@@ -97,7 +115,7 @@ async function cleanRadioQueue(state: RadioState) {
 export async function draftWithOllama(state: RadioState, styleId: ReturnType<typeof normalizeRadioStyleId>, promptModel: string) {
   const messages = buildRadioPromptGeneratorMessages(state, styleId, promptModel);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), Number(process.env.RADIO_OLLAMA_TIMEOUT_MS || 120000));
+  const timeout = setTimeout(() => controller.abort(), radioOllamaTimeoutMs());
 
   try {
     const response = await fetch(ollamaGenerateUrl(), {
@@ -131,9 +149,9 @@ async function generateAndRegisterRadioTrack(state: RadioState, draft: Awaited<R
   });
   const filename = await titleToFilename(draft.title, input.format, outputDir(), input.mode);
   const outPath = path.join(outputDir(), filename);
-  const python = process.env.STABLE_AUDIO_PYTHON || "python3";
-  const mock = process.env.STABLE_AUDIO_MOCK === "true";
-  const backend = resolveGenerationBackend({ envBackend: process.env.STABLE_AUDIO_BACKEND, mock });
+  const python = stableAudioPython();
+  const mock = stableAudioMock();
+  const backend = resolveGenerationBackend({ envBackend: stableAudioBackend(), mock });
   const args = buildGeneratorArgs({
     scriptPath: path.join(process.cwd(), "scripts", "generate_audio.py"),
     outputPath: outPath,
@@ -142,7 +160,7 @@ async function generateAndRegisterRadioTrack(state: RadioState, draft: Awaited<R
     mock,
   });
   const startedAt = Date.now();
-  const result = await withGenerationSlot(() => runStableAudioGeneratorProcess(python, args, Number(process.env.STABLE_AUDIO_TIMEOUT_MS || 900000)));
+  const result = await withGenerationSlot(() => runStableAudioGeneratorProcess(python, args, stableAudioTimeoutMs()));
   const generationDurationMs = Date.now() - startedAt;
   if (result.code !== 0) throw new Error("Stable Audio queue generation failed");
   const meta = buildLibraryMetadata({ filename, input, python: result, backend, generationDurationMs, title: draft.title });
@@ -170,21 +188,11 @@ async function generateAndRegisterRadioTrack(state: RadioState, draft: Awaited<R
 }
 
 async function runStableAudioGeneratorProcess(command: string, args: string[], timeoutMs: number): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  const child = await spawnRuntimeProcess(command, args, { env: { ...process.env }, cwd: process.cwd() });
-  return new Promise((resolve) => {
-    let stdout = "";
-    let stderr = "";
-    const timer = setTimeout(() => {
-      stderr += `\nTimed out after ${timeoutMs}ms`;
-      child.kill("SIGTERM");
-    }, timeoutMs);
-    child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
-    child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ code, stdout: stdout.slice(-8000), stderr: stderr.slice(-8000) });
-    });
-  });
+  // Delegates to the shared runner (ARC-007 / QA-002): previously this attached
+  // only a `close` handler, so a missing Python binary (ENOENT) emitted `error`
+  // without `close` and the queue loop hung silently. The shared runner always
+  // attaches an `error` handler and escalates SIGTERM → SIGKILL on timeout.
+  return runCommand(command, args, { timeoutMs });
 }
 
 export async function registerStarredLibraryFallbackTrack(state: RadioState, reason: string) {
@@ -420,11 +428,4 @@ async function unlinkIfPresent(filePath: string) {
     const code = error && typeof error === "object" && "code" in error ? (error as { code?: unknown }).code : undefined;
     if (code !== "ENOENT") throw error;
   }
-}
-
-// NOTE: duplicated spawn helper — see codex-client.ts note. Consolidated by
-// ARC-007 / QA-010.
-async function spawnRuntimeProcess(command: string, args: string[], options?: SpawnOptions): Promise<ChildProcessWithoutNullStreams> {
-  const { spawn } = await import("node:child_process");
-  return spawn(command, args, options ?? {}) as ChildProcessWithoutNullStreams;
 }
