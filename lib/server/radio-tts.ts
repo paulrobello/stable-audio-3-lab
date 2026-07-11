@@ -187,8 +187,16 @@ function mergeCurrentVoiceOption(options: RadioTtsVoiceOption[], currentVoice: s
 // the documented Node escape hatch for the same thing without `eval`, so the
 // dependency is visible to tooling while still resolving a runtime path.
 function loadTtsModule(modulePath: string): TtsModule {
-  const moduleRequire = createRequire(import.meta.url);
-  return moduleRequire(modulePath) as TtsModule;
+  // Route the native require through `globalThis` so Turbopack's static analysis
+  // cannot link this call site to a require() — otherwise it tries to bundle the
+  // runtime path and fails with "the request of a dependency is an expression".
+  // This is eval-free: the globalThis round-trip breaks the static chain, and at
+  // runtime the property holds the real native require from `createRequire`.
+  const g = globalThis as unknown as { __stableAudioNativeRequire?: ReturnType<typeof createRequire> };
+  if (!g.__stableAudioNativeRequire) {
+    g.__stableAudioNativeRequire = createRequire(import.meta.url);
+  }
+  return g.__stableAudioNativeRequire(modulePath) as TtsModule;
 }
 
 async function existingTrackAnnouncementFilename(track: RadioTrackRecord) {

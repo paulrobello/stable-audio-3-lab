@@ -22,6 +22,7 @@ import { getRadioStyle, normalizeRadioStyleId } from "./styles";
 
 /** Catalog of Ollama model ids supported for radio prompt generation, ordered small to large. */
 export const radioOllamaModels = [
+  "phi4-mini",
   "llama3.1:8b",
   "gemma3:12b",
   "phi4:14b",
