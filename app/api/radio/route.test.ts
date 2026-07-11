@@ -1062,18 +1062,29 @@ printf '%s' '{"likedTraits":["wide neon pads"],"dislikedTraits":["thin supersaw 
       styleId: "synthwave",
       announce: true,
       announcementFilename: "radio_announce_current.mp3",
+      durationSeconds: 1,
     });
     const next = createRadioTrackRecord({ filename: "next.mp3", title: "Next", prompt: "next", styleId: "synthwave", announce: false });
-    const state = { ...defaultRadioState(), currentTrack: current, history: [current, next] };
+    // ARC-012: advancement is now wall-clock-paced via the listener-gated
+    // ticker, not byte-consumption-paced by the listener. currentTrackStartedAt
+    // defaults to "now" (so the offset join starts at byte 0 → first chunk is
+    // "song"), and durationSeconds: 1 keeps the ticker's advance within the
+    // test window. The ticker advances currentTrack once wall-clock ≥ 1s.
+    const state = {
+      ...defaultRadioState(),
+      currentTrack: current,
+      history: [current, next],
+    };
     await writeFile(stateFile, JSON.stringify(state, null, 2));
 
     const response = await GET(new NextRequest("http://localhost:3007/api/radio?stream=1&skipAnnouncement=1"));
     const reader = response.body?.getReader();
     expect(reader).toBeTruthy();
     const first = await reader!.read();
-    const savedState = JSON.parse(await readFile(stateFile, "utf8")) as { currentTrack?: { filename?: string } };
 
     expect(Buffer.from(first.value ?? []).toString()).toBe("song");
+
+    const savedState = await waitForRadioCurrentTrack(stateFile, "next.mp3");
     expect(savedState.currentTrack?.filename).toBe("next.mp3");
     await reader!.cancel();
   }, 5000);
@@ -1116,9 +1127,20 @@ printf '%s' '{"likedTraits":["wide neon pads"],"dislikedTraits":["thin supersaw 
     await mkdir(path.dirname(stateFile), { recursive: true });
     await writeFile(path.join(outputDir, "current.mp3"), Buffer.alloc(icyMetaInterval, "a"));
     await writeFile(path.join(outputDir, "next.mp3"), Buffer.alloc(icyMetaInterval, "b"));
-    const current = createRadioTrackRecord({ filename: "current.mp3", title: "Current Signal", prompt: "current", styleId: "synthwave", announce: false });
+    const current = createRadioTrackRecord({ filename: "current.mp3", title: "Current Signal", prompt: "current", styleId: "synthwave", announce: false, durationSeconds: 1 });
     const next = createRadioTrackRecord({ filename: "next.mp3", title: "Next Signal", prompt: "next", styleId: "synthwave", announce: false });
-    const state = { ...defaultRadioState(), announceEnabled: false, currentTrack: current, history: [current, next] };
+    // ARC-012: advancement is wall-clock-paced via the listener-gated ticker.
+    // currentTrackStartedAt defaults to "now" (offset 0 → first chunk is the
+    // full 'a' fill + ICY "Current Signal"). durationSeconds: 1 keeps the
+    // ticker's advance within the test window; after exhausting current.mp3's
+    // bytes the listener idle-waits in real time and emits next.mp3 + the
+    // "Next Signal" ICY block once the ticker advances currentTrack (≈1s).
+    const state = {
+      ...defaultRadioState(),
+      announceEnabled: false,
+      currentTrack: current,
+      history: [current, next],
+    };
     await writeFile(stateFile, JSON.stringify(state, null, 2));
 
     const response = await GET(new NextRequest("http://localhost:3007/api/radio?stream=1", {
@@ -1534,6 +1556,25 @@ async function waitForRadioState(stateFile: string, predicate: (state: RadioStat
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   throw new Error(`Radio state did not match before timeout: ${JSON.stringify(lastState)}`);
+}
+
+// ARC-012 helper: polls state.json until the wall-clock ticker has advanced
+// `currentTrack` to `filename`. The ticker fires on a real ~500ms interval once
+// a stream listener is registered, so this resolves shortly after wall-clock
+// exceeds the track duration (e.g. ~1.5s for a 1s track with default start).
+async function waitForRadioCurrentTrack(stateFile: string, filename: string, timeoutMs = 2_000): Promise<{ currentTrack?: { filename?: string } }> {
+  const deadline = Date.now() + timeoutMs;
+  let last: { currentTrack?: { filename?: string } } = JSON.parse(await readFile(stateFile, "utf8"));
+  while (Date.now() < deadline) {
+    if (last.currentTrack?.filename === filename) return last;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    try {
+      last = JSON.parse(await readFile(stateFile, "utf8"));
+    } catch {
+      // poll landed mid-write; retry
+    }
+  }
+  throw new Error(`Radio currentTrack did not become ${filename} before timeout: ${JSON.stringify(last)}`);
 }
 
 function decodeIcyMetadata(chunk: Uint8Array | undefined) {

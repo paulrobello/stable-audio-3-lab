@@ -1,73 +1,62 @@
 // ICY/MP3 byte-level streaming for the radio station.
 //
-// Owns `streamCurrentTrack` (the per-listener ReadableStream that paces audio
-// chunks, interleaves ICY metadata, advances station state on track end, and
-// falls back to a starred library track on starvation) plus its segment
-// helpers and the playback-synchronized read. Extracted verbatim from
-// `app/api/radio/route.ts`; behavior is unchanged.
+// Owns `streamCurrentTrack` — the per-listener ReadableStream. Each listener
+// paces audio chunks, interleaves ICY metadata, falls back to a starred library
+// track on starvation, and joins an in-progress track at the shared wall-clock
+// byte offset. Extracted from `app/api/radio/route.ts`.
 //
-// State reads use `readSynchronizedRadioState` (which writes back the
-// playback-clock sync inside the state lock) and advancements go through
-// `mutateRadioState` — no direct `fs` touches of the state file.
+// ── ARC-012: listeners are read-only subscribers; a single station ticker
+//    owns advancement ──────────────────────────────────────────────────────
+// A listener NO LONGER advances station state when its segment is exhausted.
+// Advancement is owned solely by the wall-clock ticker in `./radio-ticker.ts`,
+// which calls `synchronizeRadioPlayback` (advance `currentTrack` while
+// `now - currentTrackStartedAt >= duration`) inside the locked state store.
+// Each listener registers with the ticker on `start` and releases on teardown
+// (cancel / deadline / error); with zero listeners the ticker stops, so a plain
+// `GET /api/radio` state poll — which never registers a listener — can never
+// advance playback. Per-pull state reads use plain `readRadioState` (read-only).
 //
-// ── Design assumption: single-listener / single-household LAN ───────────────
-// The streaming model assumes ONE concurrent listener (or a small handful on a
-// trusted LAN). Two consequences flow from that assumption and are acceptable
-// for the LAN/Pardora use case but become problems at scale on the public
-// stream (`radio.pardev.net`):
+// When a listener finishes a segment it cannot advance the track itself; it
+// records the just-played filename and idle-waits (~200 ms) until the ticker's
+// next tick advances `currentTrack`, then re-reads and builds the new segment.
 //
-//   1. Per-listener memory. Each listener's `pull()` reads an entire segment
-//      (the announcement + track, transcoded to a single MP3 via ffmpeg concat)
-//      into a single `Uint8Array` (`activeAudio`) and then slices+paces it at
-//      `RADIO_STREAM_BYTES_PER_SECOND`. A typical 2-minute track at ~128 kbps
-//      is ~2 MB, so each connected listener holds roughly that much in memory
-//      for the duration of the track. For 1–3 LAN listeners this is trivial;
-//      for dozens of public listeners it adds up. Replacing the full-buffer
-//      read with an `fs.createReadStream`-based pipe would lower this, but the
-//      pacing, ICY-metadata byte-interleaving, and mid-track resume-offset
-//      logic are all coupled to having the full buffer (`activeAudio.length`,
-//      slicing, offset math), and the multi-segment path must buffer ffmpeg's
-//      concat output regardless — so it is a non-trivial redesign left as a
-//      future item.
-//
-//   2. Listener-driven state advancement. Each listener advances the GLOBAL
-//      station state on its own track end (`advanceStreamStateAfterTrack` →
-//      `mutateRadioState` guarded by `completedTrackFilename`). The locked
-//      mutator makes this race-safe, but with many simultaneous listeners each
-//      one independently drives advancement, so listeners started at different
-//      times can disagree about what "now playing" means and the station
-//      advances at the pace of the fastest listener. The robust fix is a
-//      single station "ticker" that owns advancement while listeners become
-//      read-only subscribers — a behavior-changing redesign explicitly deferred
-//      (tracked as ARC-012 / future work).
-//
-// Until those two items land, treat public multi-listener streaming as
-// best-effort: fine for a single household and a couple of devices, not built
-// for many simultaneous remote listeners.
+// ── Deferred: per-listener memory ─────────────────────────────────────────
+// Each listener's `pull()` still reads an entire segment (announcement + track,
+// transcoded to a single MP3 via ffmpeg concat) into one `Uint8Array`
+// (`activeAudio`) and slices+paces it at `RADIO_STREAM_BYTES_PER_SECOND`. A
+// typical 2-minute track at ~128 kbps is ~2 MB held per listener for the
+// duration of the track. Fine for 1–3 LAN listeners; replacing the full-buffer
+// read with an `fs.createReadStream`-based pipe is a non-trivial redesign
+// (pacing, ICY byte-interleaving, and mid-track resume-offset are all coupled
+// to having the full buffer) and remains deferred. The advancement-model fix
+// above is the deliverable here.
 
 import { NextResponse } from "next/server";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import {
-  advanceRadioCurrentTrack,
   buildRadioTrackPlaybackFilenames,
   getRadioPlaybackElapsedSeconds,
   normalizeRadioState,
   normalizeRadioStyleUrlParam,
   replaceRadioTrackInLineup,
-  synchronizeRadioPlayback,
   type RadioState,
   type RadioTrackRecord,
 } from "@/lib/radio";
 import { isSafeAudioFilename, outputPathForAudio } from "@/lib/library";
 import { mutateRadioState, readRadioState } from "./radio-state-store";
-import { registerStarredLibraryFallbackTrack, startRadioQueueMaintenance, writeTrackRadioMetadata } from "./radio-queue-service";
+import { registerStarredLibraryFallbackTrack, writeTrackRadioMetadata } from "./radio-queue-service";
 import { createAnnouncementIfEnabled } from "./radio-tts";
+import { registerRadioStreamListener, releaseRadioStreamListener } from "./radio-ticker";
 import { spawnProcess } from "./subprocess";
 import { logWarn } from "./logger";
 import { ffmpegBin, RADIO_STREAM_BITRATE_KBPS } from "./config";
 
 const outputDir = () => path.join(process.cwd(), "public", "outputs");
+// Short re-read wait when a listener has finished its segment but the ticker
+// has not yet advanced `currentTrack` (within one tick). Keeps the loop from
+// spinning while yielding back to the runtime so the ticker can run.
+const RADIO_STREAM_RE_READ_WAIT_MS = 200;
 const RADIO_STREAM_IDLE_WAIT_MS = 1200;
 // Pacing derived from the shared bitrate constant so the sleep and resume
 // offset match the actual ffmpeg transcode byte rate (QA-011).
@@ -86,7 +75,9 @@ export async function streamCurrentTrack(state: RadioState, options: { icyMetada
   let activeAudioOffset = 0;
   let activeFilename: string | undefined;
   let activeFileStarted = false;
-  let completedTrackFilename: string | undefined;
+  // The filename just played to byte-exhaustion, awaiting the wall-clock
+  // ticker to advance `currentTrack` before we can build the next segment.
+  let awaitingAdvanceFilename: string | undefined;
   let icyBytesUntilMetadata = RADIO_STREAM_ICY_META_INTERVAL;
 
   // Safety net: enforce a max stream lifetime to prevent resource exhaustion
@@ -94,88 +85,102 @@ export async function streamCurrentTrack(state: RadioState, options: { icyMetada
   const streamDeadline = Date.now() + RADIO_STREAM_MAX_LIFETIME_MS;
   let streamAborted = false;
 
+  // Listener-gated ticker registration (ARC-012). Register exactly once per
+  // stream and release on every teardown path (cancel / deadline / error). The
+  // flag makes release idempotent and safe even if called without register.
+  let listenerRegistered = false;
+  const ensureRegistered = () => {
+    if (listenerRegistered) return;
+    registerRadioStreamListener();
+    listenerRegistered = true;
+  };
+  const ensureReleased = () => {
+    if (!listenerRegistered) return;
+    releaseRadioStreamListener();
+    listenerRegistered = false;
+  };
+
   const stream = new ReadableStream<Uint8Array>({
+    start() {
+      ensureRegistered();
+    },
     cancel() {
       streamAborted = true;
+      ensureReleased();
     },
     async pull(controller) {
-      while (true) {
-        if (streamAborted || signal?.aborted) return;
-        if (Date.now() > streamDeadline) {
-          controller.close();
-          return;
-        }
-        if (activeAudio && activeFilename) {
-          if (pendingTrack) {
-            const latestState = resolveStreamStyleState(await readSynchronizedRadioState(), options.styleId);
-            if (latestState.currentTrack?.filename !== pendingTrack.filename) {
-              streamState = latestState;
-              pendingFilenames = [];
-              pendingTrack = undefined;
+      try {
+        while (true) {
+          if (streamAborted || signal?.aborted) return;
+          if (Date.now() > streamDeadline) {
+            ensureReleased();
+            controller.close();
+            return;
+          }
+
+          // Phase A — pace and emit bytes from the active segment.
+          if (activeAudio && activeFilename) {
+            // ARC-012: read-only. If the station's current track changed
+            // (skip / select / ticker advance) mid-segment, drop this segment
+            // and re-read fresh state so the listener follows the station.
+            if (pendingTrack) {
+              const latestState = resolveStreamStyleState(await readRadioState(), options.styleId);
+              if (latestState.currentTrack?.filename !== pendingTrack.filename) {
+                streamState = latestState;
+                pendingFilenames = [];
+                pendingTrack = undefined;
+                activeAudio = undefined;
+                activeAudioOffset = 0;
+                activeFilename = undefined;
+                activeFileStarted = false;
+                awaitingAdvanceFilename = undefined;
+                continue;
+              }
+            }
+            const chunkSize = icyMetadataEnabled ? Math.min(RADIO_STREAM_CHUNK_BYTES, icyBytesUntilMetadata) : RADIO_STREAM_CHUNK_BYTES;
+            const chunk = activeAudio.slice(activeAudioOffset, activeAudioOffset + chunkSize);
+            activeAudioOffset += chunk.length;
+            if (activeFileStarted) await sleep(Math.round(chunk.length / RADIO_STREAM_BYTES_PER_SECOND * 1000));
+            activeFileStarted = true;
+            const metadataTitle = pendingTrack?.title;
+            if (activeAudioOffset >= activeAudio.length) {
+              // Segment exhausted. ARC-012: the listener does NOT advance
+              // station state — it records the played filename and lets the
+              // wall-clock ticker advance `currentTrack`, then re-reads below.
+              awaitingAdvanceFilename = pendingTrack?.filename ?? activeFilename;
               activeAudio = undefined;
               activeAudioOffset = 0;
               activeFilename = undefined;
               activeFileStarted = false;
-              completedTrackFilename = undefined;
-              continue;
             }
-          }
-          const chunkSize = icyMetadataEnabled ? Math.min(RADIO_STREAM_CHUNK_BYTES, icyBytesUntilMetadata) : RADIO_STREAM_CHUNK_BYTES;
-          const chunk = activeAudio.slice(activeAudioOffset, activeAudioOffset + chunkSize);
-          activeAudioOffset += chunk.length;
-          if (activeFileStarted) await sleep(Math.round(chunk.length / RADIO_STREAM_BYTES_PER_SECOND * 1000));
-          activeFileStarted = true;
-          const finishedFilename = activeAudioOffset >= activeAudio.length ? activeFilename : undefined;
-          const metadataTitle = pendingTrack?.title;
-          if (activeAudioOffset >= activeAudio.length) {
-            activeAudio = undefined;
-            activeAudioOffset = 0;
-            activeFilename = undefined;
-            activeFileStarted = false;
-          }
-          if (finishedFilename && pendingTrack && finishedFilename === pendingTrack.filename && pendingFilenames.length === 0) {
-            streamState = await advanceStreamStateAfterTrack(pendingTrack, options.styleId);
-            completedTrackFilename = streamState.currentTrack?.filename === pendingTrack.filename ? pendingTrack.filename : undefined;
-            pendingTrack = undefined;
-          }
-          let outputChunk = chunk;
-          if (icyMetadataEnabled) {
-            icyBytesUntilMetadata -= chunk.length;
-            if (icyBytesUntilMetadata <= 0) {
-              outputChunk = concatenateBytes(chunk, buildIcyMetadataBlock(metadataTitle));
-              icyBytesUntilMetadata = RADIO_STREAM_ICY_META_INTERVAL;
+            let outputChunk = chunk;
+            if (icyMetadataEnabled) {
+              icyBytesUntilMetadata -= chunk.length;
+              if (icyBytesUntilMetadata <= 0) {
+                outputChunk = concatenateBytes(chunk, buildIcyMetadataBlock(metadataTitle));
+                icyBytesUntilMetadata = RADIO_STREAM_ICY_META_INTERVAL;
+              }
             }
-          }
-          controller.enqueue(outputChunk);
-          return;
-        }
-
-        if (!pendingFilenames.length) {
-          if (pendingTrack) {
-            streamState = await advanceStreamStateAfterTrack(pendingTrack, options.styleId);
-            completedTrackFilename = streamState.currentTrack?.filename === pendingTrack.filename ? pendingTrack.filename : undefined;
-            pendingTrack = undefined;
+            controller.enqueue(outputChunk);
+            return;
           }
 
-          streamState = resolveStreamStyleState(await readSynchronizedRadioState(), options.styleId);
-          if (completedTrackFilename && streamState.currentTrack?.filename === completedTrackFilename) {
-            const advanced = await mutateRadioState((s) => {
-              if (s.currentTrack?.filename !== completedTrackFilename) return s;
-              const next = advanceRadioCurrentTrack(s);
-              return next.currentTrack?.filename !== s.currentTrack?.filename ? next : s;
-            });
-            if (advanced.currentTrack?.filename !== streamState.currentTrack?.filename) {
-              streamState = advanced;
-              completedTrackFilename = undefined;
-            }
+          // Phase B — no active segment: re-read state and build the next one.
+          streamState = resolveStreamStyleState(await readRadioState(), options.styleId);
+          // Just finished a segment but the ticker hasn't advanced the current
+          // track yet (within a tick). Idle-wait briefly and re-read rather
+          // than spinning or re-streaming the same track's bytes.
+          if (awaitingAdvanceFilename && streamState.currentTrack?.filename === awaitingAdvanceFilename) {
+            await sleep(RADIO_STREAM_RE_READ_WAIT_MS);
+            continue;
           }
+          awaitingAdvanceFilename = undefined;
 
           const track = streamState.currentTrack;
-          if (!track || !isSafeAudioFilename(track.filename) || !track.filename.toLowerCase().endsWith(".mp3") || track.filename === completedTrackFilename) {
+          if (!track || !isSafeAudioFilename(track.filename) || !track.filename.toLowerCase().endsWith(".mp3")) {
             const fallback = await registerStarredLibraryFallbackTrack(streamState, "stream_starvation");
             if (fallback) {
               streamState = fallback.state;
-              completedTrackFilename = undefined;
               continue;
             }
             await sleep(RADIO_STREAM_IDLE_WAIT_MS);
@@ -194,34 +199,40 @@ export async function streamCurrentTrack(state: RadioState, options: { icyMetada
           pendingFilenames = buildRadioTrackPlaybackFilenames(playableTrack, { skipAnnouncement: skipAnnouncementAudio })
             .filter((filename) => isSafeAudioFilename(filename) && filename.toLowerCase().endsWith(".mp3"));
           if (!pendingFilenames.length) continue;
-        }
 
-        const segmentFilenames = pendingFilenames.splice(0);
-        if (!segmentFilenames.length) continue;
-        const segmentFiles: { filename: string; filePath: string }[] = [];
-        for (const segmentFilename of segmentFilenames) {
-          const filePath = outputPathForAudio(outputDir(), segmentFilename);
-          try {
-            // Verify existence with stat BEFORE queueing the segment so a
-            // missing announcement is skipped, not queued to fail later (QA-004).
-            // stat avoids loading the whole file just to probe.
-            await stat(filePath);
-            segmentFiles.push({ filename: segmentFilename, filePath });
-          } catch (error) {
-            if (segmentFilename !== pendingTrack?.filename && isNotFoundError(error)) continue;
-            throw error;
+          const segmentFilenames = pendingFilenames.splice(0);
+          if (!segmentFilenames.length) continue;
+          const segmentFiles: { filename: string; filePath: string }[] = [];
+          for (const segmentFilename of segmentFilenames) {
+            const filePath = outputPathForAudio(outputDir(), segmentFilename);
+            try {
+              // Verify existence with stat BEFORE queueing the segment so a
+              // missing announcement is skipped, not queued to fail later (QA-004).
+              // stat avoids loading the whole file just to probe.
+              await stat(filePath);
+              segmentFiles.push({ filename: segmentFilename, filePath });
+            } catch (error) {
+              if (segmentFilename !== pendingTrack?.filename && isNotFoundError(error)) continue;
+              throw error;
+            }
           }
+          if (!segmentFiles.length) continue;
+          // Per-listener memory optimization (fs.createReadStream pipe) is
+          // deferred; the segment is still read as a full buffer (ARC-012
+          // deferred item — see module header).
+          activeAudio = await readRadioStreamSegment(segmentFiles.map((file) => file.filePath));
+          activeFilename = pendingTrack?.filename ?? segmentFiles.at(-1)?.filename;
+          const startsWithCurrentTrackAudio = segmentFiles[0]?.filename === pendingTrack?.filename;
+          const sharedOffset = startsWithCurrentTrackAudio && pendingTrack?.filename === streamState.currentTrack?.filename
+            ? Math.floor(getRadioPlaybackElapsedSeconds(streamState) * RADIO_STREAM_BYTES_PER_SECOND)
+            : 0;
+          activeAudioOffset = Math.min(sharedOffset, Math.max(0, activeAudio.length - 1));
+          activeFileStarted = false;
+          continue;
         }
-        if (!segmentFiles.length) continue;
-        activeAudio = await readRadioStreamSegment(segmentFiles.map((file) => file.filePath));
-        activeFilename = pendingTrack?.filename ?? segmentFiles.at(-1)?.filename;
-        const startsWithCurrentTrackAudio = segmentFiles[0]?.filename === pendingTrack?.filename;
-        const sharedOffset = startsWithCurrentTrackAudio && pendingTrack?.filename === streamState.currentTrack?.filename
-          ? Math.floor(getRadioPlaybackElapsedSeconds(streamState) * RADIO_STREAM_BYTES_PER_SECOND)
-          : 0;
-        activeAudioOffset = Math.min(sharedOffset, Math.max(0, activeAudio.length - 1));
-        activeFileStarted = false;
-        continue;
+      } catch (error) {
+        ensureReleased();
+        throw error;
       }
     },
   });
@@ -242,36 +253,6 @@ export async function streamCurrentTrack(state: RadioState, options: { icyMetada
 
 export function resolveStreamStyleState(state: RadioState, styleId: ReturnType<typeof normalizeRadioStyleUrlParam>) {
   return styleId ? normalizeRadioState({ ...state, selectedStyleId: styleId }) : state;
-}
-
-// Synchronize playback inside the state lock so concurrent POST writers and
-// the background queue loop can't be clobbered. When nothing changed the
-// mutator returns the same reference it was handed and the store skips the
-// write (matching the previous conditional-write behavior).
-export async function readSynchronizedRadioState(): Promise<RadioState> {
-  return mutateRadioState((state) => {
-    const synchronized = synchronizeRadioPlayback(state);
-    const changed = synchronized.currentTrack?.filename !== state.currentTrack?.filename
-      || synchronized.currentTrackStartedAt !== state.currentTrackStartedAt;
-    return changed ? synchronized : state;
-  });
-}
-
-async function advanceStreamStateAfterTrack(track: RadioTrackRecord, styleId: ReturnType<typeof normalizeRadioStyleUrlParam>) {
-  const latestState = resolveStreamStyleState(await readRadioState(), styleId);
-  if (latestState.currentTrack?.filename !== track.filename) return latestState;
-  const advanced = advanceRadioCurrentTrack(latestState);
-  if (advanced.currentTrack?.filename !== latestState.currentTrack?.filename) {
-    // Re-apply the advance inside the lock against the freshest state so a
-    // concurrent POST (rating/taste/select) isn't clobbered.
-    await mutateRadioState((s) => {
-      if (s.currentTrack?.filename !== track.filename) return s;
-      const next = advanceRadioCurrentTrack(s);
-      return next.currentTrack?.filename !== s.currentTrack?.filename ? next : s;
-    });
-  }
-  startRadioQueueMaintenance(advanced);
-  return advanced;
 }
 
 async function prepareTrackForStreamPlayback(track: RadioTrackRecord, state: RadioState) {

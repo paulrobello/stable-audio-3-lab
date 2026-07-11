@@ -84,8 +84,15 @@ export function normalizeRadioState(input: Partial<RadioState> | undefined): Rad
   if (parsed.currentTrack?.filename && parsed.currentTrack.styleId) {
     currentTrackByStyle[normalizeRadioStyleId(parsed.currentTrack.styleId, customStyles, deletedStyleIds)] ??= parsed.currentTrack.filename;
   }
+  // NOTE: do not synthesize a playback start time here. A missing
+  // currentTrackStartedAt means "not yet started"; the wall-clock ticker
+  // (lib/server/radio-ticker.ts) owns persisting one via synchronizeRadioPlayback.
+  // Synthesizing "now" here would float on every read (reads are read-only
+  // under ARC-012) and the ticker could never observe elapsed time, so it would
+  // never advance. Normalization validates persisted input; it does not invent
+  // runtime clock values.
   const currentTrackStartedAt = parsed.currentTrack
-    ? normalizeRadioTimestamp(parsed.currentTrackStartedAt) ?? defaults.updatedAt
+    ? normalizeRadioTimestamp(parsed.currentTrackStartedAt) ?? undefined
     : undefined;
   return alignRadioStateToSelectedStyle({
     ...defaults,

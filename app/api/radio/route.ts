@@ -55,7 +55,7 @@ import {
   startRadioQueueMaintenance,
   writeTrackRadioMetadata,
 } from "@/lib/server/radio-queue-service";
-import { readSynchronizedRadioState, resolveStreamStyleState, streamCurrentTrack } from "@/lib/server/radio-stream";
+import { resolveStreamStyleState, streamCurrentTrack } from "@/lib/server/radio-stream";
 import { lanIp, radioLanHost, radioOllamaModelsTimeoutMs, radioPublicOrigin, serverPort } from "@/lib/server/config";
 import { radioActionRequestSchema } from "@/lib/server/radio-actions";
 
@@ -69,7 +69,12 @@ export async function GET(request: NextRequest) {
     const playlistFormat = normalizePlaylistFormat(request.nextUrl.searchParams.get("playlist"));
     if (playlistFormat) return buildRadioPlaylistRouteResponse(playlistFormat, request);
     if (request.nextUrl.searchParams.get("stream") === "1") {
-      const state = await readSynchronizedRadioState();
+      // ARC-012: the stream entry is read-only. Advancement is owned solely by
+      // the listener-gated wall-clock ticker (registered inside
+      // `streamCurrentTrack`); neither this read nor the listener's per-pull
+      // reads mutate state. The non-stream GET below likewise uses plain
+      // `readRadioState`, so a state poll never advances playback.
+      const state = await readRadioState();
       const styleId = radioStyleQueryParam(request, state);
       startRadioQueueMaintenance(resolveStreamStyleState(state, styleId));
       const forceIcyMetadata = request.nextUrl.searchParams.get("icy") === "1";
