@@ -17,7 +17,7 @@
 | 2a — Critical Architecture | ✅ | fix-architecture | ARC-002/001 | 2 | 0 | ARC-001 manual-review flag |
 | 2b — Structural Architecture | ✅ | fix-architecture | ARC-003/006 | 2 | 0 | 0 |
 | 3b-A — Architecture (code) | ✅ | fix-architecture | ARC-005/007/008/009/016 | 5 | 0 | 0 |
-| 3b-B — Architecture (structural) | ✅ | fix-architecture | ARC-011/012 | 1 | 1 | ARC-012 ticker redesign deferred |
+| 3b-B — Architecture (structural) | ✅ | fix-architecture | ARC-011/012 | 2 | 0 | ARC-012 memory opt sub-item deferred |
 | 3b-C — Architecture (tooling) | ✅ | inline + agent | ARC-013/014/015 | 2 | 1 | ARC-015 worktree pruning deferred |
 | 3c-A — Code Quality (bounded) | ✅ | fix-code-quality | 11 QA issues | 11 | 0 | 0 |
 | 3c-B — Code Quality (logger/batch) | ✅ | fix-code-quality | QA-006/009 | 1 | 1 | QA-009 panel split deferred |
@@ -25,7 +25,7 @@
 | 3d — Documentation (all) | ✅ | fix-documentation | DOC-001…017 | 17 | 0 | 0 |
 | 4 — Verification | ✅ | inline | — | — | — | — |
 
-**Overall**: of 65 audited issues, **~60 fully resolved**, **4 partial** (delivered subset + documented remainder), **1 deferred** (QA-012 additive route tests). All Critical and High issues are resolved. The full `make checkall` gate (build + tests + typecheck) is green.
+**Overall**: of 65 audited issues, **~61 fully resolved**, **3 partial** (delivered subset + documented remainder), **1 deferred** (QA-012 additive route tests). All Critical and High issues are resolved, and ARC-012 (station ticker) was implemented on follow-up. The full `make checkall` gate (build + tests + typecheck) is green.
 
 > Note: Phase 3 was run **sequentially in dependency order** rather than 4-way parallel. The radio service files (`lib/server/radio-*.ts`, `lib/audio-assessment.ts`, `lib/library.ts`) are touched by three of the four domains, so parallel agents would have clobbered shared files — the audit orchestrator's own guidance for heavy overlap is to serialize. The two genuinely file-disjoint lanes (3a security + 3d docs) were run in parallel at the end.
 
@@ -55,6 +55,7 @@
 - **[ARC-008]** Duplicated model contract — TS-authoritative; Python MLX map deleted, consumes `--dit`/`--decoder` from the bridge.
 - **[ARC-009]** 16-action unvalidated radio POST — Zod discriminated union in `lib/server/radio-actions.ts`.
 - **[ARC-011]** `lib/radio.ts` 1,481-line monolith — split into `lib/radio/{types,styles,state,prompts,tts,urls,index}.ts` (barrel re-export; pure move).
+- **[ARC-012]** Listener-driven station advancement → single **listener-gated, globalThis-pinned wall-clock ticker** (`lib/server/radio-ticker.ts`) is now the sole advancement owner (`synchronizeRadioPlayback`); stream listeners are read-only subscribers that read `currentTrack` + the playback clock and stream from the wall-clock byte offset. Solves the "listeners disagree / station advances at the fastest listener's pace" consistency bug. (Per-listener memory/`createReadStream` optimization remains deferred.)
 - **[ARC-013]** (≡ QA-018) No linter — ESLint flat config + `eslint-config-next` + typescript-eslint; `make lint` runs tsc + eslint.
 - **[ARC-014]** No CI — `.github/workflows/ci.yml` runs typecheck + test + build on push/PR.
 - **[ARC-016]** Scattered env reads / UI copy in schema — `lib/server/config.ts` centralizes reads; UI copy moved to `lib/ui-presets.ts`.
@@ -97,10 +98,9 @@
 - **Deferred**: the full panel-by-panel split of `app/page.tsx` (~1,721 lines) and `RadioStationClient.tsx` (~1,531 lines) into `components/` with `useReducer` slices. With no component tests and no interactive verification available in this run, blind UI refactoring was judged too risky.
 - **Effort**: medium-large (needs interactive UI verification + ideally component tests first — see QA-012).
 
-### [ARC-012] — Single station ticker (PARTIAL)
-- **What landed**: the single-listener/LAN assumption + memory characteristic documented in `lib/server/radio-stream.ts`.
-- **Deferred**: the full behavior-changing ticker redesign (single state owner, read-only listeners via `createReadStream`) — needs its own test strategy.
-- **Effort**: medium-large.
+### [ARC-012] — Per-listener memory optimization (remaining sub-item)
+- **What landed**: the full wall-clock station ticker + read-only listeners (see Resolved). The advancement-consistency bug ARC-012 targets is fixed.
+- **Deferred**: the per-listener memory optimization — replacing the full-buffer segment read with an `fs.createReadStream` pipe. The pacing/ICY/offset logic is coupled to the buffer, so this is a separate change.
 
 ### [ARC-015] — Abandoned worktree pruning (PARTIAL)
 - **What landed**: untracked the `output/playwright/audio-assessment-radio.png` artifact; root `/output/` gitignored.
@@ -138,7 +138,7 @@ No regressions: every phase was verified (tsc + vitest, plus the full `make chec
 
 **13 commits, 76 files changed (+15,742 / −3,605)** on `fix/audit-remediation` (base `2af79c5`). Highlights:
 
-**New source modules** (`lib/server/`): `concurrency.ts`, `atomic-json-store.ts`, `radio-state-store.ts`, `ollama.ts`, `codex-client.ts`, `radio-tts.ts`, `radio-queue-service.ts`, `radio-stream.ts`, `subprocess.ts`, `config.ts`, `radio-actions.ts`, `logger.ts`. **`lib/radio/`** package (7 files) split from the old monolith. `lib/generation-batch.ts`, `lib/ui-presets.ts`, `middleware.ts`.
+**New source modules** (`lib/server/`): `concurrency.ts`, `atomic-json-store.ts`, `radio-state-store.ts`, `radio-ticker.ts`, `ollama.ts`, `codex-client.ts`, `radio-tts.ts`, `radio-queue-service.ts`, `radio-stream.ts`, `subprocess.ts`, `config.ts`, `radio-actions.ts`, `logger.ts`. **`lib/radio/`** package (7 files) split from the old monolith. `lib/generation-batch.ts`, `lib/ui-presets.ts`, `middleware.ts`.
 
 **New docs**: `docs/reference/api.md`, `docs/architecture/system-overview.md`, `docs/troubleshooting/common-errors.md`, `apps/pardora-ios/README.md`, `CONTRIBUTING.md`, `.github/workflows/ci.yml`, `eslint.config.mjs`.
 
@@ -155,5 +155,5 @@ Run `git diff 2af79c5..HEAD` for the full change set; `git log --oneline 2af79c5
 1. **SEC-006 migration (required before radio TTS works again)**: move provider keys from `~/.claude/.env` into `.env.local`.
 2. **Verify iOS**: run `make pardora-checkall` for the SEC-009/QA-017 Swift changes.
 3. **Review the two flagged-for-manual items** (SEC-001 auth design, ARC-001 TTS load) before public exposure; ensure the public tunnel does not forward mutating `/api/radio` POST.
-4. **Pick up the deferred items** when capacity allows: QA-012 (route/component tests) → QA-009 (god-component split, which also clears the 12 ESLint warnings) → ARC-012 (ticker) → ARC-015 (worktree pruning).
+4. **Pick up the deferred items** when capacity allows: QA-012 (route/component tests) → QA-009 (god-component split, which also clears the 12 ESLint warnings) → ARC-012 per-listener memory optimization (`createReadStream`) → ARC-015 (worktree pruning).
 5. **Re-run `/audit`** to confirm the residual posture (should drop from 65 issues to ~5 deferred/partial).
