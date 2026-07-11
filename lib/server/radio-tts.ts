@@ -3,14 +3,19 @@
 // Owns: announcement generation (`createAnnouncementIfEnabled`), the voice-test
 // endpoint helper (`createTestVoiceAudio`), provider dispatch, the
 // `loadTtsModule` / `resolveRadioTtsModulePath` resolution, MP3 transcoding,
-// and the provider API-key fallback chain (process env → par-tts config →
-// `~/.claude/.env`). Extracted verbatim from `app/api/radio/route.ts`;
-// behavior is unchanged.
+// and the provider API-key resolution chain.
 //
 // The TTS module is loaded via `createRequire` from `RADIO_TTS_MODULE_PATH`
-// (or `RADIO_TTS_NODE_MODULE_PATH` for kokoro). API-key resolution in
-// `readLocalEnvApiKey` is preserved exactly — it is the `~/.claude/.env`
-// fallback flagged for manual review by SEC-006 and is NOT changed here.
+// (or `RADIO_TTS_NODE_MODULE_PATH` for kokoro).
+//
+// SECURITY (SEC-006): provider API keys are resolved ONLY from the app's own
+// trust boundary — the `par-tts` config file (PAR_TTS_CONFIG_PATH / standard
+// par-tts config locations) and then the app `process.env` (.env.local). The
+// previous fallback that read the developer's global `~/.claude/.env` has been
+// REMOVED because it coupled the web app's trust boundary to global agent
+// credentials. Operators who previously relied on keys in `~/.claude/.env` must
+// migrate them to `.env.local` (see docs/troubleshooting/common-errors.md,
+// "Radio: no DJ announcements or TTS silent").
 
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -21,7 +26,6 @@ import {
   buildRadioAnnouncementFilename,
   getRadioTtsVoiceOptions,
   readRadioConfigFileValue,
-  readRadioEnvFileValue,
   resolveRadioAnnouncementFilename,
   type RadioState,
   type RadioTrackRecord,
@@ -209,13 +213,14 @@ async function fileExists(filePath: string) {
 }
 
 async function providerApiKey(provider: string) {
+  // SEC-006: keys come ONLY from the par-tts config file or the app's own
+  // process env (.env.local). The previous `~/.claude/.env` fallback was
+  // removed — it coupled the app to the developer's global agent credentials.
   const keys = providerApiKeyNames(provider);
   const configKeys = providerConfigApiKeyNames(provider);
   const configValue = await readParTtsConfigApiKey(configKeys);
   if (configValue) return configValue;
-  const envValue = keys.map((key) => process.env[key]).find(Boolean);
-  if (envValue) return envValue;
-  return readLocalEnvApiKey(keys);
+  return keys.map((key) => process.env[key]).find(Boolean);
 }
 
 function providerApiKeyNames(provider: string) {
@@ -268,13 +273,4 @@ function parTtsConfigPaths() {
     path.join(homedir(), "Library", "Application Support", "par-tts", "config.yaml"),
     path.join(homedir(), ".config", "par-tts", "config.yaml"),
   ].filter((filePath): filePath is string => Boolean(filePath));
-}
-
-async function readLocalEnvApiKey(keys: string[]) {
-  try {
-    const contents = await readFile(path.join(homedir(), ".claude", ".env"), "utf8");
-    return keys.map((key) => readRadioEnvFileValue(contents, key)).find(Boolean);
-  } catch {
-    return undefined;
-  }
 }

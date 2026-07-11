@@ -496,11 +496,14 @@ final class RadioAppModelTests: XCTestCase {
 
     func testAutoRefreshDiscoversLANOriginBeforeStateExists() async {
         let transport = LANDiscoveryRadioTransport()
+        // The /24 subnet scan is opt-in (SEC-009); enable it here to exercise
+        // the discovery path.
         let model = RadioAppModel(
             serverOrigin: "https://radio.pardev.net",
             endpointMode: .auto,
             transport: transport,
-            localIPv4Addresses: { ["192.168.1.40"] }
+            localIPv4Addresses: { ["192.168.1.40"] },
+            enableLanSubnetScan: true
         )
 
         await model.refresh()
@@ -513,10 +516,13 @@ final class RadioAppModelTests: XCTestCase {
 
     func testLocalRefreshDiscoversLANOriginBeforeStateExists() async {
         let transport = LANDiscoveryRadioTransport()
+        // The /24 subnet scan is opt-in (SEC-009); enable it here to exercise
+        // the discovery path.
         let model = RadioAppModel(
             endpointMode: .local,
             transport: transport,
-            localIPv4Addresses: { ["192.168.1.40"] }
+            localIPv4Addresses: { ["192.168.1.40"] },
+            enableLanSubnetScan: true
         )
 
         await model.refresh()

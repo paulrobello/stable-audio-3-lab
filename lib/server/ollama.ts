@@ -13,15 +13,43 @@
 //   * `OLLAMA_TITLE_MODEL` (default `phi4-mini`) selects the title-generation model.
 //
 // All env reads go through `@/lib/server/config` (ARC-016).
+//
+// SECURITY (SEC-008): the Ollama target is OPERATOR-CONFIG-ONLY. The base URL
+// is sourced exclusively from server-side environment variables
+// (`OLLAMA_BASE_URL` / `OLLAMA_HOST` / `OLLAMA_PORT`) and defaults to the
+// loopback address `127.0.0.1`. No request-derived data (query params, body
+// fields, headers) ever flows into the resolved URL — `resolveOllamaBaseUrl()`
+// takes no arguments by design, so an SSRF-style request that tried to point
+// the server at an attacker-controlled Ollama has no surface to influence. The
+// validation below rejects anything that is not a well-formed http(s) URL so a
+// malformed operator config fails loudly instead of producing a surprising
+// request.
 
 import { ollamaBaseUrl as configuredOllamaBaseUrl, ollamaHost, ollamaPort, ollamaTitleModel } from "./config";
 import { logWarn } from "./logger";
 
 const TITLE_SYSTEM_PROMPT = `You are a creative music title generator. Given a description of audio, generate a short, evocative title (2-6 words). Return ONLY the title text with no quotes, no punctuation at the end, no explanation. Be creative and concise. The mode is {mode}.`;
 
-/** Resolve the configured Ollama base URL (no trailing slash). */
+/**
+ * Resolve the configured Ollama base URL (no trailing slash).
+ *
+ * Operator-config-only (SEC-008): reads exclusively from environment via
+ * `@/lib/server/config`. Throws on a malformed non-http(s) value so a bad
+ * operator setting is diagnosed immediately rather than producing an
+ * unexpected outbound request.
+ */
 function resolveOllamaBaseUrl(): string {
-  return configuredOllamaBaseUrl() ?? `http://${ollamaHost()}:${ollamaPort()}`;
+  const resolved = configuredOllamaBaseUrl() ?? `http://${ollamaHost()}:${ollamaPort()}`;
+  let parsed: URL;
+  try {
+    parsed = new URL(resolved);
+  } catch {
+    throw new Error(`Ollama base URL is not a valid URL: ${resolved}`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`Ollama base URL must use http or https: ${resolved}`);
+  }
+  return parsed.origin;
 }
 
 /** Full URL for the Ollama `/api/generate` completion endpoint. */

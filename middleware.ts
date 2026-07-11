@@ -47,9 +47,63 @@ export function middleware(request: NextRequest): NextResponse {
         { status: 401, headers: { "WWW-Authenticate": AUTH_REALM } },
       );
     }
+    // CSRF defense (SEC-005): when auth is active, require mutating JSON
+    // requests to originate from the app's own host. The check is skipped when
+    // NEITHER Origin nor Referer is present, so non-browser clients (the Pardora
+    // iOS/watchOS/CarPlay app, curl) keep working unchanged — those carry the
+    // bearer token directly and present no CSRF surface. A browser-originated
+    // cross-site POST (which would carry the victim's cookies and a foreign
+    // Origin) is rejected with 403.
+    const originViolation = checkSameOrigin(request);
+    if (originViolation) {
+      return NextResponse.json(
+        { ok: false, error: originViolation },
+        { status: 403 },
+      );
+    }
   }
 
   return NextResponse.next();
+}
+
+// Returns an error string when the request's Origin/Referer does not match the
+// app's own host (CSRF), or null when the request is allowed. The check is
+// bypassed (returns null) when neither header is present, since that indicates
+// a non-browser client that carries the bearer token out-of-band.
+function checkSameOrigin(request: NextRequest): string | null {
+  const origin = request.headers.get("origin");
+  const referer = request.headers.get("referer");
+  if (!origin && !referer) return null;
+
+  const host = request.headers.get("host");
+  if (!host) return null;
+
+  const source = origin ?? referer!;
+  let parsed: URL;
+  try {
+    parsed = new URL(source);
+  } catch {
+    return "Invalid Origin/Referer header";
+  }
+  if (!isAllowedScheme(parsed.protocol)) {
+    return "Blocked request source";
+  }
+  // Compare hostname; also compare port when the Host header carries one so a
+  // cross-port request on the same host is still caught (e.g. localhost:3008 ->
+  // localhost:3007). An empty Host port (public default-port origins) skips the
+  // port comparison.
+  if (parsed.hostname !== host.split(":")[0]) {
+    return "Cross-origin requests are not permitted for this endpoint";
+  }
+  const requestPort = host.split(":")[1];
+  if (requestPort && parsed.port && parsed.port !== requestPort) {
+    return "Cross-origin requests are not permitted for this endpoint";
+  }
+  return null;
+}
+
+function isAllowedScheme(protocol: string): boolean {
+  return protocol === "http:" || protocol === "https:";
 }
 
 function readBearerToken(request: NextRequest): string | null {

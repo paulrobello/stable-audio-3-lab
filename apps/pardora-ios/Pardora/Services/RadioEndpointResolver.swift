@@ -77,6 +77,14 @@ enum RadioEndpointResolver {
             .contains { $0.isSameSubnet(as: remote) }
     }
 
+    /// Builds the full /24 LAN candidate origin list (SEC-009).
+    ///
+    /// This is the noisy cleartext-HTTP subnet scan and is intended as a
+    /// last-resort fallback. `RadioAppModel.shouldDiscoverLAN` gates it behind
+    /// an explicit opt-in (`enableLanSubnetScan`); the explicitly configured
+    /// `serverOrigin` and `refreshCandidateOrigins` are always tried first.
+    /// ATS remains `NSAllowsLocalNetworking`-only, so these probes are
+    /// restricted to private LAN ranges.
     static func lanCandidateOrigins(localIPv4Addresses: [String], port: Int = 3007) -> [String] {
         let localAddresses = localIPv4Addresses
             .compactMap(IPv4Address.init)

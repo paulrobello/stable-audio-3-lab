@@ -7,6 +7,12 @@ import Observation
 final class RadioAppModel {
     var endpointMode: RadioEndpointMode
     var serverOrigin: String
+    /// When false (the default), the noisy /24 cleartext-HTTP LAN subnet scan
+    /// (SEC-009) is skipped entirely. Discovery then prefers the explicitly
+    /// configured `serverOrigin` and `refreshCandidateOrigins`; the full subnet
+    /// probe only runs when an operator opts in by setting this to true. Future
+    /// work can add Bonjour/mDNS discovery as a quieter middle step.
+    var enableLanSubnetScan: Bool
     var state: RadioStreamState?
     var isRefreshing = false
     var statusMessage: String?
@@ -34,11 +40,13 @@ final class RadioAppModel {
         endpointMode: RadioEndpointMode = .auto,
         transport: RadioTransport = URLSession.shared,
         actionClient: RadioActionClient? = nil,
-        localIPv4Addresses: @escaping @Sendable () -> [String] = RadioEndpointResolver.localIPv4Addresses
+        localIPv4Addresses: @escaping @Sendable () -> [String] = RadioEndpointResolver.localIPv4Addresses,
+        enableLanSubnetScan: Bool = false
     ) {
         self.serverOrigin = serverOrigin
         self.endpointMode = endpointMode
         self.transport = transport
+        self.enableLanSubnetScan = enableLanSubnetScan
         // Guard against an empty/corrupt persisted serverOrigin (QA-017): fall
         // back to the default public origin instead of crashing at init. The
         // force unwrap on the default is safe — it is a compile-time constant
@@ -491,6 +499,12 @@ final class RadioAppModel {
     }
 
     private var shouldDiscoverLAN: Bool {
+        // SEC-009: the /24 cleartext-HTTP subnet scan is opt-in. The explicitly
+        // configured `serverOrigin` (and `refreshCandidateOrigins`) is always
+        // tried first; the subnet probe only runs when the operator enables it.
+        guard enableLanSubnetScan else {
+            return false
+        }
         switch endpointMode {
         case .auto, .local:
             true
