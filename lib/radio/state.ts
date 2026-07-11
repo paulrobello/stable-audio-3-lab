@@ -46,9 +46,12 @@ const DEFAULT_UNLIKED_TRACK_EXPIRATION_HOURS = 24;
 const RADIO_QUEUE_TARGET = 3;
 const RADIO_HISTORY_LIMIT = 50;
 const STREAM_URL = "/api/radio?stream=1";
+/** Allowed song-length options (in minutes) for generated radio tracks. */
 export const radioSongLengthMinuteOptions = [1, 2, 3, 4, 5, 6] as const;
+/** Allowed unliked-track expiration options (in hours) before cleanup eligibility. */
 export const radioUnlikedTrackExpirationHourOptions = [1, 6, 12, 24, 48, 72, 168] as const;
 
+/** Returns a fresh radio state populated with built-in defaults, stamped at `now`. */
 export function defaultRadioState(now = new Date().toISOString()): RadioState {
   return {
     selectedStyleId: "synthwave",
@@ -69,6 +72,7 @@ export function defaultRadioState(now = new Date().toISOString()): RadioState {
   };
 }
 
+/** Coerces arbitrary persisted input into a valid `RadioState`, filling defaults and reconciling per-style queue positions. */
 export function normalizeRadioState(input: Partial<RadioState> | undefined): RadioState {
   const parsed = input ?? {};
   const defaults = defaultRadioState();
@@ -100,10 +104,12 @@ export function normalizeRadioState(input: Partial<RadioState> | undefined): Rad
   });
 }
 
+/** Returns `"up"` or `"down"` only for the recognized rating literals, otherwise `null`. */
 export function normalizeRadioRating(value: unknown): RadioRating | null {
   return value === "up" || value === "down" ? value : null;
 }
 
+/** Coerces a value to a valid song-length minute option, falling back to the default. */
 export function normalizeRadioSongLengthMinutes(value: unknown): number {
   const minutes = typeof value === "number" ? value : Number(value);
   return radioSongLengthMinuteOptions.includes(minutes as (typeof radioSongLengthMinuteOptions)[number])
@@ -111,6 +117,7 @@ export function normalizeRadioSongLengthMinutes(value: unknown): number {
     : DEFAULT_RADIO_SONG_LENGTH_MINUTES;
 }
 
+/** Coerces a value to a valid expiration-hour option, falling back to the default. */
 export function normalizeRadioUnlikedTrackExpirationHours(value: unknown): number {
   const hours = typeof value === "number" ? value : Number(value);
   return radioUnlikedTrackExpirationHourOptions.includes(hours as (typeof radioUnlikedTrackExpirationHourOptions)[number])
@@ -118,6 +125,7 @@ export function normalizeRadioUnlikedTrackExpirationHours(value: unknown): numbe
     : DEFAULT_UNLIKED_TRACK_EXPIRATION_HOURS;
 }
 
+/** Creates a custom style and selects it, returning the new state and style; `undefined` if label/prompt validation fails. */
 export function createRadioStyle(
   state: RadioState,
   input: { label?: unknown; seedPrompt?: unknown; negativePrompt?: unknown },
@@ -143,6 +151,7 @@ export function createRadioStyle(
   return { state: nextState, style };
 }
 
+/** Updates an existing style's fields (promoting a deleted built-in back into customStyles); `undefined` if not found or invalid. */
 export function updateRadioStyle(
   state: RadioState,
   input: { styleId?: unknown; label?: unknown; seedPrompt?: unknown; negativePrompt?: unknown },
@@ -169,6 +178,7 @@ export function updateRadioStyle(
   return { state: nextState, style };
 }
 
+/** Removes a style (soft-deletes built-ins, prunes custom) and realigns the selection; `undefined` if not found. */
 export function deleteRadioStyle(state: RadioState, styleIdInput: unknown): { state: RadioState; deletedStyle: RadioStyle } | undefined {
   const styleId = typeof styleIdInput === "string" ? styleIdInput.trim() : "";
   const deletedStyle = getAvailableRadioStyles(state).find((style) => style.id === styleId);
@@ -194,6 +204,7 @@ export function deleteRadioStyle(state: RadioState, styleIdInput: unknown): { st
   return { state: stateWithoutDeletedStyle, deletedStyle };
 }
 
+/** Sets the active style and realigns the current track, resetting playback start if the current track changed. */
 export function selectRadioStyle(state: RadioState, styleIdInput: unknown): RadioState {
   const selectedStyleId = normalizeRadioStyleId(styleIdInput, state.customStyles, state.deletedStyleIds);
   const updatedAt = nextTimestamp(state.updatedAt);
@@ -201,6 +212,7 @@ export function selectRadioStyle(state: RadioState, styleIdInput: unknown): Radi
   return setRadioPlaybackStartIfCurrentChanged({ ...aligned, updatedAt }, state.currentTrack, updatedAt);
 }
 
+/** Applies a thumbs up/down phrase to a style's preferences and stamps the current/history track record with the rating. */
 export function recordRadioRating(state: RadioState, styleIdInput: unknown, phraseInput: unknown, ratingInput: unknown): RadioState {
   const rating = normalizeRadioRating(ratingInput);
   const phrase = typeof phraseInput === "string" ? phraseInput.trim().slice(0, 180) : "";
@@ -234,6 +246,7 @@ export function recordRadioRating(state: RadioState, styleIdInput: unknown, phra
   };
 }
 
+/** Builds a `RadioTrackRecord` from generation outputs with cleaned, clamped metadata and a unique id. */
 export function createRadioTrackRecord({
   filename,
   title,
@@ -280,6 +293,7 @@ export function createRadioTrackRecord({
   };
 }
 
+/** Inserts a track into the per-style lineup, updates the current pointer, caps history, and selects its style. */
 export function registerRadioTrack(state: RadioState, track: RadioTrackRecord): RadioState {
   const existing = state.history.filter((item) => item.filename !== track.filename);
   const existingCurrentTrack = findCurrentTrackForStyle({ ...state, history: existing }, track.styleId);
@@ -316,6 +330,7 @@ function findRadioQueueInsertIndex(history: RadioTrackRecord[], currentIndex: nu
   return insertIndex;
 }
 
+/** Overwrites a track record in-place across current/history without altering queue position. */
 export function replaceRadioTrackInLineup(state: RadioState, track: RadioTrackRecord): RadioState {
   const currentTrackByStyle = state.currentTrackByStyle[track.styleId] === track.filename
     ? { ...state.currentTrackByStyle, [track.styleId]: track.filename }
@@ -329,6 +344,7 @@ export function replaceRadioTrackInLineup(state: RadioState, track: RadioTrackRe
   };
 }
 
+/** Selects a history track (mp3 only) as current, switching to its style and resetting playback start. */
 export function selectRadioTrack(state: RadioState, filenameInput: unknown): { state: RadioState; selectedTrack?: RadioTrackRecord } {
   const filename = typeof filenameInput === "string" ? filenameInput.trim() : "";
   const selectedTrack = state.history.find((track) => track.filename === filename && track.filename.toLowerCase().endsWith(".mp3"));
@@ -350,6 +366,7 @@ export function selectRadioTrack(state: RadioState, filenameInput: unknown): { s
   };
 }
 
+/** Removes the current track from history and advances to the next same-style mp3 (or clears it). */
 export function rejectCurrentRadioTrack(state: RadioState): { state: RadioState; rejectedTrack?: RadioTrackRecord } {
   const rejectedTrack = state.currentTrack;
   if (!rejectedTrack) return { state };
@@ -376,6 +393,7 @@ export function rejectCurrentRadioTrack(state: RadioState): { state: RadioState;
   };
 }
 
+/** Advances the current pointer to the next same-style mp3 in the queue; no-op if none remains. */
 export function advanceRadioCurrentTrack(state: RadioState, nowInput?: string): RadioState {
   if (!state.currentTrack) return state;
   const currentIndex = state.history.findIndex((track) => track.filename === state.currentTrack?.filename);
@@ -402,6 +420,7 @@ function clampRadioAdvanceTimestampToTrackCreation(timestamp: string, track: Rad
   return new Date(createdAtMs).toISOString();
 }
 
+/** Advances the current track as far as elapsed playback duration warrants relative to `now`. */
 export function synchronizeRadioPlayback(state: RadioState, nowInput = new Date().toISOString()): RadioState {
   const nowMs = Date.parse(nowInput);
   if (!Number.isFinite(nowMs) || !state.currentTrack) return state;
@@ -423,6 +442,7 @@ export function synchronizeRadioPlayback(state: RadioState, nowInput = new Date(
   return nextState;
 }
 
+/** Returns seconds elapsed in the current track, clamped to its duration (0 if not playing). */
 export function getRadioPlaybackElapsedSeconds(state: RadioState, nowInput = new Date().toISOString()) {
   if (!state.currentTrack || !state.currentTrackStartedAt) return 0;
   const startedMs = Date.parse(state.currentTrackStartedAt);
@@ -432,6 +452,7 @@ export function getRadioPlaybackElapsedSeconds(state: RadioState, nowInput = new
   return Math.min(elapsedSeconds, radioTrackDurationSeconds(state, state.currentTrack));
 }
 
+/** Returns how many same-style mp3 tracks remain after the current one in the queue. */
 export function getRadioQueueAheadCount(state: RadioState) {
   if (!state.currentTrack) return state.history.filter((track) => track.styleId === state.selectedStyleId && isRadioMp3Track(track)).length;
   const currentIndex = state.history.findIndex((track) => track.filename === state.currentTrack?.filename);
@@ -440,10 +461,12 @@ export function getRadioQueueAheadCount(state: RadioState) {
   return state.history.slice(currentIndex + 1).filter((track) => track.styleId === styleId && isRadioMp3Track(track)).length;
 }
 
+/** Returns true when queued-ahead tracks fall below the target, signaling more generation is needed. */
 export function shouldGenerateRadioQueueTrack(state: RadioState, targetAhead = 3) {
   return getRadioQueueAheadCount(state) < targetAhead;
 }
 
+/** Returns non-liked mp3 tracks older than the expiration window, eligible for deletion. */
 export function findRadioTracksForCleanup(state: RadioState, nowInput = new Date().toISOString(), maxAgeHours = state.unlikedTrackExpirationHours) {
   const now = Date.parse(nowInput);
   if (!Number.isFinite(now)) return [];
@@ -456,6 +479,7 @@ export function findRadioTracksForCleanup(state: RadioState, nowInput = new Date
   });
 }
 
+/** Returns later duplicate-title mp3 tracks (not current, not liked) past the minimum age, for dedupe cleanup. */
 export function findDuplicateRadioTitleTracks(state: RadioState, nowInput = new Date().toISOString(), minAgeMinutes = 10) {
   const now = Date.parse(nowInput);
   if (!Number.isFinite(now)) return [];
@@ -474,6 +498,7 @@ export function findDuplicateRadioTitleTracks(state: RadioState, nowInput = new 
   });
 }
 
+/** Drops the given tracks from history and recomputes the current pointer and queue positions. */
 export function removeRadioTracksFromLineup(state: RadioState, tracks: RadioTrackRecord[]): RadioState {
   const filenames = new Set(tracks.map((track) => track.filename));
   if (!filenames.size) return state;
@@ -495,6 +520,7 @@ export function removeRadioTracksFromLineup(state: RadioState, tracks: RadioTrac
   }, state.currentTrack, updatedAt);
 }
 
+/** Projects state into a `RadioStreamState` snapshot with stream readiness, queue fill, and stream URL. */
 export function buildRadioStreamState(state: RadioState): RadioStreamState {
   const streamReady = !!state.currentTrack?.filename.toLowerCase().endsWith(".mp3");
   const queueAheadCount = getRadioQueueAheadCount(state);
@@ -511,6 +537,7 @@ export function buildRadioStreamState(state: RadioState): RadioStreamState {
   };
 }
 
+/** Builds the queue-generation status (generating/queued/idle) and pending-count from current fill. */
 export function buildRadioQueueGenerationStatus(state: RadioState, active = false): RadioQueueGenerationStatus {
   const queueAheadCount = getRadioQueueAheadCount(state);
   const pendingCount = Math.max(0, RADIO_QUEUE_TARGET - queueAheadCount);
@@ -522,6 +549,7 @@ export function buildRadioQueueGenerationStatus(state: RadioState, active = fals
   };
 }
 
+/** Computes aggregate stats: generated-song count, thumbs up/down totals, and audio disk usage. */
 export function buildRadioStats(state: RadioState, audioDiskBytes = 0): RadioStats {
   const preferences = Object.values(state.preferences);
   return {

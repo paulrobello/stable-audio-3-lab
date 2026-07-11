@@ -1,3 +1,10 @@
+/**
+ * Persisted, load-throttled audio-assessment queue shared by the Library, Radio,
+ * and YouTube flows. Runs a local audio assessor subprocess (configured via
+ * STABLE_AUDIO_ASSESSOR_COMMAND) to extract structured attributes from a track
+ * and writes them into the track's metadata sidecar. One queue plus one
+ * globalThis-pinned processor/retry timer survive Next.js dev HMR.
+ */
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { cpus, loadavg } from "node:os";
 import path from "node:path";
@@ -7,13 +14,16 @@ import { withGenerationSlot } from "./server/concurrency";
 import { runCommand } from "./server/subprocess";
 import { stableAudioAssessorCommand, stableAudioAssessorTimeoutMs } from "./server/config";
 
+/** CODE CONSTANT (hard-coded source value, not an env var): 1-minute load-average / CPU-count ratio at which the queue pauses new assessments. */
 export const AUDIO_ASSESSMENT_LOAD_THRESHOLD = 0.25;
 
 /** Max attempts before a failing job is dead-lettered (QA-001). */
 const ASSESSMENT_MAX_ATTEMPTS = 3;
 
+/** Origin of an assessment request: a library track, a radio queue item, or a temporary upload. */
 export type AssessmentSource = "library" | "radio" | "upload";
 
+/** Request to assess a generated track identified by its library filename, with optional context for prompt building. */
 export type AudioAssessmentRequest = {
   filename: string;
   source?: AssessmentSource;
@@ -35,6 +45,7 @@ type AssessmentAttributes = {
   key?: string;
 };
 
+/** Structured assessment result produced by the assessor and written into a track's metadata sidecar. */
 export type AudioAssessment = {
   assessedAt: string;
   provider: string;
@@ -62,6 +73,7 @@ type AssessmentQueueJob = AudioAssessmentRequest & {
   attempts: number;
 };
 
+/** Snapshot of the assessment queue: pending count, load-throttle state (idle/queued/paused), load ratio, and the next pending job. */
 export type AudioAssessmentQueueStatus = {
   pendingCount: number;
   status: "idle" | "queued" | "paused";
@@ -71,6 +83,13 @@ export type AudioAssessmentQueueStatus = {
   nextRating?: string | number;
 };
 
+/**
+ * Error thrown from assessment operations and surfaced to the API layer.
+ *
+ * @param message - human-readable error description.
+ * @param status - HTTP-like status code carried to the API response (e.g. 503 unset, 500 subprocess failure, 400 bad input).
+ * @param detail - optional structured payload with command output or diagnostics.
+ */
 export class AudioAssessmentError extends Error {
   constructor(message: string, public status: number, public detail?: unknown) {
     super(message);
@@ -99,6 +118,14 @@ const outputDir = () => path.join(process.cwd(), "public", "outputs");
 const queuePath = () => path.join(process.cwd(), ".stable-audio-assessments", "queue.json");
 const deadLetterPath = () => path.join(process.cwd(), ".stable-audio-assessments", "dead-letter.json");
 
+/**
+ * Runs the assessor subprocess against a library track and writes the result
+ * into its metadata sidecar.
+ *
+ * @param request - filename and optional source/title/prompt context for prompt building.
+ * @returns the normalized assessment and the updated metadata object.
+ * @throws {AudioAssessmentError} when the assessor command is unset (503), the audio file is missing, or the subprocess exits non-zero (500).
+ */
 export async function assessAudioFile(request: AudioAssessmentRequest) {
   const filename = normalizeSafeFilename(request.filename);
   const assessorCommand = stableAudioAssessorCommand();
@@ -134,6 +161,15 @@ export async function assessAudioFile(request: AudioAssessmentRequest) {
   return { assessment, meta: updated };
 }
 
+/**
+ * Runs the assessor subprocess against a temporary uploaded audio file and
+ * returns the assessment without writing a metadata sidecar (uploads are not
+ * added to the library).
+ *
+ * @param request - absolute audio path, filename, and optional title/prompt for the temp upload.
+ * @returns the normalized assessment.
+ * @throws {AudioAssessmentError} when the assessor command is unset (503), the upload is missing, or the subprocess exits non-zero (500).
+ */
 export async function assessUploadedAudioFile(request: { audioPath: string; filename: string; title?: string; prompt?: string }) {
   const assessorCommand = stableAudioAssessorCommand();
   if (!assessorCommand) {
@@ -163,6 +199,15 @@ export async function assessUploadedAudioFile(request: { audioPath: string; file
   return { assessment: normalizeAssessment(commandResult.stdout, sourceInfo) };
 }
 
+/**
+ * Appends a job to the persisted assessment queue, deduplicating on the full
+ * job identity (filename + rating) so a re-rated track can re-queue while an
+ * identical repeat is skipped, and short-circuiting when the track already has
+ * a finished assessment. Jobs beyond the 200-entry ceiling are dropped.
+ *
+ * @param request - filename and optional source/title/prompt/style/rating context.
+ * @returns the queued job, or undefined when the request was a duplicate or already assessed.
+ */
 export async function enqueueAudioAssessment(request: AudioAssessmentRequest) {
   const filename = normalizeSafeFilename(request.filename);
   const metadata = await readAudioMetadata(filename);
@@ -195,6 +240,11 @@ export async function enqueueAudioAssessment(request: AudioAssessmentRequest) {
   return job;
 }
 
+/**
+ * Starts the queue processor loop if one is not already running. Idempotent:
+ * the processor (and its retry timer) are pinned to globalThis so a single loop
+ * survives Next.js dev HMR rather than spawning a parallel one per reload.
+ */
 export function startAudioAssessmentQueueProcessing() {
   const store = assessmentStore();
   if (store.queueProcessor) return store.queueProcessor;
@@ -211,6 +261,15 @@ export function startAudioAssessmentQueueProcessing() {
   return store.queueProcessor;
 }
 
+/**
+ * Drains the queue: dequeues each pending job, runs the assessor, and writes
+ * the result. Pauses (returns deferred) when the system load ratio reaches the
+ * threshold; on failure, re-queues the job at the tail for retry and
+ * dead-letters it after the max attempt count so one bad track never stalls the queue.
+ *
+ * @param options.loadRatio - override the measured load ratio (testing); defaults to the live 1-minute average / CPU count.
+ * @returns the number of jobs processed and whether the run deferred due to load or a re-queued failure.
+ */
 export async function processAudioAssessmentQueue(options: { loadRatio?: number } = {}) {
   if (!stableAudioAssessorCommand()) return { processed: 0, deferred: false };
 
@@ -259,6 +318,13 @@ export async function processAudioAssessmentQueue(options: { loadRatio?: number 
   }
 }
 
+/**
+ * Returns a snapshot of the queue: pending count, load-throttle state
+ * (idle/queued/paused), current load ratio, threshold, and the next pending
+ * job's filename/rating.
+ *
+ * @param options.loadRatio - override the measured load ratio (testing); defaults to the live 1-minute average / CPU count.
+ */
 export async function getAudioAssessmentQueueStatus(options: { loadRatio?: number } = {}): Promise<AudioAssessmentQueueStatus> {
   const queue = await readAssessmentQueue();
   const loadRatio = options.loadRatio ?? currentSystemLoadRatio();
@@ -377,6 +443,7 @@ function normalizeAssessment(stdout: string, source: AudioAssessment["source"]):
   };
 }
 
+/** Returns a new metadata object with the finished assessment appended to history (capped at 20) and the queue status marked done. */
 function appendAssessmentMetadata(metadata: Record<string, unknown>, assessment: AudioAssessment, status: "done") {
   const previous = Array.isArray(metadata.assessments) ? metadata.assessments : [];
   return {
@@ -391,6 +458,7 @@ function appendAssessmentMetadata(metadata: Record<string, unknown>, assessment:
   };
 }
 
+/** True when the metadata already holds a completed assessment (latest, history list, or queue status done). */
 function hasFinishedAssessment(metadata: Record<string, unknown>) {
   if (metadata.latestAssessment && typeof metadata.latestAssessment === "object") return true;
   if (Array.isArray(metadata.assessments) && metadata.assessments.length > 0) return true;
@@ -520,6 +588,7 @@ function readBalancedJsonObject(text: string, start: number) {
   return undefined;
 }
 
+/** Spawns the configured assessor subprocess with a JSON payload on stdin; delegates to the shared runCommand which escalates SIGTERM to SIGKILL on timeout. */
 function runAssessorCommand(command: string, payload: unknown, timeoutMs: number): Promise<{ code: number | null; stdout: string; stderr: string }> {
   const { file, args } = parseAssessorCommand(command);
   // Delegates to the shared runner (ARC-007): the assessor is the reference
@@ -570,14 +639,17 @@ function parseAssessorCommand(command: string) {
   return { file, args };
 }
 
+/** Returns the trimmed string when value is a non-empty string, otherwise undefined. */
 function readString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+/** Returns the value when it is a finite number, otherwise undefined. */
 function readNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+/** Coerces a value-or-array into a trimmed, non-empty string array. */
 function readStringArray(value: unknown) {
   if (Array.isArray(value)) return value.map((item) => readString(item)).filter(Boolean) as string[];
   const single = readString(value);

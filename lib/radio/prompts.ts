@@ -20,6 +20,7 @@ import type {
 import { cleanShortText, compactTimestamp, randomSuffix, nextTimestamp } from "./_internal";
 import { getRadioStyle, normalizeRadioStyleId } from "./styles";
 
+/** Catalog of Ollama model ids supported for radio prompt generation, ordered small to large. */
 export const radioOllamaModels = [
   "llama3.1:8b",
   "gemma3:12b",
@@ -29,11 +30,17 @@ export const radioOllamaModels = [
   "gemma3:27b",
 ] as const;
 
+/** Default Ollama prompt model (the first entry in {@link radioOllamaModels}) used when none is configured or valid. */
 const DEFAULT_PROMPT_MODEL = radioOllamaModels[0];
 const RADIO_ENDING_GUIDANCE = "play as one complete song through the full requested duration, with an outro only at the end; do not restart and do not begin a second song";
 
 export { DEFAULT_PROMPT_MODEL };
 
+/**
+ * Validates an Ollama prompt-model id, falling back to the default model when the value is missing, oversized, or contains disallowed characters.
+ *
+ * @returns A safe model id string suitable for use in an Ollama request.
+ */
 export function normalizeOllamaPromptModel(value: unknown): string {
   if (typeof value !== "string") return DEFAULT_PROMPT_MODEL;
   const model = value.trim();
@@ -41,6 +48,7 @@ export function normalizeOllamaPromptModel(value: unknown): string {
   return model;
 }
 
+/** Builds the LLM prompt used to derive a custom radio style (label, seed prompt, negative prompt) from a free-text user request. */
 export function buildRadioStyleGenerationPrompt(requestInput: unknown): string {
   const request = typeof requestInput === "string" ? cleanShortText(requestInput, "", 500) : "";
   return [
@@ -55,6 +63,7 @@ export function buildRadioStyleGenerationPrompt(requestInput: unknown): string {
   ].join("\n");
 }
 
+/** Parses an LLM JSON response into a {@link RadioStyleDraft}, falling back to the request text and defaults; returns `undefined` when the result is too short to use. */
 export function parseRadioStyleDraft(rawResponse: string, requestInput: unknown): RadioStyleDraft | undefined {
   try {
     const parsed = JSON.parse(extractJsonObject(rawResponse)) as Partial<Record<"label" | "seedPrompt" | "negativePrompt", unknown>>;
@@ -71,6 +80,7 @@ export function parseRadioStyleDraft(rawResponse: string, requestInput: unknown)
   }
 }
 
+/** Assembles the prompt seed for a style by combining its base direction, listener likes/dislikes, the distilled taste profile, and recent history (titles/prompts) so the generator avoids repetition. */
 export function buildRadioPromptSeed(state: RadioState, styleIdInput: unknown): string {
   const styleId = normalizeRadioStyleId(styleIdInput, state.customStyles, state.deletedStyleIds);
   const style = getRadioStyle(styleId, state.customStyles, state.deletedStyleIds);
@@ -99,6 +109,7 @@ export function buildRadioPromptSeed(state: RadioState, styleIdInput: unknown): 
   ].filter(Boolean).join("\n");
 }
 
+/** Builds the LLM prompt that distills a style's thumbs-up/down feedback into a compact, JSON-shaped Stable Audio 3 taste profile. */
 export function buildRadioTasteDistillationPrompt(state: RadioState, styleIdInput: unknown): string {
   const styleId = normalizeRadioStyleId(styleIdInput, state.customStyles, state.deletedStyleIds);
   const style = getRadioStyle(styleId, state.customStyles, state.deletedStyleIds);
@@ -123,6 +134,7 @@ export function buildRadioTasteDistillationPrompt(state: RadioState, styleIdInpu
   ].join("\n");
 }
 
+/** Returns a new {@link RadioState} with the given distilled taste profile attached to the resolved style's preference, normalizing each trait list and stamping source/model metadata. */
 export function updateRadioTasteProfile(state: RadioState, styleIdInput: unknown, input: RadioTasteProfileInput, modelInput: unknown, now = new Date().toISOString()): RadioState {
   const styleId = normalizeRadioStyleId(styleIdInput, state.customStyles, state.deletedStyleIds);
   const previous = state.preferences[styleId] ?? { likes: [], dislikes: [] };
@@ -148,6 +160,7 @@ export function updateRadioTasteProfile(state: RadioState, styleIdInput: unknown
   };
 }
 
+/** Builds the Ollama provider request (system + user prompt) that asks the model to emit one new instrumental track prompt as JSON for the next radio render. */
 export function buildRadioPromptGeneratorMessages(state: RadioState, styleIdInput: unknown, modelInput: unknown) {
   const styleId = normalizeRadioStyleId(styleIdInput, state.customStyles, state.deletedStyleIds);
   const model = normalizeOllamaPromptModel(modelInput);
@@ -170,6 +183,7 @@ export function buildRadioPromptGeneratorMessages(state: RadioState, styleIdInpu
   };
 }
 
+/** Constructs a normalized {@link RadioPromptDraft} from raw title/prompt/negative-prompt fields, cleaning text, appending ending guidance, and tagging provider/model metadata. */
 export function createRadioPromptDraft({
   title,
   prompt,
@@ -205,6 +219,7 @@ export function createRadioPromptDraft({
   };
 }
 
+/** Builds a deterministic, LLM-free {@link RadioPromptDraft} that varies the style seed with a unique variant name and the most recent liked/disliked textures, used when Ollama is unavailable or its response is unparseable. */
 export function createFallbackRadioPromptDraft(state: RadioState, styleIdInput: unknown, modelInput: unknown, nowInput = new Date().toISOString()): RadioPromptDraft {
   const styleId = normalizeRadioStyleId(styleIdInput, state.customStyles, state.deletedStyleIds);
   const style = getRadioStyle(styleId, state.customStyles, state.deletedStyleIds);
@@ -236,6 +251,7 @@ export function createFallbackRadioPromptDraft(state: RadioState, styleIdInput: 
   });
 }
 
+/** Parses an Ollama JSON response into a {@link RadioPromptDraft}, de-duplicating the title; on any parse failure returns a deterministic fallback draft tagged with the raw response. */
 export function parseRadioPromptDraft(rawResponse: string, state: RadioState, styleIdInput: unknown, modelInput: unknown): RadioPromptDraft {
   const styleId = normalizeRadioStyleId(styleIdInput, state.customStyles, state.deletedStyleIds);
   const style = getRadioStyle(styleId, state.customStyles, state.deletedStyleIds);
@@ -257,6 +273,12 @@ export function parseRadioPromptDraft(rawResponse: string, state: RadioState, st
   }
 }
 
+/**
+ * Returns a track title unique against `history`, appending or incrementing a trailing numeric suffix (preserving zero-padding width) when a collision is detected.
+ *
+ * @param history - Prior track records whose titles form the collision set.
+ * @returns A de-duplicated title capped to 80 characters.
+ */
 export function makeUniqueRadioTrackTitle(titleInput: string, history: Pick<RadioTrackRecord, "title">[]): string {
   const title = cleanShortText(stripRadioKeeperSuffix(titleInput), "Untitled Signal", 80);
   const existingTitles = history.map((track) => cleanShortText(stripRadioKeeperSuffix(track.title), "", 120)).filter(Boolean);

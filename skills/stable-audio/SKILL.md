@@ -49,10 +49,10 @@ If the server doesn't respond within 30 seconds, stop and tell the user.
 | `seed` | integer | no | random | Reproducibility seed (0–2147483647). Same seed + same settings = same output. |
 | `negativePrompt` | string | no | `""` | What to avoid (max 500 chars) |
 | `mock` | boolean | no | `false` | Fast fake audio for testing without model inference |
-| `title` | string | no | — | Explicit title for the track. Used as the filename (slugified). Duplicates get a `-2`, `-3` suffix. |
-| `autoTitle` | boolean | no | `false` | Auto-generate a creative title via Ollama (phi4-mini). Overrides `title` if neither is set. Filename is derived from the generated title. |
+| `title` | string | no | — | Explicit title for the track. Slugified into the filename (e.g. `"Neon Pulse"` → `neon_pulse`). In SFX mode the slug gets an `_sfx` suffix (e.g. `door_slam_sfx.mp3`). Collisions append `_2`, `_3` so nothing is overwritten. |
+| `autoTitle` | boolean | no | `false` | Only used when `title` is **not** provided: ask Ollama (phi4-mini) to generate a creative title from the prompt, then slugify it. `title` always wins when both are set. |
 
-**Title resolution:** If `title` is provided, it is used directly. Otherwise, if `autoTitle` is `true`, the server calls Ollama to generate a title from the prompt. If neither is set, the filename falls back to `sa3-{mode}-{timestamp}.{format}`.
+**Title resolution:** If `title` is provided, it is used directly (slugified; `_sfx` suffix in SFX mode). Otherwise, if `autoTitle` is `true`, the server calls Ollama to generate a title from the prompt. If neither is set, the filename falls back to `sa3-{mode}-{timestamp}.{format}`. Requires Ollama running locally (`OLLAMA_HOST`/`OLLAMA_PORT`, default `127.0.0.1:11434`); model set by `OLLAMA_TITLE_MODEL`.
 
 ### Model guide
 

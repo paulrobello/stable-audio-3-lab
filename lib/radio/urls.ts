@@ -10,6 +10,14 @@ import { normalizeRadioStyleUrlParam } from "./styles";
 
 const RADIO_STATION_TITLE = "Stable Audio 3 Lab Radio";
 
+/**
+ * Build the LAN (`http://<ip>:<port>/api/radio?stream=1`) MP3 stream URL.
+ *
+ * Returns `undefined` unless `lanIp` is a valid IPv4 address. Appends the
+ * optional `style` query param when `styleIdInput` resolves to a known style.
+ *
+ * @returns The stream URL string, or `undefined` for an invalid IP.
+ */
 export function buildRadioLanStreamUrl(lanIp: string | undefined, port: string | number | undefined, styleIdInput?: unknown) {
   const host = typeof lanIp === "string" ? lanIp.trim() : "";
   if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return undefined;
@@ -17,6 +25,14 @@ export function buildRadioLanStreamUrl(lanIp: string | undefined, port: string |
   return appendRadioStyleParam(new URL(`http://${host}:${safePort}/api/radio?stream=1`), styleIdInput);
 }
 
+/**
+ * Build the public-origin stream URL (`<origin>/api/radio?stream=1`).
+ *
+ * Accepts only `http:`/`https:` origins; returns `undefined` for an empty or
+ * non-parseable origin. Appends the optional `style` query param when valid.
+ *
+ * @returns The stream URL string, or `undefined` for an invalid origin.
+ */
 export function buildRadioPublicStreamUrl(origin: string | undefined, styleIdInput?: unknown) {
   const trimmed = typeof origin === "string" ? origin.trim() : "";
   if (!trimmed) return undefined;
@@ -32,18 +48,21 @@ export function buildRadioPublicStreamUrl(origin: string | undefined, styleIdInp
   }
 }
 
+/** Build the public m3u + pls playlist URL pair for the given origin, or `undefined` if the origin is invalid. */
 export function buildRadioPlaylistUrls(origin: string | undefined, styleIdInput?: unknown): RadioPlaylistUrls | undefined {
   const m3u = buildRadioRootUrl(origin, "/radio.m3u", styleIdInput);
   const pls = buildRadioRootUrl(origin, "/radio.pls", styleIdInput);
   return m3u && pls ? { m3u, pls } : undefined;
 }
 
+/** Append the `icy=1` query param to a stream URL so the server returns ICY "tune in" metadata headers. */
 export function buildRadioTuneInStreamUrl(streamUrl: string) {
   const url = new URL(streamUrl);
   url.searchParams.set("icy", "1");
   return url.toString();
 }
 
+/** Render the full text body of an m3u or pls playlist file pointing at `streamUrl`. */
 export function buildRadioPlaylistContent(format: RadioPlaylistFormat, streamUrl: string, title = RADIO_STATION_TITLE) {
   if (format === "m3u") {
     return [

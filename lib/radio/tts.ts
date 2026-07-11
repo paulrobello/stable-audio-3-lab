@@ -17,6 +17,7 @@ const DEFAULT_TTS_VOICE = "nova";
 const DEFAULT_ANNOUNCEMENT_PREFIX = "Now playing: ";
 const DEFAULT_ANNOUNCEMENT_SUFFIX = "";
 
+/** Default TTS station constants — provider, voice, and announcement prefix/suffix used to seed a fresh station. */
 export { DEFAULT_TTS_PROVIDER, DEFAULT_TTS_VOICE, DEFAULT_ANNOUNCEMENT_PREFIX, DEFAULT_ANNOUNCEMENT_SUFFIX };
 
 const radioTtsVoicesByProvider: Record<RadioTtsProvider, RadioTtsVoiceOption[]> = {
@@ -112,16 +113,24 @@ const radioTtsVoicesByProvider: Record<RadioTtsProvider, RadioTtsVoiceOption[]> 
   ],
 };
 
+/** Coerce an unknown value to a supported TTS provider, mapping the legacy `"kokoro"` alias to `"kokoro-onnx"` and falling back to the default provider. */
 export function normalizeRadioTtsProvider(value: unknown): RadioTtsProvider {
   if (value === "kokoro") return "kokoro-onnx";
   return value === "elevenlabs" || value === "deepgram" || value === "gemini" || value === "openai" || value === "kokoro-onnx" ? value : DEFAULT_TTS_PROVIDER;
 }
 
+/**
+ * Normalize free-form announcement text: collapse whitespace and cap at 120 characters.
+ *
+ * @param value - Raw input; non-string values yield the fallback.
+ * @param fallback - Returned when the input is not a string.
+ */
 export function normalizeRadioTtsText(value: unknown, fallback: string): string {
   if (typeof value !== "string") return fallback;
   return value.replace(/\s+/g, " ").slice(0, 120);
 }
 
+/** Validate and trim a TTS voice id, rejecting empty, over-long, or quote/angle-bracket-containing values by returning the default voice. */
 export function normalizeRadioTtsVoice(value: unknown): string {
   if (typeof value !== "string") return DEFAULT_TTS_VOICE;
   const voice = value.trim();
@@ -129,6 +138,7 @@ export function normalizeRadioTtsVoice(value: unknown): string {
   return voice;
 }
 
+/** Return the voice catalog for a provider, prepending a custom current voice (if set and not already listed) so an out-of-catalog selection stays selectable. */
 export function getRadioTtsVoiceOptions(providerInput: unknown, currentVoiceInput?: unknown): RadioTtsVoiceOption[] {
   const provider = normalizeRadioTtsProvider(providerInput);
   const voices = radioTtsVoicesByProvider[provider];
@@ -137,11 +147,13 @@ export function getRadioTtsVoiceOptions(providerInput: unknown, currentVoiceInpu
   return [{ id: currentVoice, label: currentVoice }, ...voices];
 }
 
+/** Return the first (default) voice id for a provider, falling back to the global default voice when the catalog is empty. */
 export function defaultRadioTtsVoice(providerInput: unknown): string {
   const provider = normalizeRadioTtsProvider(providerInput);
   return radioTtsVoicesByProvider[provider][0]?.id ?? DEFAULT_TTS_VOICE;
 }
 
+/** Build a fully-validated `RadioTtsConfig` from a partial or untyped input by normalizing each field against its defaults. */
 export function normalizeRadioTtsConfig(input: Partial<RadioTtsConfig> | Record<string, unknown>): RadioTtsConfig {
   return {
     ttsProvider: normalizeRadioTtsProvider(input.ttsProvider),
@@ -151,10 +163,12 @@ export function normalizeRadioTtsConfig(input: Partial<RadioTtsConfig> | Record<
   };
 }
 
+/** Compose the spoken announcement string for a track by wrapping its title with the configured prefix and suffix. */
 export function buildAnnouncementText(title: string, config: RadioTtsConfig): string {
   return cleanShortText(`${config.announcementPrefix}${title}${config.announcementSuffix}`, title, 240);
 }
 
+/** Build a deterministic, filesystem-safe MP3 filename for a track's announcement, embedding a slug of the audio base, a signature slug, and a short hash of the announcement + provider + voice + model. */
 export function buildRadioAnnouncementFilename(track: Pick<RadioTrackRecord, "filename" | "title">, config: RadioTtsConfig & { ttsModel?: string }) {
   const audioBase = track.filename.replace(/\.[^.]+$/, "");
   const signature = [
@@ -166,6 +180,7 @@ export function buildRadioAnnouncementFilename(track: Pick<RadioTrackRecord, "fi
   return `radio_announce_${slugForFilename(audioBase, 48)}_${slugForFilename(signature, 36)}_${shortHash(signature)}.mp3`;
 }
 
+/** Resolve the announcement filename for playback, preferring the track's own value and falling back to one nested under `metadata.radio.announcementFilename`; returns `undefined` when neither is safe. */
 export function resolveRadioAnnouncementFilename(track: Pick<RadioTrackRecord, "announcementFilename">, metadata: unknown) {
   if (isSafeAnnouncementFilename(track.announcementFilename)) return track.announcementFilename;
   const metadataRecord = metadata && typeof metadata === "object" ? metadata as Record<string, unknown> : {};
@@ -174,6 +189,7 @@ export function resolveRadioAnnouncementFilename(track: Pick<RadioTrackRecord, "
   return isSafeAnnouncementFilename(filename) ? filename : undefined;
 }
 
+/** Build the ordered list of audio filenames for a track's playback (announcement first unless skipped, then the track itself), dropping any missing entries. */
 export function buildRadioTrackPlaybackFilenames(track: RadioTrackRecord, options: { skipAnnouncement?: boolean } = {}) {
   return [
     !options.skipAnnouncement && isSafeAnnouncementFilename(track.announcementFilename) ? track.announcementFilename : undefined,
@@ -181,6 +197,7 @@ export function buildRadioTrackPlaybackFilenames(track: RadioTrackRecord, option
   ].filter((filename): filename is string => !!filename);
 }
 
+/** Parse a `KEY=value` env-file string and return the first matching key's unquoted value, or `undefined` when absent. */
 export function readRadioEnvFileValue(contents: string, key: string) {
   const keyPattern = new RegExp(`^\\s*${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*=\\s*(.*)\\s*$`);
   for (const line of contents.split(/\r?\n/)) {
@@ -191,6 +208,7 @@ export function readRadioEnvFileValue(contents: string, key: string) {
   return undefined;
 }
 
+/** Parse a YAML-style `key: value` config-file string and return the first matching key's value with inline comments and surrounding quotes stripped, or `undefined` when absent. */
 export function readRadioConfigFileValue(contents: string, key: string) {
   const keyPattern = new RegExp(`^\\s*${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:\\s*(.*)\\s*$`);
   for (const line of contents.split(/\r?\n/)) {

@@ -208,6 +208,7 @@ def run_process_tree(command: list[str], cwd: Path, timeout_seconds: float):
 
 
 def terminate_process_tree(process: subprocess.Popen[str], grace_seconds: float) -> tuple[str, str]:
+    """Stop a subprocess group with SIGTERM, escalating to SIGKILL after ``grace_seconds``, and return its accumulated stdout/stderr."""
     if process.poll() is not None:
         return process.communicate()
 

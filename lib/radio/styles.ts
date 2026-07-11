@@ -12,6 +12,7 @@
 import type { RadioStyle, RadioStyleId, RadioState } from "./types";
 import { cleanShortText, shortHash } from "./_internal";
 
+/** Built-in radio style seed catalog (synthwave, ambient, cinematic, lofi, experimental). */
 export const radioStyles: RadioStyle[] = [
   {
     id: "synthwave",
@@ -45,6 +46,14 @@ export const radioStyles: RadioStyle[] = [
   },
 ];
 
+/**
+ * Resolve the effective style list: built-ins plus custom styles, minus deleted ids.
+ *
+ * A custom style whose id collides with a built-in overrides the built-in entry.
+ *
+ * @param stateOrCustomStyles - Either a `RadioState` slice (`customStyles`/`deletedStyleIds`), a raw `RadioStyle[]` (treated as custom-only with no deletions), or omitted.
+ * @returns Merged list of available styles.
+ */
 export function getAvailableRadioStyles(stateOrCustomStyles?: Pick<RadioState, "customStyles" | "deletedStyleIds"> | RadioStyle[]): RadioStyle[] {
   const customStyles = Array.isArray(stateOrCustomStyles) ? stateOrCustomStyles : stateOrCustomStyles?.customStyles ?? [];
   const deletedStyleIds = new Set(Array.isArray(stateOrCustomStyles) ? [] : stateOrCustomStyles?.deletedStyleIds ?? []);
@@ -56,19 +65,47 @@ export function getAvailableRadioStyles(stateOrCustomStyles?: Pick<RadioState, "
   ];
 }
 
+/**
+ * Validate `value` against the available styles, falling back to a safe default.
+ *
+ * @returns `value` if it names an available style, otherwise the first available style id, or `"synthwave"` if none exist.
+ */
 export function normalizeRadioStyleId(value: unknown, customStyles: RadioStyle[] = [], deletedStyleIds: RadioStyleId[] = []): RadioStyleId {
   const availableStyles = getAvailableRadioStyles({ customStyles, deletedStyleIds });
   return availableStyles.some((style) => style.id === value) ? value as RadioStyleId : availableStyles[0]?.id ?? "synthwave";
 }
 
+/**
+ * Validate a URL-style param against the available styles (no fallback).
+ *
+ * Unlike `normalizeRadioStyleId`, this returns `undefined` for an unknown or
+ * missing value so callers can distinguish "absent" from "default".
+ *
+ * @returns `value` if it names an available style, otherwise `undefined`.
+ */
 export function normalizeRadioStyleUrlParam(value: unknown, customStyles: RadioStyle[] = [], deletedStyleIds: RadioStyleId[] = []): RadioStyleId | undefined {
   return getAvailableRadioStyles({ customStyles, deletedStyleIds }).some((style) => style.id === value) ? value as RadioStyleId : undefined;
 }
 
+/**
+ * Look up a style by id, falling back to the first built-in if not found.
+ *
+ * @returns The matching available style, or `radioStyles[0]` as a last resort.
+ */
 export function getRadioStyle(styleId: RadioStyleId, customStyles: RadioStyle[] = [], deletedStyleIds: RadioStyleId[] = []) {
   return getAvailableRadioStyles({ customStyles, deletedStyleIds }).find((style) => style.id === styleId) ?? radioStyles[0];
 }
 
+/**
+ * Derive a unique, slug-style style id from a label, avoiding ids already in `styles`.
+ *
+ * Appends `-2`, `-3`, ... for collisions (capped at 99), then falls back to a
+ * timestamped hash suffix if all numeric variants are taken.
+ *
+ * @param label - Source text to slugify (falls back to `"custom-style"` when empty).
+ * @param styles - Already-known styles whose ids must not be reused.
+ * @returns A unique, lowercase-hyphenated id.
+ */
 export function makeUniqueRadioStyleId(label: string, styles: RadioStyle[]) {
   const base = slugForStyleId(label) || "custom-style";
   const used = new Set(styles.map((style) => style.id));
@@ -80,6 +117,15 @@ export function makeUniqueRadioStyleId(label: string, styles: RadioStyle[]) {
   return `${base}-${shortHash(`${label}-${Date.now()}`)}`;
 }
 
+/**
+ * Coerce untrusted input into a clean, deduplicated array of custom styles.
+ *
+ * Drops non-objects and entries failing minimum-length checks on `label` (>=2)
+ * and `seedPrompt` (>=8); re-slugs/dedupes ids against built-ins and earlier
+ * entries; caps the result at the last 30 styles.
+ *
+ * @returns Validated custom styles ready to store on `RadioState`.
+ */
 export function normalizeCustomRadioStyles(value: unknown): RadioStyle[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
@@ -105,6 +151,14 @@ export function normalizeCustomRadioStyles(value: unknown): RadioStyle[] {
   return customStyles.slice(-30);
 }
 
+/**
+ * Coerce untrusted input into a clean, deduplicated list of deleted style ids.
+ *
+ * Slugifies each string entry, drops blanks and duplicates, and caps the result
+ * at the last 30 ids.
+ *
+ * @returns Validated deleted-style-id list.
+ */
 export function normalizeDeletedRadioStyleIds(value: unknown): RadioStyleId[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();

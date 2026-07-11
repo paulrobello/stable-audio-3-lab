@@ -25,7 +25,7 @@ No formatter is configured (`make fmt` is a no-op).
 
 ## Architecture
 
-**Single-page client app** — all UI components live in `app/page.tsx` (~1200 lines). The `components/` directory is unused.
+**Single-page client app** — the generation lab UI lives in `app/page.tsx` (a large single-file component) and the radio station UI in `app/radio/RadioStationClient.tsx`. The `components/` directory is currently unused.
 
 **API routes** (all in `app/api/`):
 - `POST /api/generate` — spawns Python subprocess for audio generation; accepts `title` (explicit) or `autoTitle` (AI-generated via Ollama) to derive the output filename from a human-readable title
@@ -35,8 +35,8 @@ No formatter is configured (`make fmt` is a no-op).
 - `POST /api/library/crop` — ffmpeg-based audio trimming
 - `POST /api/assess` — runs the configured local audio-language model against a generated track; writes the structured `analysis` result into its metadata sidecar
 - `POST /api/assess/upload` — temporary local reference-track upload → analyze → return a music prompt (audio not added to the library)
-- `POST /api/assess/youtube` — Codex/`yt-dlp`-backed YouTube reference extraction → analyze → prompt (temp MP3 under `.stable-audio-assessments/uploads/`)
-- `GET /api/radio` — continuous AI radio station: live queue, LAN + public MP3 stream URLs, DJ announcements, taste profile, and stats (consumed by Pardora)
+- `POST /api/assess/youtube` — deterministic `yt-dlp` + `ffmpeg` YouTube reference extraction → analyze → prompt (temp MP3 under `.stable-audio-assessments/uploads/`; no LLM/agent)
+- `GET /api/radio` — continuous AI radio station: live queue, LAN + public MP3 stream URLs, DJ announcements, taste profile, and stats (consumed by Pardora). `?stream=1` serves the continuous MP3/ICY stream. `POST` carries the mutating station actions behind an opt-in bearer token.
 
 **Python bridge** (`scripts/generate_audio.py`) — handles both mock WAV synthesis (stdlib only) and real Stable Audio 3 inference via MLX or PyTorch. Runs in its own process group with timeout-based SIGTERM/SIGKILL escalation.
 
@@ -47,10 +47,12 @@ No formatter is configured (`make fmt` is a no-op).
 - `generator-backend.ts` — MLX vs Torch backend routing, model-to-MLX mapping, CLI arg building
 - `library.ts` — metadata sidecars, title-to-filename slugification with duplicate detection, custom ZIP builder (no external zip lib), crop utilities, SVG screenshot cards
 - `metadata-settings.ts` — deserializes metadata back into reusable UI settings ("Load config")
-- `radio.ts` (~1481 LOC, largest source file) — radio station: state machine, styles, queue management, taste-distillation prompt builder (thumbs up/down batched into a `RadioTasteProfile` that rewrites future prompts), multi-provider TTS announcements (`openai`/`elevenlabs`/`deepgram`/`gemini`/`kokoro-onnx`), and LAN/public stream-URL builders
-- `audio-assessment.ts` — shared assessor-subprocess provider contract; load-throttled (`AUDIO_ASSESSMENT_LOAD_THRESHOLD`) persisted queue backing Library/Radio/YouTube assessment
+- `audio-assessment.ts` — shared assessor-subprocess provider contract; load-throttled persisted queue backing Library/Radio/YouTube assessment
 - `assessment-prompt.ts` — converts assessor JSON attributes into a music prompt
 - `radio-playlist-response.ts` — `/api/radio` response shape
+- `ui-presets.ts` — UI copy (control tips, prompt template groups); clamp limits exported as `GENERATION_LIMITS` from `generation.ts`
+- `radio/` — the radio domain as a barrel (`types.ts`, `styles.ts`, `state.ts`, `prompts.ts`, `tts.ts`, `urls.ts`); import from `@/lib/radio`
+- `server/` — impure orchestration extracted from the radio route: `radio-state-store.ts` (atomic, locked state), `radio-queue-service.ts`, `radio-stream.ts`, `radio-tts.ts`, `radio-actions.ts` (Zod POST schema), `codex-client.ts`, `ollama.ts` (`generateTitle`/`cleanTitle` + the Ollama client), `subprocess.ts` (shared runner), `concurrency.ts` (single generation slot), `atomic-json-store.ts`, `config.ts` (centralized env readers), `logger.ts`
 
 **Data flow**: Frontend → API route → `spawn(python, generate_audio.py)` → WAV/MP3 in `public/outputs/` + JSON sidecar → library panel reads sidecars.
 
@@ -58,9 +60,15 @@ No formatter is configured (`make fmt` is a no-op).
 
 ## Subsystems beyond generation
 
-- **Radio station** — A continuous, generative station served from `/api/radio`. It builds the live queue, exposes a LAN (`*.m3u`/`.pls`) and public MP3 stream URL, generates DJ announcements via configurable TTS providers, and distills the listener's thumbs up/down into a `RadioTasteProfile` (via `codex exec`) that rewrites future generation prompts. TTS API keys fall back to `~/.claude/.env`.
-- **Audio assessment** — The Assess buttons run a local audio-language model (Qwen2.5-Omni-7B by default) over a track and store structured attributes in the sidecar. One load-throttled, persisted queue (`.stable-audio-assessments/queue.json`) serves Library, Radio, and YouTube flows through a single subprocess-provider contract; it survives dev-server restarts.
-- **Reference tracks** — Drop an audio file, paste a YouTube URL, or drag a browser link into the Reference panel. YouTube extraction runs `codex exec` against the repo-local `youtube-audio-extract` skill (`yt-dlp` + `ffmpeg`) into a temp MP3, which is assessed and converted to a prompt; the source audio is never added to `public/outputs/`.
+- **Radio station** — A continuous, generative station served from `/api/radio`. It builds the live queue, exposes a LAN (`*.m3u`/`.pls`) and public MP3 stream URL, generates DJ announcements via configurable TTS providers, and distills the listener's thumbs up/down into a `RadioTasteProfile` (via the Codex CLI) that rewrites future generation prompts. Radio state lives in an atomic, locked store (`.stable-audio-radio/state.json`, temp-file + rename). TTS provider keys resolve from the app's own `.env.local` / process env only — do not read shared developer credential files such as `~/.claude/.env` (SEC-006).
+- **Audio assessment** — The Assess buttons run a local audio-language model (Qwen2.5-Omni-7B by default) over a track and store structured attributes in the sidecar. One load-throttled, persisted queue (`.stable-audio-assessments/queue.json`) serves Library, Radio, and YouTube flows through a single subprocess-provider contract; it survives dev-server restarts. The load threshold is the `AUDIO_ASSESSMENT_LOAD_THRESHOLD` **code constant** in `lib/audio-assessment.ts` — it is not an environment variable and cannot be set via `.env.local`. Poison jobs are dead-lettered past an attempts cap.
+- **Reference tracks** — Drop an audio file, paste a YouTube URL, or drag a browser link into the Reference panel. YouTube extraction is a deterministic `yt-dlp` + `ffmpeg` subprocess (fixed args, no LLM/agent) into a temp MP3, which is assessed and converted to a prompt; the source audio is never added to `public/outputs/`.
+
+## Security and concurrency
+
+- Opt-in bearer-token auth gates mutating `/api/*` routes via `middleware.ts` (`STABLE_AUDIO_ADMIN_TOKEN`); read-only GET routes (including `GET /api/radio` and `?stream=1`) are never gated.
+- A single generation-slot semaphore (`lib/server/concurrency.ts`, `STABLE_AUDIO_MAX_CONCURRENT`, default 1) is shared across `/api/generate`, the radio queue, and assessments.
+- Per-client rate limiting on mutating routes (`STABLE_AUDIO_MUTATING_RATE_PER_MINUTE`, default 30).
 
 ## Pardora iOS App
 
@@ -81,4 +89,4 @@ No formatter is configured (`make fmt` is a no-op).
 ## Claude Code Skills
 
 - `skills/stable-audio/` (symlinked to `~/.claude/skills/stable-audio`) — lets any agent generate SFX and music via the local API without knowing the project internals. Auto-starts the dev server if needed; sensible defaults (medium model / 60s for music, small-sfx / appropriate duration for SFX, steps 10, cfgScale 2). Supports `title` (explicit) and `autoTitle` (Ollama-generated) for named output files.
-- `skills/youtube-audio-extract/` — invoked by `/api/assess/youtube` via `codex exec`; wraps `yt-dlp` + `ffmpeg` to produce a temp MP3 for reference-track assessment.
+- `skills/youtube-audio-extract/` — documents the `yt-dlp` + `ffmpeg` extraction used by `/api/assess/youtube` to produce a temp MP3 for reference-track assessment. The route calls `yt-dlp` directly via the shared subprocess runner (no `codex exec`); the skill is the canonical recipe the deterministic extraction follows.

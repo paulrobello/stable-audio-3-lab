@@ -21,14 +21,19 @@
 * [Environment Variables](#environment-variables)
 * [Running Stable Audio 3 Lab](#running-stable-audio-3-lab)
 * [Pardora iOS App](#pardora-ios-app)
+* [Radio station](#radio-station)
 * [Quick start music workflow](#quick-start-music-workflow)
 * [Quick start SFX workflow](#quick-start-sfx-workflow)
 * [Reproducible seeds](#reproducible-seeds)
+* [Titles and auto-title](#titles-and-auto-title)
 * [Output and metadata](#output-and-metadata)
+* [Audio assessment](#audio-assessment)
 * [Useful commands](#useful-commands)
 * [Project layout](#project-layout)
+* [Architecture](#architecture)
 * [Research](#research)
 * [Contributing](#contributing)
+* [Troubleshooting](#troubleshooting)
 * [FAQ](#faq)
 * [Roadmap](#roadmap)
   * [Where we are](#where-we-are)
@@ -203,12 +208,12 @@ hf download stabilityai/stable-audio-3-optimized \
   --local-dir ./hf-optimized
 ```
 
-Expose those files where the MLX runtime expects them:
+Expose those files where the MLX runtime expects them. Run this from the repo root so `<REPO_ROOT>` resolves to your checkout:
 
 ```bash
 python3 - <<'PY'
 from pathlib import Path
-mlx = Path('/Users/probello/Repos/stable-audio-3-lab/vendor/stable-audio-3/optimized/mlx')
+mlx = Path.cwd() / 'vendor/stable-audio-3/optimized/mlx'
 src = mlx / 'hf-optimized/MLX'
 dst = mlx / 'models/mlx'
 dst.mkdir(parents=True, exist_ok=True)
@@ -222,11 +227,11 @@ PY
 
 ### Configure real inference
 
-Update `.env.local`:
+Update `.env.local`. Replace `<REPO_ROOT>` with the absolute path to this checkout (e.g. `$(pwd)`):
 
 ```bash
 STABLE_AUDIO_MOCK=false
-STABLE_AUDIO_PYTHON=/Users/probello/Repos/stable-audio-3-lab/vendor/stable-audio-3/.venv/bin/python
+STABLE_AUDIO_PYTHON=<REPO_ROOT>/vendor/stable-audio-3/.venv/bin/python
 STABLE_AUDIO_BACKEND=mlx
 STABLE_AUDIO_TIMEOUT_MS=900000
 ```
@@ -252,7 +257,7 @@ Restart the Next.js server after changing these values. The first assessment may
 
 ### Configure YouTube reference extraction
 
-The Reference track panel can analyze YouTube audio without adding it to `public/outputs/`. Paste a YouTube URL, drag a browser link into the panel, or drop a supported local audio file. YouTube URLs call `/api/assess/youtube`, which runs `codex exec` against [`skills/youtube-audio-extract/SKILL.md`](./skills/youtube-audio-extract/SKILL.md), writes a temporary MP3 under `.stable-audio-assessments/uploads/`, runs the configured audio assessor, builds a generation prompt, and deletes the temporary audio.
+The Reference track panel can analyze YouTube audio without adding it to `public/outputs/`. Paste a YouTube URL, drag a browser link into the panel, or drop a supported local audio file. YouTube URLs call `/api/assess/youtube`, which runs a **deterministic `yt-dlp` + `ffmpeg` subprocess** (fixed argument array, no LLM/agent), writes a temporary MP3 under `.stable-audio-assessments/uploads/`, runs the configured audio assessor, builds a generation prompt, and deletes the temporary audio. This replaced an earlier autonomous Codex-based extraction that is no longer used.
 
 Install the extraction tools if they are missing:
 
@@ -264,14 +269,17 @@ which ffmpeg >/dev/null 2>&1 || brew install ffmpeg
 Optional `.env.local` overrides:
 
 ```bash
-STABLE_AUDIO_YOUTUBE_CODEX_BIN=codex
-STABLE_AUDIO_YOUTUBE_CODEX_MODEL=gpt-5.5
-STABLE_AUDIO_YOUTUBE_CODEX_TIMEOUT_MS=300000
+STABLE_AUDIO_YOUTUBE_YTDLP_BIN=yt-dlp          # yt-dlp binary (default yt-dlp)
+STABLE_AUDIO_YOUTUBE_TIMEOUT_MS=300000         # extraction timeout (ms, default 300000)
+# Legacy alias still honored for existing deployments:
+# STABLE_AUDIO_YOUTUBE_CODEX_TIMEOUT_MS=300000
 ```
 
 Only download and analyze media you have the rights to use.
 
 ## Environment Variables
+
+This is the complete reference for every variable the app reads. Defaults are resolved centrally in `lib/server/config.ts` (TS) and in the Python scripts; `.env.example` mirrors this list with the same defaults.
 
 ### Variables are loaded in the following order, last one to set a var wins
 
@@ -280,21 +288,104 @@ Only download and analyze media you have the rights to use.
 * `.env.example` as documentation/default reference only
 * UI settings for client-side persisted controls
 
-### Environment Variables for Stable Audio 3 Lab configuration
+### Generation core
 
-* `HF_TOKEN` - Optional Hugging Face token for higher optimized-weight download limits; required for gated standard repo downloads after terms are accepted.
-* `STABLE_AUDIO_MOCK` - `true` to force mock generation; `false` for real model inference.
-* `STABLE_AUDIO_PYTHON` - Python executable for the bridge script. Defaults to `python3`.
-* `STABLE_AUDIO_BACKEND` - Real inference backend: `mlx` by default/recommended, or `torch` for the standard PyTorch path.
-* `STABLE_AUDIO_MLX_DIR` - Optional override for the vendored MLX runtime directory.
-* `STABLE_AUDIO_TIMEOUT_MS` - Generation timeout for the API route. Defaults to `900000` ms.
-* `STABLE_AUDIO_ASSESSOR_COMMAND` - Local command used by `/api/assess`. Defaults in this repo to the Qwen2.5-Omni wrapper.
-* `STABLE_AUDIO_ASSESSOR_TIMEOUT_MS` - Timeout for local audio assessment. Defaults to `300000` ms in the route; use `900000` for first-run model downloads.
-* `STABLE_AUDIO_YOUTUBE_CODEX_BIN` - Optional Codex CLI executable for YouTube reference extraction. Defaults to `codex`.
-* `STABLE_AUDIO_YOUTUBE_CODEX_MODEL` - Optional Codex model for YouTube reference extraction. Defaults to `gpt-5.5`.
-* `STABLE_AUDIO_YOUTUBE_CODEX_TIMEOUT_MS` - Timeout for YouTube extraction via Codex. Defaults to `300000` ms.
-* `QWEN_OMNI_MODEL` - Hugging Face model id for the Qwen Omni assessor. Defaults to `Qwen/Qwen2.5-Omni-7B`.
-* `QWEN_OMNI_MAX_AUDIO_SECONDS` - Optional max audio duration passed to the assessor after ffmpeg conversion. Use `0` to send the full file.
+| Variable | Default | Description |
+| --- | --- | --- |
+| `HF_TOKEN` | _(unset)_ | Optional Hugging Face token: higher optimized-MLX download limits; required for the gated standard Torch checkpoints after license acceptance. |
+| `STABLE_AUDIO_MOCK` | `false` | `true` generates a fake WAV without loading the model (fast UI/API testing). Shipped as `true` in `.env.example` for safety. |
+| `STABLE_AUDIO_PYTHON` | `python3` | Python interpreter for `scripts/generate_audio.py`. |
+| `STABLE_AUDIO_BACKEND` | `mlx` | Real inference backend: `mlx` (recommended on Apple Silicon) or `torch`. |
+| `STABLE_AUDIO_MLX_DIR` | `<REPO_ROOT>/vendor/stable-audio-3/optimized/mlx` | Optional override for the vendored MLX runtime directory. |
+| `STABLE_AUDIO_TIMEOUT_MS` | `900000` (15m) | Generation/crop subprocess timeout, milliseconds. |
+| `STABLE_AUDIO_MLX_TIMEOUT_MS` | `900000` | MLX-only timeout override; falls back to `STABLE_AUDIO_TIMEOUT_MS`. |
+
+### Security, rate limit, and concurrency
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `STABLE_AUDIO_ADMIN_TOKEN` | _(unset)_ | Optional shared-secret bearer token. When unset, all routes work unauthenticated (localhost/single-user mode). When set, mutating `/api/*` routes (POST/PUT/PATCH/DELETE) require `Authorization: Bearer <token>`; read-only GET routes (including `GET /api/radio` and `?stream=1`) are never gated. |
+| `STABLE_AUDIO_MUTATING_RATE_PER_MINUTE` | `30` | Per-client token-bucket rate limit for mutating `/api/*` requests. `0` disables limiting. Fail-open on cold restart. |
+| `STABLE_AUDIO_MAX_CONCURRENT` | `1` | Max heavy subprocesses (generation, crop, assessment) running at once. One shared generation slot is held across `/api/generate`, the radio queue, and assessments. |
+
+### ffmpeg / ffprobe
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `FFMPEG_PATH` | `ffmpeg` | ffmpeg binary path. Used for MP3 conversion, crop rendering, duration validation, radio transcoding, and as the `--ffmpeg-location` hint for yt-dlp when set to a real path. |
+| `FFPROBE_PATH` | `ffprobe` | ffprobe binary path. Used for media-duration validation in crop and library flows. |
+
+### Audio assessment
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `STABLE_AUDIO_ASSESSOR_COMMAND` | Qwen2.5-Omni wrapper | Command that runs the audio-language assessor. |
+| `STABLE_AUDIO_ASSESSOR_TIMEOUT_MS` | `300000` (5m) | Assessor subprocess timeout. Use `900000` for the first run (package + weight downloads). |
+| `QWEN_OMNI_MODEL` | `Qwen/Qwen2.5-Omni-7B` | Hugging Face model id for the assessor. |
+| `QWEN_OMNI_MAX_AUDIO_SECONDS` | `120` | Max audio duration (seconds) passed to the assessor after ffmpeg conversion. `0` sends the full file. |
+| `QWEN_OMNI_MAX_NEW_TOKENS` | `768` | Max generated tokens from the assessor. |
+| `QWEN_OMNI_DTYPE` | `auto` | Torch dtype override for the assessor. |
+| `QWEN_OMNI_DEVICE_MAP` | `auto` | `device_map` passed to the assessor. |
+
+### YouTube reference extraction
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `STABLE_AUDIO_YOUTUBE_YTDLP_BIN` | `yt-dlp` | yt-dlp binary for deterministic extraction (no LLM/agent). |
+| `STABLE_AUDIO_YOUTUBE_TIMEOUT_MS` | `300000` (5m) | Extraction timeout. Honors the legacy alias `STABLE_AUDIO_YOUTUBE_CODEX_TIMEOUT_MS` for existing deployments. |
+
+### Ollama (auto-title + radio prompt drafting)
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `OLLAMA_BASE_URL` | _(unset)_ | Full Ollama base URL override. Wins over the HOST/PORT composition. Pinned to loopback by default. |
+| `OLLAMA_HOST` | `127.0.0.1` | Ollama host (used when `OLLAMA_BASE_URL` is unset). |
+| `OLLAMA_PORT` | `11434` | Ollama port (used when `OLLAMA_BASE_URL` is unset). |
+| `OLLAMA_TITLE_MODEL` | `phi4-mini` | Model used for AI title generation via `/api/generate-title`. |
+
+### Radio station
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `RADIO_CODEX_BIN` | `codex` | Codex CLI used for taste distillation and style drafting. |
+| `RADIO_CODEX_TASTE_MODEL` | _(unset)_ | Model override for taste distillation. |
+| `RADIO_CODEX_STYLE_MODEL` | _(unset)_ | Model override for style drafting (falls back to the taste model). |
+| `RADIO_CODEX_TASTE_TIMEOUT_MS` | `120000` (2m) | Timeout for a Codex taste/style run. |
+| `RADIO_OLLAMA_TIMEOUT_MS` | `120000` | Timeout for the radio queue's Ollama prompt-draft call. |
+| `RADIO_OLLAMA_MODELS_TIMEOUT_MS` | `1000` | Timeout for the Ollama `/api/tags` model-list probe in `GET /api/radio`. |
+| `RADIO_QUEUE_AUTO_FILL` | _(runs)_ | Set to `false` to disable the background queue auto-fill loop. |
+| `RADIO_LAN_HOST` | _(unset)_ | Explicit LAN host for stream/playlist URLs. Fallbacks: `RADIO_LAN_HOST` > `LAN_IP` > detected LAN IP. |
+| `LAN_IP` | _(unset)_ | LAN IP fallback for stream URLs when `RADIO_LAN_HOST` is unset. |
+| `RADIO_PUBLIC_ORIGIN` | _(unset)_ | Public origin (e.g. `https://radio.pardev.net`) advertised as a public stream URL in `GET /api/radio`. |
+
+### Radio TTS (DJ announcements)
+
+The TTS pipeline is provided by the local `par-tts-core-ts` package, which is **not** declared as a `package.json` dependency (it lives out-of-tree and is unpublished). Announcements are skipped (and the failure logged) when the module path is unset, so the stream never crashes on a missing module.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `RADIO_TTS_MODULE_PATH` | _(unset)_ | Path to the par-tts-core-ts CommonJS entry (provider TTS: openai / elevenlabs / deepgram / gemini). |
+| `RADIO_TTS_NODE_MODULE_PATH` | _(unset)_ | Path to the Kokoro ONNX node entry. |
+| `RADIO_TTS_MODEL` | _(unset)_ | Optional model id passed through to the TTS pipeline. |
+| `PAR_TTS_CONFIG_PATH` | _(unset)_ | Optional path to a par-tts YAML config file (an alternative place for provider keys/voices). |
+
+Provider TTS API keys are resolved from `.env.local` / the process environment **only** (resolution order: `PAR_TTS_CONFIG_PATH` file, then the env vars below). Kokoro needs no key.
+
+| Variable | Description |
+| --- | --- |
+| `OPENAI_API_KEY` | OpenAI TTS provider key. |
+| `ELEVENLABS_API_KEY` | ElevenLabs TTS provider key. |
+| `DEEPGRAM_API_KEY` / `DG_API_KEY` | Deepgram TTS provider key (`DG_API_KEY` is an alias). |
+| `GEMINI_API_KEY` / `GOOGLE_API_KEY` | Gemini TTS provider key (`GOOGLE_API_KEY` is an alias). |
+
+> **Security:** Put provider keys in this app's own `.env.local`. Do not rely on shared developer credential files such as `~/.claude/.env`.
+
+### Dev server
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PORT` | `3007` | Port the Next.js dev/app server listens on. |
+| `DEV_SERVER_RESTART_DELAY_MS` | _(unset)_ | `scripts/dev-server.mjs`: delay before restarting after a crash. |
 
 ## Running Stable Audio 3 Lab
 
@@ -323,6 +414,60 @@ make pardora-test
 make pardora-checkall
 make pardora-run
 ```
+
+## Radio station
+
+Alongside the generation lab, the app runs a **continuous AI radio station**: an autonomous queue of generated tracks, DJ announcements, listener taste feedback, and a live MP3 stream consumed by the Pardora iOS/watchOS/CarPlay companion and any LAN music player. It is the reason Pardora exists.
+
+Open the station UI at `http://localhost:3007/radio`. The page shows the current track, the live queue, station styles, the taste profile, and controls for skipping, rating, and drafting new tracks. The same data is available as JSON for clients via `GET /api/radio` (see [API reference](./docs/reference/api.md) for the full contract).
+
+### Opening the station
+
+The lab page (`/`) is the generation workspace; the station lives at `/radio`:
+
+```text
+http://localhost:3007/radio          # station UI (browser)
+http://localhost:3007/api/radio      # JSON: queue, current track, stream URLs, taste profile, stats
+http://localhost:3007/api/radio?stream=1   # continuous MP3/ICY stream (what players tune in to)
+```
+
+### Stream and playlist URLs
+
+The station advertises two stream endpoints in `GET /api/radio`:
+
+* **LAN stream** — the MP3 stream on your local network (`http://<lan-host>:3007/api/radio?stream=1`). The LAN host resolves via `RADIO_LAN_HOST` > `LAN_IP` > a detected LAN IP.
+* **Public stream** — advertised only when `RADIO_PUBLIC_ORIGIN` is set (for example `https://radio.pardev.net`), so you can publish the station through a tunnel.
+
+Playlist wrappers are served for players that prefer them:
+
+```text
+http://<host>:3007/radio.m3u         # audio/x-mpegurl playlist pointing at the stream
+http://<host>:3007/radio.pls         # audio/x-scpls playlist pointing at the stream
+```
+
+### DJ announcements (multi-provider TTS)
+
+Between tracks the station generates DJ announcements through a configurable TTS pipeline backed by the local `par-tts-core-ts` package (declared as an out-of-tree module, not a `package.json` dependency). Supported providers are `openai`, `elevenlabs`, `deepgram`, `gemini`, and `kokoro-onnx`. Configure it with `RADIO_TTS_MODULE_PATH` (or `RADIO_TTS_NODE_MODULE_PATH` for Kokoro) plus the relevant provider key. When the module path is unset the station runs without announcements — the stream never crashes on a missing module, the skip is logged.
+
+> **Security:** Put provider TTS keys in this app's own `.env.local`, not in shared developer credential files such as `~/.claude/.env`. See the [Radio TTS](#radio-tts-dj-announcements) env-var table.
+
+### Taste profile
+
+Thumbs-up and thumbs-down ratings on tracks are batched into a `RadioTasteProfile`. Periodically that profile is distilled (via the Codex CLI) into guidance that rewrites future generation prompts, so the station slowly leans toward what you keep and away from what you skip. Set `RADIO_CODEX_BIN`, `RADIO_CODEX_TASTE_MODEL`, and `RADIO_CODEX_STYLE_MODEL` to control the distillation; `RADIO_CODEX_TASTE_TIMEOUT_MS` bounds each run.
+
+### Queue and auto-fill model
+
+The station keeps a queue of upcoming tracks in an atomic, locked state file (`.stable-audio-radio/state.json`) so concurrent requests and the background loop never tear a write. A background auto-fill loop keeps the queue stocked: when it runs low, the loop drafts a prompt (via Ollama), generates a fresh track (sharing the single generation slot with `/api/generate` and assessments), and enqueues it. If generation is unavailable or the slot is busy, it falls back to existing library tracks so the station never goes silent.
+
+Tune the loop with:
+
+* `RADIO_QUEUE_AUTO_FILL` — set to `false` to disable background auto-fill.
+* `STABLE_AUDIO_MAX_CONCURRENT` — caps how many heavy subprocesses run at once (default `1`); the radio queue waits for the same slot generation uses.
+* `RADIO_OLLAMA_TIMEOUT_MS` / `RADIO_OLLAMA_MODELS_TIMEOUT_MS` — timeouts for the prompt-draft call and the Ollama model-list probe.
+
+### Station actions
+
+Mutating controls (skip, rate, delete track, create/update/delete custom styles, configure TTS voice/provider, draft a track, clean up) are sent as `POST /api/radio` with an `{ action, ...payload }` envelope. When `STABLE_AUDIO_ADMIN_TOKEN` is set these mutating actions require the bearer token; the read-only `GET /api/radio` JSON and the `?stream=1` MP3 stream are always public so players and Pardora can tune in without credentials. See the [API reference](./docs/reference/api.md) for every action and its payload.
 
 ## Quick start music workflow
 
@@ -361,6 +506,32 @@ The **Seed** field is optional:
 * Use **Load config** on a library item to reload its prompt/settings/seed for another pass.
 
 Diffusion reproducibility is best-effort: use the same model, prompt, negative prompt, duration, steps, CFG, seed, backend, and library version for the closest repeat.
+
+## Titles and auto-title
+
+Every generation can carry a human-readable **title** that becomes the output filename, so your library fills up with `neon_pulse.mp3` instead of `sa3-music-1718123456.mp3`. Title resolution, in priority order:
+
+1. **`title`** — an explicit title you type. It is slugified into the filename (e.g. `"Neon Pulse"` → `neon_pulse.mp3`). Duplicates get a `_2`, `_3` suffix so nothing is overwritten.
+2. **`autoTitle`** — when no explicit title is given, the server asks a local **Ollama** model (phi4-mini by default) to invent a creative title from your prompt, then slugifies that.
+3. **Fallback** — if neither is set (or Ollama is unavailable), the filename falls back to `sa3-{mode}-{timestamp}.{format}`.
+
+This requires **Ollama running locally** (`OLLAMA_HOST`/`OLLAMA_PORT`, default `127.0.0.1:11434`). Tune the model with `OLLAMA_TITLE_MODEL`. The `/api/generate-title` endpoint exposes the same capability directly — send a prompt, get back a title. See the [API reference](./docs/reference/api.md) for the request shape.
+
+Quick start with a title:
+
+```bash
+curl -X POST http://localhost:3007/api/generate \
+  -H 'content-type: application/json' \
+  -d '{"prompt":"lofi hip hop loop, dusty drums, 82 BPM","mode":"music","model":"medium","duration":60,"title":"Dusty Afternoon"}'
+```
+
+Or let the server name it:
+
+```bash
+curl -X POST http://localhost:3007/api/generate \
+  -H 'content-type: application/json' \
+  -d '{"prompt":"hydraulic spaceship door, metallic rumble","mode":"sfx","model":"small-sfx","duration":6,"autoTitle":true}'
+```
 
 ## Output and metadata
 
@@ -444,6 +615,21 @@ curl -X POST http://localhost:3007/api/library/crop \
 
 Crop metadata keeps source lineage (`sourceFilename`, source URLs, and `crop.start/end/duration`) and updates the reusable `settings.duration` to the trimmed clip length so follow-up crops stay inside the derived clip.
 
+## Audio assessment
+
+The **Assess** buttons (in the Library, on the radio page, and in the YouTube reference flow) run a local audio-language model over a track and store structured attributes — genre, mood, instrumentation, tempo, energy — in the metadata sidecar's `analysis` block. The first supported assessor is Qwen2.5-Omni-7B via `scripts/audio_assessor_qwen_omni.py`, configured by `STABLE_AUDIO_ASSESSOR_COMMAND`.
+
+### Persisted, load-throttled queue
+
+Assessment is expensive, so the lab runs it through a single shared queue that all three flows (Library, Radio, YouTube) submit jobs to:
+
+* **Persisted** — the queue lives in `.stable-audio-assessments/queue.json`, so pending jobs survive dev-server restarts.
+* **Load-throttled** — when the machine is busy (high load average), the processor waits rather than spawning the assessor. The threshold is a **code constant** (`AUDIO_ASSESSMENT_LOAD_THRESHOLD` in `lib/audio-assessment.ts`), not an environment variable — tune it in source, not `.env.local`.
+* **Dead-letter on poison jobs** — a job that fails repeatedly is capped and dropped to a dead-letter state rather than re-queued forever, so one bad file cannot starve the queue.
+* **Shared generation slot** — assessment subprocesses respect the same `STABLE_AUDIO_MAX_CONCURRENT` cap as generation, preventing memory exhaustion from concurrent model runs.
+
+Assessment results are summarized into a sibling `*.analysis-summary.json` and included in export bundles.
+
 ## Useful commands
 
 ```bash
@@ -463,29 +649,78 @@ make pre-commit-install # install pre-commit and pre-push git hooks
 
 ```text
 app/
-  api/assess/route.ts      # Assess generated audio with the configured local audio-language model
-  api/assess/upload/route.ts # Temporary local reference-track upload analysis
-  api/assess/youtube/route.ts # Codex-backed YouTube reference extraction + analysis
-  api/generate/route.ts    # POST endpoint that calls scripts/generate_audio.py
-  api/library/route.ts     # GET/PATCH/DELETE endpoint for generated audio library
-  api/library/bundle/route.ts # Single-item and batch-run ZIP exports
-  api/library/crop/route.ts   # FFmpeg crop endpoint
-  page.tsx                 # Main browser UI
-docs/
-  music_mode.png           # README screenshot for Music mode
-  sfx_mode.png             # README screenshot for Sound FX mode
+  page.tsx                       # Generation lab UI (the "/" page)
+  layout.tsx                     # Root layout
+  radio/
+    page.tsx                     # Radio station UI entry
+    RadioStationClient.tsx       # Radio station client component
+  api/
+    generate/route.ts            # POST /api/generate → Python bridge
+    generate-title/route.ts      # POST /api/generate-title → Ollama
+    library/route.ts             # GET / PATCH / DELETE /api/library
+    library/bundle/route.ts      # GET /api/library/bundle (single + batch ZIP)
+    library/crop/route.ts        # POST /api/library/crop → ffmpeg
+    assess/route.ts              # POST /api/assess → assessor subprocess
+    assess/upload/route.ts       # POST /api/assess/upload (temp reference upload)
+    assess/youtube/route.ts      # POST /api/assess/youtube → yt-dlp + ffmpeg
+    radio/route.ts               # GET /api/radio (JSON + ?stream=1) and POST actions
+  radio.m3u/route.ts             # M3U playlist for the stream
+  radio.pls/route.ts             # PLS playlist for the stream
+middleware.ts                    # Opt-in bearer-token auth (STABLE_AUDIO_ADMIN_TOKEN)
+docs/                            # Documentation (style guide, reference, architecture, troubleshooting, specs)
+  DOCUMENTATION_STYLE_GUIDE.md
+  reference/api.md               # HTTP API reference
+  architecture/system-overview.md
+  troubleshooting/common-errors.md
+  superpowers/                   # Historical design specs and plans
 lib/
-  generation.ts            # Request schema, model metadata, prompt presets, tips
-  generator-backend.ts     # Backend/model routing for MLX/Torch invocation
-  library.ts               # Output/metadata sidecar helpers
-  metadata-settings.ts     # Metadata → reusable UI settings parser
+  generation.ts                  # Zod request schema, model metadata, GENERATION_LIMITS
+  generation-batch.ts            # Batch/seed variation helpers
+  generator-backend.ts           # MLX/Torch backend routing, model→MLX mapping
+  library.ts                     # Metadata sidecars, slugification, ZIP builder, crop, SVG cards
+  metadata-settings.ts           # Metadata → reusable UI settings ("Load config")
+  audio-assessment.ts            # Shared assessor provider contract + persisted queue
+  assessment-prompt.ts           # Assessor JSON attributes → music prompt
+  radio-playlist-response.ts     # /api/radio playlist response shape
+  ui-presets.ts                  # UI copy (control tips, prompt template groups)
+  radio/                         # Pure radio domain (barrel: types, styles, state, prompts, tts, urls)
+  server/                        # Impure orchestration (extracted from the radio route)
+    radio-state-store.ts         # Atomic, locked radio state persistence
+    radio-queue-service.ts       # Queue maintenance + auto-fill
+    radio-stream.ts              # MP3/ICY stream serving
+    radio-tts.ts                 # Multi-provider DJ announcements
+    radio-actions.ts             # Zod schema for POST /api/radio actions
+    codex-client.ts              # Codex subprocess for taste/style drafting
+    ollama.ts                    # Ollama client + generateTitle/cleanTitle
+    subprocess.ts                # Shared process runner (SIGTERM→SIGKILL)
+    concurrency.ts               # Single generation-slot semaphore
+    atomic-json-store.ts         # Temp-file + rename JSON store
+    config.ts                    # Centralized env-var readers + defaults
+    logger.ts
 scripts/
-  generate_audio.py        # Python bridge for mock and real Stable Audio 3 generation
+  generate_audio.py              # Python bridge: mock WAV + real MLX/Torch inference
+  audio_assessor_qwen_omni.py    # Qwen2.5-Omni-7B assessor subprocess
+  dev-server.mjs                 # Dev-server watchdog/restart helper
+tests/
+  test_generate_audio.py         # Python unittests (process cleanup, backend normalize)
+  test_audio_assessor_qwen_omni.py
 skills/
-  youtube-audio-extract/   # Codex skill used by /api/assess/youtube
-public/outputs/            # Runtime audio + .json sidecars; ignored except .gitkeep
-RESEARCH.md                # Research notes and M4 Max fit verdict
+  stable-audio/                  # Agent skill: generate SFX/music via the local API
+  youtube-audio-extract/         # yt-dlp + ffmpeg extraction used by /api/assess/youtube
+apps/
+  pardora-ios/                   # Swift 6 iOS/watchOS/CarPlay companion (xcodegen)
+vendor/stable-audio-3/           # Official Stability AI repo + MLX weights/runtime (gitignored)
+public/outputs/                  # Runtime audio + .json sidecars (ignored except .gitkeep)
+.stable-audio-radio/             # Radio state (queue/taste/styles) — atomic JSON (gitignored)
+.stable-audio-assessments/       # Temp reference MP3s + persisted assessor queue (gitignored)
+CHANGELOG.md                     # Release history (Keep a Changelog)
+CONTRIBUTING.md                  # Contributor guide
+RESEARCH.md                      # Model-family notes and M4 Max fit verdict
 ```
+
+## Architecture
+
+For a system-level overview with data-flow diagrams of the generation, assessment, and radio paths, see [`docs/architecture/system-overview.md`](./docs/architecture/system-overview.md). In short: a pure functional core (`lib/`) is driven by Next.js API routes and `lib/server/` services; generation and assessment spawn Python subprocesses that write audio and sidecars under `public/outputs/`; the radio station maintains an atomic state file and streams MP3 segments to Pardora and LAN listeners.
 
 ## Research
 
@@ -493,12 +728,16 @@ See [`RESEARCH.md`](./RESEARCH.md) for the Stable Audio 3 model-family notes and
 
 ## Contributing
 
-Use conventional commits and run the quality gates before committing:
+Contributions are welcome. See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the full guide: environment setup, the `make checkall` / `make typecheck` / `make test` gates, the no-formatter/typecheck-only stance, Conventional Commits, pre-commit hooks, and the PR process. The short version: run the quality gates before committing.
 
 ```bash
 make checkall
 make pre-commit
 ```
+
+## Troubleshooting
+
+Common failure modes (gated-model 401s, missing `ffmpeg`/`ffprobe`/`yt-dlp`, Ollama down, assessor first-run timeouts, MLX download failures, port 3007 conflicts, auth-token misconfig, silent radio TTS) with diagnosis and fixes are in [`docs/troubleshooting/common-errors.md`](./docs/troubleshooting/common-errors.md).
 
 ## FAQ
 
@@ -532,12 +771,19 @@ make pre-commit
 * **Settings Persistence** - Mode, model, prompt, negative prompt, duration, steps, CFG, format, seed, mock mode, and volume persist locally.
 * **Safety Controls** - Timeout handling and process-tree cleanup for MLX generation.
 * **Testing and Git Hooks** - Unit tests, build checks, Python tests, and pre-commit hooks are wired.
+* **Continuous AI Radio Station** - An autonomous station at `/radio` with a live queue, atomic locked state, DJ announcements (multi-provider TTS), listener taste-profile distillation, LAN + public MP3 streaming, and M3U/PLS playlists.
+* **Pardora iOS/watchOS/CarPlay Companion** - A native Swift 6 app consuming the `/api/radio` JSON + MP3 stream, with a Live Activity extension and TestFlight workflow.
+* **Audio Assessment** - A local audio-language model (Qwen2.5-Omni-7B) extracts structured track attributes into metadata sidecars via a persisted, load-throttled, dead-lettering queue shared by Library, Radio, and YouTube flows.
+* **Security and Concurrency Hardening** - Opt-in bearer-token auth on mutating routes, a shared generation-slot concurrency cap, per-client rate limiting, and deterministic yt-dlp YouTube extraction.
 
 ### Where we're going
 
+* **Reference streaming for many listeners** - Today the stream assumes a small number of LAN listeners; a single station "ticker" owning state advancement would make public streaming robust beyond a household.
+* **Client component decomposition** - The lab and radio pages are large single-file components; splitting them into focused panel components and hooks will reduce re-render risk and merge friction.
+* **Stricter validation across the radio RPC** - Promote the radio POST actions to a fully Zod-validated discriminated union surfaced as the shared Pardora contract.
+* **CI pipeline** - Run `make checkall` in CI to catch environment-coupled regressions across machines.
+* **Polish and ergonomics** - Lint/format adoption, expanded route/component test coverage, and continued documentation accuracy work.
 
 ## What's new
 
-### v0.1.0
-
-* Initial Stable Audio 3 Lab app with Next.js UI, mock mode, real MLX inference, library management, metadata sidecars, seed controls, global playback volume, waveform/spectrogram previews, waveform-as-player library rows, keyboard seeking, playback-error feedback, stale playback-state pruning after refresh/delete, batch variations, comparison view, prompt templates, reference-track upload and YouTube-link analysis, favorites, notes/ratings, crop controls, rendered screenshot cards in bundles, single-item bundles, batch-run ZIP exports, and README screenshots.
+Release history lives in [`CHANGELOG.md`](./CHANGELOG.md) (Keep a Changelog format). The current unreleased work covers the radio subsystem (radio page, atomic state store, queue auto-fill, taste distillation, multi-provider TTS, LAN/public streaming, M3U/PLS playlists), the Pardora iOS companion, audio assessment, and the security/concurrency hardening pass. See the changelog for the per-version detail rather than duplicating it here.

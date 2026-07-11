@@ -116,6 +116,7 @@ def run_qwen_omni(model_id: str, audio_path: Path, prompt: str) -> str:
 
 
 def trim_generated_ids(inputs: Any, generated_ids: Any) -> Any:
+    """Strip the prompt token prefix from ``generated_ids`` when the model echoes it, returning the suffix-only completion."""
     input_ids = inputs.get("input_ids") if isinstance(inputs, dict) else getattr(inputs, "input_ids", None)
     prompt_length = read_token_length(input_ids)
     generated_length = read_token_length(generated_ids)
@@ -142,6 +143,7 @@ def read_token_length(value: Any) -> int | None:
 
 
 def sequence_has_prompt_prefix(input_ids: Any, generated_ids: Any, prompt_length: int) -> bool | None:
+    """Return whether ``generated_ids`` begins with the full ``input_ids`` prompt sequence, or ``None`` when undecidable."""
     try:
         comparison = generated_ids[:, :prompt_length] == input_ids
         if hasattr(comparison, "all"):
@@ -221,6 +223,7 @@ def parse_json_object(text: str) -> Any:
 
 
 def normalize_assessment(data: dict[str, Any], model_id: str, raw_text: str) -> dict[str, Any]:
+    """Coerce parsed assessment JSON into the canonical sidecar shape, filling alternative field names and falling back to ``raw_text``."""
     return {
         "provider": "local-qwen-omni",
         "model": model_id,

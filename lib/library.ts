@@ -1,8 +1,16 @@
+/**
+ * Library utilities for generated audio: metadata sidecar read/write helpers,
+ * title-to-filename slugification with atomic duplicate detection, a
+ * dependency-free ZIP archive builder, crop utilities, SVG render-screenshot
+ * cards, batch-manifest/filename builders, and safety predicates for audio
+ * filenames and batch run ids.
+ */
 import path from "node:path";
 import { open, readdir } from "node:fs/promises";
 import type { GenerateRequest } from "./generation";
 import type { GenerationBackend } from "./generator-backend";
 
+/** Result of spawning a child process: exit code plus captured stdout/stderr streams. */
 export type ProcessResult = { code: number | null; stdout: string; stderr: string };
 
 // Minimal, non-revealing process status persisted into metadata sidecars.
@@ -10,8 +18,10 @@ export type ProcessResult = { code: number | null; stdout: string; stderr: strin
 // carry absolute host paths, tracebacks, and backend config that should not be
 // served back via GET /api/library or bundle ZIPs (SEC-004). Callers still pass
 // the full ProcessResult to buildLibraryMetadata; only the exit code is kept.
+/** Minimal, non-revealing process status (exit code only) persisted into metadata sidecars. */
 export type GenerationProcessStatus = { exitCode: number | null };
 
+/** Full metadata persisted to the `.json` sidecar for each generated audio file. */
 export type GenerationMetadata = {
   filename: string;
   audioUrl: string;
@@ -36,10 +46,12 @@ export type GenerationMetadata = {
   python: GenerationProcessStatus;
 };
 
+/** Returns true if `filename` matches `[A-Za-z0-9._-]+\.(mp3|wav)` with no `..` traversal. */
 export function isSafeAudioFilename(filename: string) {
   return /^[a-zA-Z0-9._-]+\.(mp3|wav)$/.test(filename) && !filename.includes("..");
 }
 
+/** Lowercases `title`, strips non-alphanumerics, joins words with `_`, and truncates to 60 chars. */
 export function slugifyTitle(title: string): string {
   return title
     .toLowerCase()
@@ -50,6 +62,24 @@ export function slugifyTitle(title: string): string {
     .slice(0, 60);
 }
 
+/**
+ * Derives a unique output filename for a human-readable title.
+ *
+ * The title is slugified via `slugifyTitle` (lowercase, `_`-joined, ≤60 chars,
+ * falling back to `"untitled"` when empty); the `_sfx` suffix is appended when
+ * `mode === "sfx"`. It then reads `outputDir` for collisions and, for each
+ * candidate slug, atomically claims the name by creating its `.json` sidecar
+ * with the `wx` (exclusive-create) flag via `reserveFilename` — closing the
+ * readdir-then-pick TOCTOU window so concurrent radio refill and user
+ * generation cannot both claim the same slug. Collisions append `_2`, `_3`,
+ * ... up to 999; if all are taken it falls back to a timestamped slug.
+ *
+ * @param title - Human-readable title to slugify.
+ * @param format - Output file extension (`mp3` or `wav`).
+ * @param outputDir - Absolute path to the directory where outputs are written.
+ * @param mode - Generation mode; `"sfx"` triggers the `_sfx` slug suffix.
+ * @returns The claimed filename (e.g. `neon_pulse.mp3`), guaranteed unique in `outputDir`.
+ */
 export async function titleToFilename(title: string, format: "mp3" | "wav", outputDir: string, mode?: string): Promise<string> {
   let slug = slugifyTitle(title) || "untitled";
   if (mode === "sfx") slug += "_sfx";
@@ -80,24 +110,41 @@ async function reserveFilename(filename: string, outputDir: string): Promise<boo
   }
 }
 
+/**
+ * Returns the `.json` sidecar filename for an audio file.
+ * @throws {Error} when `filename` fails `isSafeAudioFilename`.
+ */
 export function metadataFilenameForAudio(filename: string) {
   if (!isSafeAudioFilename(filename)) throw new Error("Invalid audio filename");
   return `${filename}.json`;
 }
 
+/** Appends `.json` to an audio file path to locate its sidecar. */
 export function metadataPathForAudio(audioPath: string) {
   return `${audioPath}.json`;
 }
 
+/** Returns the public `/outputs/...json` URL for an audio file's sidecar. */
 export function metadataUrlForAudio(filename: string) {
   return `/outputs/${metadataFilenameForAudio(filename)}`;
 }
 
+/**
+ * Joins `outputDir` and `filename` into an absolute output path.
+ * @throws {Error} when `filename` fails `isSafeAudioFilename`.
+ */
 export function outputPathForAudio(outputDir: string, filename: string) {
   if (!isSafeAudioFilename(filename)) throw new Error("Invalid audio filename");
   return path.join(outputDir, filename);
 }
 
+/**
+ * Builds the `GenerationMetadata` sidecar object for a generated file.
+ * Only the process exit code is persisted (not stdout/stderr) to avoid
+ * leaking host paths, tracebacks, or backend config via the library API.
+ *
+ * @throws {Error} when `filename` fails `isSafeAudioFilename`.
+ */
 export function buildLibraryMetadata({
   filename,
   input,
@@ -142,12 +189,20 @@ export function buildLibraryMetadata({
   };
 }
 
+/** Returns true if `meta` is an object whose `favorite` field is exactly `true`. */
 export function isFavoriteMetadata(meta: unknown) {
   return !!meta && typeof meta === "object" && (meta as Record<string, unknown>).favorite === true;
 }
 
+/** User annotation persisted onto a library item: freeform notes plus an optional 1–5 rating. */
 export type LibraryAnnotation = { notes: string; rating: number | null };
 
+/**
+ * Coerces untrusted annotation input into a valid `LibraryAnnotation`, falling
+ * back to `previous` for missing fields.
+ *
+ * @throws {Error} when notes exceed 1000 characters or rating is not an integer in 1–5.
+ */
 export function normalizeLibraryAnnotation(input: unknown, previous: Partial<LibraryAnnotation> = {}): LibraryAnnotation {
   const record = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
   const notesValue = "notes" in record ? (typeof record.notes === "string" ? record.notes.trim() : "") : (previous.notes ?? "");
@@ -162,6 +217,7 @@ export function normalizeLibraryAnnotation(input: unknown, previous: Partial<Lib
   return { notes: notesValue, rating };
 }
 
+/** Merges a normalized annotation onto a copy of `meta`, stamping it with `annotatedAt`. */
 export function applyLibraryAnnotationMetadata<T>(meta: T, annotationInput: unknown, annotatedAt = new Date().toISOString()): T & { notes?: string; rating?: number; annotatedAt?: string } {
   const base = meta && typeof meta === "object" ? meta : ({} as T);
   const baseRecord = base as T & Record<string, unknown>;
@@ -178,6 +234,7 @@ export function applyLibraryAnnotationMetadata<T>(meta: T, annotationInput: unkn
   };
 }
 
+/** Returns a copy of `meta` with `favorite` set, adding a `favoritedAt` timestamp when favoriting. */
 export function toggleFavoriteMetadata<T>(meta: T, favorite: boolean): T & { favorite: boolean; favoritedAt?: string } {
   const base = meta && typeof meta === "object" ? meta : ({} as T);
   return {
@@ -187,20 +244,30 @@ export function toggleFavoriteMetadata<T>(meta: T, favorite: boolean): T & { fav
   };
 }
 
+/**
+ * Builds the ZIP bundle filename for a single audio file (e.g. `foo.mp3` → `foo.bundle.zip`).
+ * @throws {Error} when `filename` fails `isSafeAudioFilename`.
+ */
 export function buildBundleFilename(filename: string) {
   if (!isSafeAudioFilename(filename)) throw new Error("Invalid audio filename");
   return filename.replace(/\.(mp3|wav)$/i, ".bundle.zip");
 }
 
+/** Returns true if `batchRunId` is a 1–80 char identifier matching `[a-zA-Z0-9][a-zA-Z0-9._-]*` with no `..` traversal or leading dot. */
 export function isSafeBatchRunId(batchRunId: string) {
   return /^(?!\.)(?!.*\.\.)(?=.{1,80}$)[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(batchRunId);
 }
 
+/**
+ * Builds the variation-run bundle filename for a batch run id.
+ * @throws {Error} when `batchRunId` fails `isSafeBatchRunId`.
+ */
 export function buildBatchBundleFilename(batchRunId: string) {
   if (!isSafeBatchRunId(batchRunId)) throw new Error("Invalid batch run id");
   return `${batchRunId}.variation-run.zip`;
 }
 
+/** Extracts and validates the `batch.batchRunId` from untrusted metadata, returning undefined when absent or unsafe. */
 export function readBatchRunId(metadata: unknown) {
   if (!metadata || typeof metadata !== "object") return undefined;
   const batch = (metadata as Record<string, unknown>).batch;
@@ -209,6 +276,11 @@ export function readBatchRunId(metadata: unknown) {
   return typeof batchRunId === "string" && isSafeBatchRunId(batchRunId) ? batchRunId : undefined;
 }
 
+/**
+ * Builds the manifest describing a batch run, with items sorted by variation
+ * index (then filename).
+ * @throws {Error} when `batchRunId` fails `isSafeBatchRunId`.
+ */
 export function buildBatchManifest({ batchRunId, items }: { batchRunId: string; items: { filename: string; metadata: unknown }[] }) {
   if (!isSafeBatchRunId(batchRunId)) throw new Error("Invalid batch run id");
   const sorted = [...items].sort((a, b) => readVariationIndex(a.metadata) - readVariationIndex(b.metadata) || a.filename.localeCompare(b.filename));
@@ -228,16 +300,25 @@ function readVariationIndex(metadata: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
+/**
+ * Builds the analysis-summary sidecar filename (e.g. `foo.mp3` → `foo.analysis-summary.json`).
+ * @throws {Error} when `filename` fails `isSafeAudioFilename`.
+ */
 export function buildAnalysisSummaryFilename(filename: string) {
   if (!isSafeAudioFilename(filename)) throw new Error("Invalid audio filename");
   return filename.replace(/\.(mp3|wav)$/i, ".analysis-summary.json");
 }
 
+/**
+ * Builds the render-screenshot SVG filename (e.g. `foo.mp3` → `foo.render-screenshot.svg`).
+ * @throws {Error} when `filename` fails `isSafeAudioFilename`.
+ */
 export function buildRenderScreenshotFilename(filename: string) {
   if (!isSafeAudioFilename(filename)) throw new Error("Invalid audio filename");
   return filename.replace(/\.(mp3|wav)$/i, ".render-screenshot.svg");
 }
 
+/** Builds the SVG render-screenshot card string (title, prompt, badges, decorative waveform) for a generated file. */
 export function buildRenderScreenshotSvg({ filename, metadata }: { filename: string; metadata: unknown }) {
   if (!isSafeAudioFilename(filename)) throw new Error("Invalid audio filename");
   const summary = buildAnalysisSummary({ filename, metadata });
@@ -305,8 +386,13 @@ function escapeSvg(value: string) {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
+/** A validated time range for cropping, with millisecond-precise `start`, `end`, and computed `duration`. */
 export type CropWindow = { start: number; end: number; duration: number };
 
+/**
+ * Validates and rounds a `{ start, end }` range into a `CropWindow`.
+ * @throws {Error} when bounds are non-finite, `start < 0`, `end <= start`, or collapse to equal after rounding.
+ */
 export function normalizeCropWindow({ start, end }: { start: number; end: number }): CropWindow {
   if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start) {
     throw new Error("Invalid crop window");
@@ -319,12 +405,21 @@ export function normalizeCropWindow({ start, end }: { start: number; end: number
   return { start: roundedStart, end: roundedEnd, duration: roundSeconds(roundedEnd - roundedStart) };
 }
 
+/**
+ * Builds the cropped-output filename by inserting a `.crop-<start>-<end>` stamp
+ * before the source extension.
+ * @throws {Error} when `filename` fails `isSafeAudioFilename` or the crop window is invalid.
+ */
 export function buildCropFilename(filename: string, start: number, end: number) {
   if (!isSafeAudioFilename(filename)) throw new Error("Invalid audio filename");
   const crop = normalizeCropWindow({ start, end });
   return filename.replace(/\.(mp3|wav)$/i, `.crop-${formatCropStamp(crop.start)}-${formatCropStamp(crop.end)}$&`);
 }
 
+/**
+ * Asserts that a crop window lies within the source duration (0.001s tolerance).
+ * @throws {Error} when `sourceDuration` is non-positive/non-finite, or `crop.end` exceeds it.
+ */
 export function validateCropFitsDuration(crop: CropWindow, sourceDuration: number) {
   if (!Number.isFinite(sourceDuration) || sourceDuration <= 0) throw new Error("Invalid source duration");
   if (crop.end > roundSeconds(sourceDuration) + 0.001) {
@@ -333,6 +428,11 @@ export function validateCropFitsDuration(crop: CropWindow, sourceDuration: numbe
   return crop;
 }
 
+/**
+ * Builds the metadata sidecar for a cropped file, cloning the source metadata
+ * and overriding the filename, URLs, duration, and provenance links.
+ * @throws {Error} when either filename fails `isSafeAudioFilename`.
+ */
 export function buildCropMetadata({
   sourceFilename,
   cropFilename,
@@ -371,6 +471,11 @@ function formatCropStamp(value: number) {
   return value.toFixed(3).replace(".", "p");
 }
 
+/**
+ * Extracts a flat, summary view of generation settings from untrusted metadata
+ * for bundle analysis-summary files and render screenshots.
+ * @throws {Error} when `filename` fails `isSafeAudioFilename`.
+ */
 export function buildAnalysisSummary({ filename, metadata }: { filename: string; metadata: unknown }) {
   if (!isSafeAudioFilename(filename)) throw new Error("Invalid audio filename");
   const record = metadata && typeof metadata === "object" ? metadata as Record<string, unknown> : {};
@@ -393,6 +498,12 @@ export function buildAnalysisSummary({ filename, metadata }: { filename: string;
   };
 }
 
+/**
+ * Builds a ZIP archive `Buffer` from named entries with no external zip
+ * dependency (STORE method, CRC32 checksums, single central directory).
+ * Rejects entry names containing path traversal.
+ * @throws {Error} when any entry name contains `..`, a leading `/`, or a backslash.
+ */
 export function buildStoredZip(entries: { name: string; data: Buffer }[]) {
   const now = new Date();
   const dosTime = ((now.getHours() & 31) << 11) | ((now.getMinutes() & 63) << 5) | (Math.floor(now.getSeconds() / 2) & 31);
@@ -454,10 +565,12 @@ export function buildStoredZip(entries: { name: string; data: Buffer }[]) {
   return Buffer.concat([...localParts, centralDir, end]);
 }
 
+/** Returns `value` when it is a string, otherwise `undefined`. */
 function readString(value: unknown) {
   return typeof value === "string" ? value : undefined;
 }
 
+/** Returns `value` when it is a finite number, otherwise `undefined`. */
 function readNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
