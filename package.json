@@ -14,24 +14,24 @@
     "py:mock": "python3 scripts/generate_audio.py --mock --mode sfx --prompt 'crisp sci-fi door whoosh, metallic air pressure' --duration 4 --out public/outputs/mock.wav"
   },
   "dependencies": {
-    "@heroicons/react": "latest",
-    "clsx": "latest",
-    "framer-motion": "latest",
-    "next": "latest",
-    "react": "latest",
-    "react-dom": "latest",
-    "zod": "latest"
+    "@heroicons/react": "^2.2.0",
+    "clsx": "^2.1.1",
+    "framer-motion": "^12.42.2",
+    "next": "^16.2.10",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@testing-library/react": "latest",
-    "@types/node": "latest",
-    "@types/react": "latest",
-    "@types/react-dom": "latest",
-    "jsdom": "latest",
-    "typescript": "latest",
-    "vitest": "latest",
-    "tailwindcss": "latest",
-    "@tailwindcss/postcss": "latest"
+    "@tailwindcss/postcss": "^4.3.2",
+    "@testing-library/react": "^16.3.2",
+    "@types/node": "^26.1.1",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "jsdom": "^29.1.1",
+    "tailwindcss": "^4.3.2",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
   },
   "overrides": {
     "postcss": "8.5.15"
