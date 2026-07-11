@@ -6,7 +6,7 @@ import { normalizeGenerationRequest } from "@/lib/generation";
 import { buildGeneratorArgs, resolveGenerationBackend } from "@/lib/generator-backend";
 import { buildLibraryMetadata, metadataPathForAudio, titleToFilename } from "@/lib/library";
 import { withGenerationSlot } from "@/lib/server/concurrency";
-import { generateTitle } from "@/app/api/generate-title/route";
+import { generateTitle } from "@/lib/server/ollama";
 
 export const runtime = "nodejs";
 export const maxDuration = 900;

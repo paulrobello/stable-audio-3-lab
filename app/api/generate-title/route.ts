@@ -1,53 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { generateTitle } from "@/lib/server/ollama";
 
 export const runtime = "nodejs";
-
-const TITLE_SYSTEM_PROMPT = `You are a creative music title generator. Given a description of audio, generate a short, evocative title (2-6 words). Return ONLY the title text with no quotes, no punctuation at the end, no explanation. Be creative and concise. The mode is {mode}.`;
-
-function cleanTitle(raw: string): string {
-  let title = raw.trim();
-  if (
-    (title.startsWith('"') && title.endsWith('"')) ||
-    (title.startsWith("'") && title.endsWith("'"))
-  ) {
-    title = title.slice(1, -1);
-  }
-  title = title.replace(/[.,!?]+$/, "");
-  return title.trim();
-}
-
-export async function generateTitle(prompt: string, mode: string): Promise<string | null> {
-  const model = process.env.OLLAMA_TITLE_MODEL || "phi4-mini";
-  const systemPrompt = TITLE_SYSTEM_PROMPT.replace("{mode}", mode);
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15_000);
-
-  let response: Response;
-  try {
-    response = await fetch(ollamaGenerateUrl(), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, system: systemPrompt, prompt, stream: false }),
-      signal: controller.signal,
-    });
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timeout);
-  }
-
-  if (!response.ok) return null;
-
-  const data = await response.json();
-  const title = cleanTitle(data.response ?? "");
-  return title || null;
-}
-
-function ollamaGenerateUrl() {
-  const baseUrl = process.env.OLLAMA_BASE_URL ?? `http://${process.env.OLLAMA_HOST ?? "127.0.0.1"}:${process.env.OLLAMA_PORT ?? "11434"}`;
-  return new URL("/api/generate", baseUrl).toString();
-}
 
 export async function POST(request: NextRequest) {
   try {
