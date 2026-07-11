@@ -51,6 +51,9 @@ def write_mock_wav(path: Path, prompt: str, mode: str, duration: float, seed: in
         wav.setnchannels(2)
         wav.setsampwidth(2)
         wav.setframerate(sample_rate)
+        # Batch all frames into a single writeframes call instead of per-frame
+        # writes (~500K calls for a 12s clip). Output is byte-identical (QA-020).
+        sample_bytes = bytearray()
         for n in range(frames):
             t = n / sample_rate
             env = min(1.0, t / 0.03) * min(1.0, max(0.0, (duration - t) / 0.25))
@@ -64,7 +67,8 @@ def write_mock_wav(path: Path, prompt: str, mode: str, duration: float, seed: in
                 beat = 0.65 + 0.35 * (math.sin(2 * math.pi * 2 * t) > 0.82)
                 sample = 0.28 * env * sample * wobble * beat
             val = int(max(-1, min(1, sample)) * 32767)
-            wav.writeframes(struct.pack("<hh", val, val))
+            sample_bytes.extend(struct.pack("<hh", val, val))
+        wav.writeframes(bytes(sample_bytes))
 
 
 def generate_real(args: argparse.Namespace) -> None:

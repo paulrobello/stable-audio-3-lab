@@ -46,7 +46,7 @@
 // for many simultaneous remote listeners.
 
 import { NextResponse } from "next/server";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import {
   advanceRadioCurrentTrack,
@@ -64,11 +64,13 @@ import { mutateRadioState, readRadioState } from "./radio-state-store";
 import { registerStarredLibraryFallbackTrack, startRadioQueueMaintenance, writeTrackRadioMetadata } from "./radio-queue-service";
 import { createAnnouncementIfEnabled } from "./radio-tts";
 import { spawnProcess } from "./subprocess";
-import { ffmpegBin } from "./config";
+import { ffmpegBin, RADIO_STREAM_BITRATE_KBPS } from "./config";
 
 const outputDir = () => path.join(process.cwd(), "public", "outputs");
 const RADIO_STREAM_IDLE_WAIT_MS = 1200;
-const RADIO_STREAM_BYTES_PER_SECOND = 24_000;
+// Pacing derived from the shared bitrate constant so the sleep and resume
+// offset match the actual ffmpeg transcode byte rate (QA-011).
+const RADIO_STREAM_BYTES_PER_SECOND = (RADIO_STREAM_BITRATE_KBPS * 1000) / 8; // 16,000 B/s
 const RADIO_STREAM_CHUNK_BYTES = 24_000;
 const RADIO_STREAM_ICY_META_INTERVAL = RADIO_STREAM_CHUNK_BYTES;
 
@@ -195,30 +197,30 @@ export async function streamCurrentTrack(state: RadioState, options: { icyMetada
 
         const segmentFilenames = pendingFilenames.splice(0);
         if (!segmentFilenames.length) continue;
-        try {
-          const segmentFiles = [];
-          for (const segmentFilename of segmentFilenames) {
-            try {
-              segmentFiles.push({ filename: segmentFilename, filePath: outputPathForAudio(outputDir(), segmentFilename) });
-              await readFile(outputPathForAudio(outputDir(), segmentFilename));
-            } catch (error) {
-              if (segmentFilename !== pendingTrack?.filename && isNotFoundError(error)) continue;
-              throw error;
-            }
+        const segmentFiles: { filename: string; filePath: string }[] = [];
+        for (const segmentFilename of segmentFilenames) {
+          const filePath = outputPathForAudio(outputDir(), segmentFilename);
+          try {
+            // Verify existence with stat BEFORE queueing the segment so a
+            // missing announcement is skipped, not queued to fail later (QA-004).
+            // stat avoids loading the whole file just to probe.
+            await stat(filePath);
+            segmentFiles.push({ filename: segmentFilename, filePath });
+          } catch (error) {
+            if (segmentFilename !== pendingTrack?.filename && isNotFoundError(error)) continue;
+            throw error;
           }
-          if (!segmentFiles.length) continue;
-          activeAudio = await readRadioStreamSegment(segmentFiles.map((file) => file.filePath));
-          activeFilename = pendingTrack?.filename ?? segmentFiles.at(-1)?.filename;
-          const startsWithCurrentTrackAudio = segmentFiles[0]?.filename === pendingTrack?.filename;
-          const sharedOffset = startsWithCurrentTrackAudio && pendingTrack?.filename === streamState.currentTrack?.filename
-            ? Math.floor(getRadioPlaybackElapsedSeconds(streamState) * RADIO_STREAM_BYTES_PER_SECOND)
-            : 0;
-          activeAudioOffset = Math.min(sharedOffset, Math.max(0, activeAudio.length - 1));
-          activeFileStarted = false;
-          continue;
-        } catch (error) {
-          throw error;
         }
+        if (!segmentFiles.length) continue;
+        activeAudio = await readRadioStreamSegment(segmentFiles.map((file) => file.filePath));
+        activeFilename = pendingTrack?.filename ?? segmentFiles.at(-1)?.filename;
+        const startsWithCurrentTrackAudio = segmentFiles[0]?.filename === pendingTrack?.filename;
+        const sharedOffset = startsWithCurrentTrackAudio && pendingTrack?.filename === streamState.currentTrack?.filename
+          ? Math.floor(getRadioPlaybackElapsedSeconds(streamState) * RADIO_STREAM_BYTES_PER_SECOND)
+          : 0;
+        activeAudioOffset = Math.min(sharedOffset, Math.max(0, activeAudio.length - 1));
+        activeFileStarted = false;
+        continue;
       }
     },
   });
@@ -345,7 +347,7 @@ async function transcodeFilesToRadioMp3(filePaths: string[]) {
     "-codec:a",
     "libmp3lame",
     "-b:a",
-    "128k",
+    `${RADIO_STREAM_BITRATE_KBPS}k`,
     "-f",
     "mp3",
     "pipe:1",

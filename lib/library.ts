@@ -1,5 +1,5 @@
 import path from "node:path";
-import { readdir } from "node:fs/promises";
+import { open, readdir } from "node:fs/promises";
 import type { GenerateRequest } from "./generation";
 import type { GenerationBackend } from "./generator-backend";
 
@@ -56,10 +56,28 @@ export async function titleToFilename(title: string, format: "mp3" | "wav", outp
   const existing = await readdir(outputDir).catch(() => [] as string[]);
   const existingNames = new Set(existing);
   const base = `${slug}.${format}`;
-  if (!existingNames.has(base)) return base;
+  if (!existingNames.has(base) && await reserveFilename(base, outputDir)) return base;
   let n = 2;
-  while (existingNames.has(`${slug}_${n}.${format}`)) n += 1;
-  return `${slug}_${n}.${format}`;
+  while (n < 1000) {
+    const name = `${slug}_${n}.${format}`;
+    if (!existingNames.has(name) && await reserveFilename(name, outputDir)) return name;
+    n += 1;
+  }
+  return `${slug}_${Date.now()}.${format}`;
+}
+
+// Atomically claim a filename by creating its sidecar with the `wx`
+// (exclusive-create) flag, closing the readdir-then-pick TOCTOU window so
+// concurrent radio refill + user generation can't both claim the same slug
+// (QA-015). The sidecar is later overwritten with real metadata by the caller.
+async function reserveFilename(filename: string, outputDir: string): Promise<boolean> {
+  try {
+    const handle = await open(path.join(outputDir, `${filename}.json`), "wx");
+    await handle.close();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function metadataFilenameForAudio(filename: string) {
@@ -444,13 +462,24 @@ function readNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-function crc32(data: Buffer) {
-  let crc = 0xffffffff;
-  for (const byte of data) {
-    crc ^= byte;
+// Standard CRC32 lookup table (polynomial 0xedb88320) — ~8x faster than the
+// per-bit loop on multi-MB bundles. Produces byte-identical results (QA-020).
+const CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let i = 0; i < 256; i += 1) {
+    let crc = i;
     for (let bit = 0; bit < 8; bit += 1) {
       crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
     }
+    table[i] = crc;
+  }
+  return table;
+})();
+
+function crc32(data: Buffer) {
+  let crc = 0xffffffff;
+  for (const byte of data) {
+    crc = (crc >>> 8) ^ CRC32_TABLE[(crc ^ byte) & 0xff];
   }
   return (crc ^ 0xffffffff) >>> 0;
 }

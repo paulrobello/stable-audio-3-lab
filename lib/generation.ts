@@ -6,6 +6,17 @@ export const modelOptions = [
   { id: "medium", label: "Medium", repo: "stabilityai/stable-audio-3-medium", bestFor: "Higher musicality + long-form up to ~6:20", maxDuration: 380 },
 ] as const;
 
+// Effective clamp bounds shared between the Zod schema and the UI so the two
+// can't drift (QA-019). `durationMax` is the largest model maxDuration.
+export const GENERATION_LIMITS = {
+  durationMin: 1,
+  durationMax: Math.max(...modelOptions.map((m) => m.maxDuration)),
+  stepsMin: 4,
+  stepsMax: 50,
+  cfgScaleMin: 0,
+  cfgScaleMax: 12,
+} as const;
+
 export const generateSchema = z.object({
   prompt: z.string().trim().min(8, "Prompt needs at least 8 characters").max(1000),
   negativePrompt: z.string().trim().max(500).optional().default(""),

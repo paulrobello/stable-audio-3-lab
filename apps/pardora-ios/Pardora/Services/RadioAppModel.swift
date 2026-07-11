@@ -39,7 +39,11 @@ final class RadioAppModel {
         self.serverOrigin = serverOrigin
         self.endpointMode = endpointMode
         self.transport = transport
-        client = RadioAPIClient(baseURL: URL(string: serverOrigin)!, transport: transport)
+        // Guard against an empty/corrupt persisted serverOrigin (QA-017): fall
+        // back to the default public origin instead of crashing at init. The
+        // force unwrap on the default is safe — it is a compile-time constant
+        // ("https://radio.pardev.net") that always parses.
+        client = RadioAPIClient(baseURL: URL(string: serverOrigin) ?? URL(string: RadioEndpointResolver.defaultPublicOrigin)!, transport: transport)
         self.actionClient = actionClient
         self.localIPv4Addresses = localIPv4Addresses
     }

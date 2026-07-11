@@ -40,7 +40,7 @@ def assess_audio(payload: dict[str, Any]) -> dict[str, Any]:
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
     model_id = os.environ.get("QWEN_OMNI_MODEL", DEFAULT_MODEL)
-    with prepared_audio_path(audio_path) as qwen_audio_path:
+    with PreparedAudioPath(audio_path) as qwen_audio_path:
         text = run_qwen_omni(model_id, qwen_audio_path, build_user_prompt(payload))
     parsed = parse_json_object(text)
     if not isinstance(parsed, dict):
@@ -175,7 +175,7 @@ def build_user_prompt(payload: dict[str, Any]) -> str:
     return "\n".join(item for item in context if item)
 
 
-class prepared_audio_path:
+class PreparedAudioPath:
     """Convert compressed audio to wav when ffmpeg is available."""
 
     def __init__(self, audio_path: Path) -> None:

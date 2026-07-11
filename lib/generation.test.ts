@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { normalizeGenerationRequest, promptPresets } from "./generation";
-import { controlTips } from "./ui-presets";
+import { normalizeGenerationRequest, promptPresets, buildVariationSeeds } from "./generation";
+import { controlTips, promptTemplateGroups } from "./ui-presets";
 
 describe("normalizeGenerationRequest", () => {
   it("caps duration to the selected model limit", () => {
@@ -82,5 +82,22 @@ describe("normalizeGenerationRequest", () => {
     expect(controlTips.cfgScale.body).toContain("Prompt strength");
     expect(controlTips.format.body).toContain("MP3");
     expect(controlTips.seed.body).toContain("same seed");
+  });
+});
+
+describe("prompt templates", () => {
+  it("ships templates for foley, ui stings, loops, trailer hits, ambience, and music beds", () => {
+    expect(promptTemplateGroups.map((group) => group.id)).toEqual(["foley", "ui-stings", "loops", "trailer-hits", "ambience", "music-beds"]);
+    expect(promptTemplateGroups.every((group) => group.templates.length >= 2)).toBe(true);
+  });
+});
+
+describe("batch variation seeds", () => {
+  it("derives deterministic variation seeds from a fixed base seed", () => {
+    expect(buildVariationSeeds(47, 4)).toEqual([47, 48, 49, 50]);
+  });
+
+  it("wraps safely inside the Stable Audio seed range", () => {
+    expect(buildVariationSeeds(2147483646, 4)).toEqual([2147483646, 2147483647, 0, 1]);
   });
 });

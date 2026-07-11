@@ -12,7 +12,7 @@
 // `readLocalEnvApiKey` is preserved exactly — it is the `~/.claude/.env`
 // fallback flagged for manual review by SEC-006 and is NOT changed here.
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -29,7 +29,7 @@ import {
 } from "@/lib/radio";
 import { metadataPathForAudio, outputPathForAudio } from "@/lib/library";
 import { spawnProcess } from "./subprocess";
-import { ffmpegBin, parTtsConfigPath, radioTtsModel, radioTtsModulePath, radioTtsNodeModulePath } from "./config";
+import { ffmpegBin, parTtsConfigPath, radioTtsModel, radioTtsModulePath, radioTtsNodeModulePath, RADIO_STREAM_BITRATE_KBPS } from "./config";
 
 type TtsModule = {
   createSpeechPipeline: (config: { provider: string; apiKey?: string; model?: string; voice?: string; options?: Record<string, unknown> }) => TtsPipeline;
@@ -95,17 +95,30 @@ async function synthesizeTtsMp3(text: string, state: RadioState) {
 async function ensureMp3File(filePath: string) {
   try {
     const bytes = await readFile(filePath);
+    // Validate MP3-ness from header bytes instead of re-transcoding every check
+    // (QA-007). A valid MP3 starts with an ID3v2 tag or an MPEG frame sync.
+    if (looksLikeMp3(bytes)) return true;
+    // Not MP3 — transcode once and write the converted result.
     const mp3Bytes = await transcodeToRadioMp3(bytes);
-    if (!bytesEqual(mp3Bytes, bytes)) await writeFile(filePath, Buffer.from(mp3Bytes));
+    await writeFile(filePath, Buffer.from(mp3Bytes));
     return true;
   } catch {
     return false;
   }
 }
 
+function looksLikeMp3(bytes: Uint8Array) {
+  if (bytes.length < 3) return false;
+  // ID3v2 tag header ("ID3").
+  if (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) return true;
+  // MPEG audio frame sync (11 high bits set): 0xFF followed by 0xE0 mask.
+  if (bytes[0] === 0xFF && (bytes[1] & 0xE0) === 0xE0) return true;
+  return false;
+}
+
 async function transcodeToRadioMp3(bytes: Uint8Array) {
   const ffmpeg = ffmpegBin();
-  const child = spawnProcess(ffmpeg, ["-hide_banner", "-loglevel", "error", "-i", "pipe:0", "-vn", "-ar", "44100", "-ac", "2", "-codec:a", "libmp3lame", "-b:a", "128k", "-f", "mp3", "pipe:1"]);
+  const child = spawnProcess(ffmpeg, ["-hide_banner", "-loglevel", "error", "-i", "pipe:0", "-vn", "-ar", "44100", "-ac", "2", "-codec:a", "libmp3lame", "-b:a", `${RADIO_STREAM_BITRATE_KBPS}k`, "-f", "mp3", "pipe:1"]);
   return new Promise<Buffer>((resolve, reject) => {
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
@@ -118,14 +131,6 @@ async function transcodeToRadioMp3(bytes: Uint8Array) {
     });
     child.stdin.end(Buffer.from(bytes));
   });
-}
-
-function bytesEqual(first: Uint8Array, second: Uint8Array) {
-  if (first.length !== second.length) return false;
-  for (let index = 0; index < first.length; index += 1) {
-    if (first[index] !== second[index]) return false;
-  }
-  return true;
 }
 
 export async function listTtsVoiceOptions(provider: string, currentVoice: string): Promise<RadioTtsVoiceOption[]> {
@@ -181,7 +186,7 @@ async function existingTrackAnnouncementFilename(track: RadioTrackRecord) {
 
 async function fileExists(filePath: string) {
   try {
-    await readFile(filePath);
+    await stat(filePath);
     return true;
   } catch {
     return false;

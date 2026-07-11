@@ -964,7 +964,7 @@ printf '%s' '{"likedTraits":["wide neon pads"],"dislikedTraits":["thin supersaw 
     };
     await writeFile(stateFile, JSON.stringify(state, null, 2));
 
-    vi.useFakeTimers({ now: new Date("2026-05-28T20:00:01.200Z") });
+    vi.useFakeTimers({ now: new Date("2026-05-28T20:00:02.000Z") });
     const response = await GET(new NextRequest("http://localhost:3007/api/radio?stream=1"));
     const reader = response.body?.getReader();
     expect(reader).toBeTruthy();

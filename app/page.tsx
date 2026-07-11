@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import clsx from "clsx";
-import { modelOptions, promptPresets, buildVariationSeeds } from "@/lib/generation";
+import { modelOptions, promptPresets, buildVariationSeeds, GENERATION_LIMITS } from "@/lib/generation";
 import { controlTips, promptTemplateGroups } from "@/lib/ui-presets";
 import { settingsFromMetadata, type ReusableGenerationSettings } from "@/lib/metadata-settings";
 import { radioStyles, type RadioStyleId, type RadioStyle } from "@/lib/radio";
@@ -87,9 +87,9 @@ export default function Home() {
         if (saved.model && modelOptions.some((option) => option.id === saved.model)) setModel(saved.model);
         if (typeof saved.prompt === "string" && saved.prompt.trim()) setPrompt(saved.prompt);
         if (typeof saved.negativePrompt === "string") setNegativePrompt(saved.negativePrompt);
-        if (typeof saved.duration === "number" && Number.isFinite(saved.duration)) setDuration(Math.min(Math.max(saved.duration, 1), 380));
-        if (typeof saved.steps === "number" && Number.isFinite(saved.steps)) setSteps(Math.min(Math.max(Math.round(saved.steps), 4), 50));
-        if (typeof saved.cfgScale === "number" && Number.isFinite(saved.cfgScale)) setCfgScale(Math.min(Math.max(saved.cfgScale, 0), 12));
+        if (typeof saved.duration === "number" && Number.isFinite(saved.duration)) setDuration(Math.min(Math.max(saved.duration, GENERATION_LIMITS.durationMin), GENERATION_LIMITS.durationMax));
+        if (typeof saved.steps === "number" && Number.isFinite(saved.steps)) setSteps(Math.min(Math.max(Math.round(saved.steps), GENERATION_LIMITS.stepsMin), GENERATION_LIMITS.stepsMax));
+        if (typeof saved.cfgScale === "number" && Number.isFinite(saved.cfgScale)) setCfgScale(Math.min(Math.max(saved.cfgScale, GENERATION_LIMITS.cfgScaleMin), GENERATION_LIMITS.cfgScaleMax));
         if (saved.format === "mp3" || saved.format === "wav") setFormat(saved.format);
         if (typeof saved.seed === "string") setSeed(saved.seed.replace(/\D/g, "").slice(0, 10));
         if (typeof saved.playbackVolume === "number") setPlaybackVolume(clampPlaybackVolume(saved.playbackVolume));

@@ -9,6 +9,9 @@ import { stableAudioAssessorCommand, stableAudioAssessorTimeoutMs } from "./serv
 
 export const AUDIO_ASSESSMENT_LOAD_THRESHOLD = 0.25;
 
+/** Max attempts before a failing job is dead-lettered (QA-001). */
+const ASSESSMENT_MAX_ATTEMPTS = 3;
+
 export type AssessmentSource = "library" | "radio" | "upload";
 
 export type AudioAssessmentRequest = {
@@ -94,6 +97,7 @@ function assessmentStore(): AssessmentSingletons {
 
 const outputDir = () => path.join(process.cwd(), "public", "outputs");
 const queuePath = () => path.join(process.cwd(), ".stable-audio-assessments", "queue.json");
+const deadLetterPath = () => path.join(process.cwd(), ".stable-audio-assessments", "dead-letter.json");
 
 export async function assessAudioFile(request: AudioAssessmentRequest) {
   const filename = normalizeSafeFilename(request.filename);
@@ -163,16 +167,19 @@ export async function enqueueAudioAssessment(request: AudioAssessmentRequest) {
   const filename = normalizeSafeFilename(request.filename);
   const metadata = await readAudioMetadata(filename);
   const queue = await readAssessmentQueue();
-  if (hasFinishedAssessment(metadata) || queue.some((item) => item.filename === filename)) return undefined;
   const sourceInfo = buildAssessmentSource({
     filename,
     source: request.source === "radio" ? "radio" : "library",
     body: request,
     metadata,
   });
+  // Dedupe on the full job identity (filename + rating) so a re-rated track
+  // can re-queue while an identical repeat is still skipped (QA-014).
+  const jobId = `${filename}:${sourceInfo.rating ?? "unrated"}`;
+  if (hasFinishedAssessment(metadata) || queue.some((item) => item.id === jobId)) return undefined;
   const queuedAt = new Date().toISOString();
   const job: AssessmentQueueJob = {
-    id: `${filename}:${sourceInfo.rating ?? "unrated"}`,
+    id: jobId,
     filename,
     source: sourceInfo.source,
     title: sourceInfo.title,
@@ -227,16 +234,27 @@ export async function processAudioAssessmentQueue(options: { loadRatio?: number 
       processed += 1;
     } catch (error) {
       const failedAt = new Date().toISOString();
+      const errorMessage = error instanceof Error ? error.message : "Audio assessment failed";
       await writeAssessmentQueueMetadata(
         job.filename,
         metadata,
         buildAssessmentSource({ filename: job.filename, source: job.source, body: job, metadata }),
         failedAt,
         "failed",
-        error instanceof Error ? error.message : "Audio assessment failed",
+        errorMessage,
       );
-      await writeAssessmentQueue([{ ...job, attempts: job.attempts + 1, queuedAt: failedAt }, ...remaining].slice(-200));
-      return { processed, deferred: false };
+      const nextAttempts = job.attempts + 1;
+      if (nextAttempts >= ASSESSMENT_MAX_ATTEMPTS) {
+        // Poison job: dead-letter it and continue processing the rest so the
+        // queue never permanently stalls on one bad track (QA-001).
+        await appendToDeadLetter({ ...job, attempts: nextAttempts }, errorMessage, failedAt);
+        await writeAssessmentQueue(remaining);
+        continue;
+      }
+      // Re-queue at the TAIL and schedule a deferred retry so jobs behind the
+      // failed one get their turn (backoff is the existing 60s retry timer).
+      await writeAssessmentQueue([...remaining, { ...job, attempts: nextAttempts, queuedAt: failedAt }].slice(-200));
+      return { processed, deferred: true };
     }
   }
 }
@@ -420,6 +438,25 @@ async function writeAssessmentQueue(queue: AssessmentQueueJob[]) {
   // Atomic (tmp + rename) and serialized with concurrent queue writers via the
   // shared per-path lock.
   await writeJsonAtomic(queuePath(), queue);
+}
+
+type DeadLetterEntry = AssessmentQueueJob & { deadLetteredAt: string; error: string };
+
+async function appendToDeadLetter(job: AssessmentQueueJob, error: string, deadLetteredAt: string) {
+  const existing = await readDeadLetter();
+  const entry: DeadLetterEntry = { ...job, deadLetteredAt, error };
+  // Cap the dead-letter log to the same 200-entry ceiling as the queue.
+  await writeJsonAtomic(deadLetterPath(), [...existing, entry].slice(-200));
+  console.error(`[audio-assessment] Dead-lettered job ${job.id} after ${job.attempts} failed attempt(s): ${error}`);
+}
+
+async function readDeadLetter(): Promise<DeadLetterEntry[]> {
+  const result = await readJsonWithBackup(deadLetterPath());
+  if (result.status === "ok") {
+    const parsed = result.data;
+    return Array.isArray(parsed) ? (parsed as unknown[]).filter(isAssessmentQueueJob) as DeadLetterEntry[] : [];
+  }
+  return [];
 }
 
 function isAssessmentQueueJob(value: unknown): value is AssessmentQueueJob {

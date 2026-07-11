@@ -84,6 +84,13 @@ export function stableAudioYoutubeTimeoutMs(): number {
 
 // --- Radio station ---
 
+/**
+ * MP3 stream bitrate (kbps) used by BOTH the ffmpeg `-b:a` transcode arguments
+ * and the stream pacing math. The two MUST agree or pacing/resume offsets drift
+ * from the actual byte rate (QA-011).
+ */
+export const RADIO_STREAM_BITRATE_KBPS = 128;
+
 /** Codex binary used for taste distillation + style drafting. Default `codex`. */
 export const radioCodexBin = (): string => envString("RADIO_CODEX_BIN", "codex");
 
