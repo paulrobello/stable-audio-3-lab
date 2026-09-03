@@ -99,7 +99,7 @@ curl -s -X POST http://localhost:3007/api/generate \
 ### Defaults by mode
 
 - **Music:** use `"model": "medium"`, `"duration": 60` unless the user specifies otherwise.
-- **SFX:** use `"model": "small-sfx"`. The agent MUST choose a `duration` appropriate for the requested sound — short for transient effects (2–6s), longer for evolving/atmospheric sounds (10–30s). Never default to 60s for SFX.
+- **SFX:** use `"model": "small-sfx"`. Choose a `duration` appropriate for the requested sound — short for transient effects (2–6s), longer for evolving/atmospheric sounds (10–30s); the 60s default is for music, not SFX.
 
 ## 3. Handle the response
 
