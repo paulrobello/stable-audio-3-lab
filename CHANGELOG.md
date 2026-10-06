@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Project layout & roadmap** — README layout, roadmap ("Where we are" / "Where we're going"), and project structure refreshed to reflect the post-refactor tree.
 
 ### Fixed
+- **Fractional-duration NaN on MLX** — a non-integer duration (e.g. 1.5 s) was passed straight through as the model's `seconds_total` conditioning, which training only ever sets to whole seconds; with CFG the DiT latents diverged and the WAV write failed with "audio contains … NaN/Inf". The MLX bridge now conditions on the duration rounded up to whole seconds and trims the WAV back to the requested length. Whole-second requests are byte-identical.
 - **Assessment queue poison pill** — failing jobs are capped and dead-lettered instead of re-queued at the head forever, so one bad file can no longer starve the queue.
 - **Generation hangs on missing Python** — `spawn` `error` handlers are attached everywhere (previously a missing binary could hang a request until `maxDuration`).
 - **Radio stream pacing** — a single shared bitrate constant now drives both the ffmpeg transcode args and the stream pacing math, fixing announcement pacing and mid-track resume offsets.

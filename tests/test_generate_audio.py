@@ -60,5 +60,52 @@ class MlxProcessTreeTests(unittest.TestCase):
         self.assertEqual(generate_audio.normalize_backend("mlx"), "mlx")
 
 
+class FractionalDurationTests(unittest.TestCase):
+    """Fractional durations are conditioned at whole seconds, then trimmed (NaN fix)."""
+
+    def test_conditioning_seconds_rounds_up_to_whole_seconds(self):
+        self.assertEqual(generate_audio.conditioning_seconds(1.5), 2.0)
+        self.assertEqual(generate_audio.conditioning_seconds(1.6), 2.0)
+        self.assertEqual(generate_audio.conditioning_seconds(0.5), 1.0)
+        self.assertEqual(generate_audio.conditioning_seconds(2.0), 2.0)
+        self.assertEqual(generate_audio.conditioning_seconds(1.0000000001), 1.0)
+
+    def _run_mlx(self, duration: float) -> tuple[list[str], int]:
+        import tempfile
+        import wave
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            (tmp_path / "sa3").write_text("")
+            out = tmp_path / "out.wav"
+            seen: list[list[str]] = []
+
+            def fake_sa3(command, cwd, timeout_seconds):
+                seen.append(command)
+                seconds = float(command[command.index("--seconds") + 1])
+                generate_audio.write_mock_wav(Path(command[command.index("--out") + 1]), "x", "sfx", seconds, 1)
+                return Mock(returncode=0, stdout="", stderr="")
+
+            args = Mock(
+                dit="sm-sfx", decoder="same-s", prompt="pop", negative_prompt="", duration=duration,
+                steps=30, cfg_scale=5.0, seed=1100, out=str(out),
+            )
+            with patch.dict("os.environ", {"STABLE_AUDIO_MLX_DIR": tmp}), \
+                    patch.object(generate_audio, "run_process_tree", side_effect=fake_sa3):
+                generate_audio.generate_mlx(args)
+            with wave.open(str(out), "rb") as wav:
+                return seen[0], wav.getnframes()
+
+    def test_fractional_duration_conditions_whole_second_and_trims(self):
+        command, frames = self._run_mlx(1.5)
+        self.assertEqual(command[command.index("--seconds") + 1], "2.0")
+        self.assertEqual(frames, 66150)
+
+    def test_whole_second_duration_is_unchanged(self):
+        command, frames = self._run_mlx(2.0)
+        self.assertEqual(command[command.index("--seconds") + 1], "2.0")
+        self.assertEqual(frames, 88200)
+
+
 if __name__ == "__main__":
     unittest.main()

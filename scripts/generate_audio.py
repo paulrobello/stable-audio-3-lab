@@ -136,12 +136,13 @@ def generate_mlx(args: argparse.Namespace) -> None:
             "mapping); Python no longer keeps a duplicate map (ARC-008)."
         )
     dit, decoder = args.dit, args.decoder
+    seconds = conditioning_seconds(args.duration)
     command = [
         str(sa3),
         "--prompt", args.prompt,
         "--dit", dit,
         "--decoder", decoder,
-        "--seconds", str(args.duration),
+        "--seconds", str(seconds),
         "--steps", str(args.steps),
         "--cfg", str(args.cfg_scale),
         "--out", str(Path(args.out).resolve()),
@@ -162,6 +163,30 @@ def generate_mlx(args: argparse.Namespace) -> None:
             f"stdout:\n{result.stdout[-4000:]}\n"
             f"stderr:\n{result.stderr[-4000:]}"
         )
+    if seconds != args.duration:
+        trim_wav(Path(args.out), args.duration)
+
+
+def conditioning_seconds(duration: float) -> float:
+    """Round a requested duration up to the whole-second ``seconds_total`` value the model was trained on.
+
+    Training labels every clip with ``math.ceil(n_samples / sample_rate)``
+    (vendor stable_audio_3/data/utils.py), so the seconds conditioner has only
+    seen integers. Fractional values (e.g. 1.5) are out of distribution and,
+    with CFG, drive the DiT latents to diverge until the decode is all NaN.
+    """
+    return float(max(1, math.ceil(round(duration, 6))))
+
+
+def trim_wav(path: Path, duration: float) -> None:
+    """Truncate a PCM WAV in place to ``duration`` seconds."""
+    with wave.open(str(path), "rb") as src:
+        params = src.getparams()
+        keep = min(params.nframes, int(round(duration * params.framerate)))
+        frames = src.readframes(keep)
+    with wave.open(str(path), "wb") as dst:
+        dst.setparams(params)
+        dst.writeframes(frames)
 
 
 def mlx_timeout_seconds() -> float:
